@@ -1,0 +1,36 @@
+[package]
+name = "spartan-vm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fm = { path = "../noir/compiler/fm" }
+nargo = { path = "../noir/tooling/nargo" }
+nargo_toml = { path = "../noir/tooling/nargo_toml" }
+noirc_driver = { path = "../noir/compiler/noirc_driver" }
+noirc_errors = { path = "../noir/compiler/noirc_errors" }
+noirc_frontend = { path = "../noir/compiler/noirc_frontend" }
+noirc_evaluator = { path = "../noir/compiler/noirc_evaluator" }
+
+clap = { version = "4.5.17", features = ["unstable-v5"] }
+derivative = "2.2.0"
+indoc = "2.0.5"
+itertools = "0.14.0"
+thiserror = "2.0.12"
+tempfile = "3.19.1"
+petgraph = "0.6.5" # Cannot bump as it is currently required to be this version by a dependency
+convert_case = "0.8.0"
+serde = { version = "1.0.204", features = ["derive"] }
+toml = { version = "0.8.20" }
+
+[dev-dependencies]
+anyhow = "1.0.87"
+tempfile = "3.8.1"
+walkdir = "2.5.0"
+
+[[bin]]
+name = "spartan-vm"
+path = "src/bin/main.rs"
+
+[profile.release]
+debug = true
