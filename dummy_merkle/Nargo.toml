@@ -1,0 +1,6 @@
+[package]
+name = "dummy_merkle"
+type = "bin"
+authors = [""]
+
+[dependencies]

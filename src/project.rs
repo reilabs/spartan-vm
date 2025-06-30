@@ -61,22 +61,14 @@ impl Project {
     ///
     /// Will return `Error` if something goes wrong witch compiling, extracting
     /// or generating files.
-    pub fn extract(&self) -> Result<WithWarnings<()>, Error> {
+    pub fn extract(&self) -> Result<(), Error> {
         let noir_project = noir::Project::new(&self.nargo_file_manager, &self.nargo_parsed_files);
 
-        let mut warnings = vec![];
         for package in &self.nargo_workspace.members {
             let with_warnings = self.extract_package(&noir_project, package)?;
-            if with_warnings.has_warnings() {
-                warnings.extend(with_warnings.warnings);
-            }
 
-            // let with_warnings = Self::extract_dependencies_without_lampe(&noir_project, package)?;
-            // if with_warnings.has_warnings() {
-            //     warnings.extend(with_warnings.warnings);
-            // }
         }
-        Ok(WithWarnings::new((), warnings))
+        Ok(())
     }
 
     fn extract_package(
@@ -106,8 +98,8 @@ impl Project {
         package: &Package,
     ) -> Result<(), Error> {
         let compile_result = noir_project.compile_package(package)?;
-        let warnings = compile_result.warnings.clone();
-        let lean_emitter = compile_result.take();
+        // let warnings = compile_result.warnings.clone();
+        // let lean_emitter = compile_result.take();
         // let generated_source = lean_emitter.emit()?;
 
         // let mut lean_files = generated_source

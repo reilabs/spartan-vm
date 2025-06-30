@@ -1,22 +1,19 @@
 //! Functionality for working with projects of Noir sources.
 
+use crate::noir::{
+    WithWarnings,
+    error::compilation::{Error as CompileError, Result as CompileResult},
+};
 use fm::FileManager;
 use nargo::{
-    insert_all_files_for_workspace_into_file_manager,
-    package::Package,
-    parse_all,
-    prepare_package,
+    insert_all_files_for_workspace_into_file_manager, package::Package, parse_all, prepare_package,
     workspace::Workspace,
 };
-use noirc_driver::{check_crate, CompileOptions};
+use noirc_driver::{CompileOptions, check_crate};
+use noirc_evaluator::ssa::{minimal_passes, SsaBuilder, SsaEvaluatorOptions, SsaLogging};
 use noirc_frontend::hir::ParsedFiles;
-
-use crate::{
-    noir::{
-        error::compilation::{Error as CompileError, Result as CompileResult},
-        WithWarnings,
-    },
-};
+use noirc_frontend::monomorphization::monomorphize;
+use crate::compiler::ssa::SSA;
 
 /// A manager for source files for the Noir project that we intend to extract.
 #[derive(Clone)]
@@ -55,11 +52,11 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
     /// # Errors
     ///
     /// - [`CompileError`] if the compilation process fails.
-    pub fn compile_package(&self, package: &Package) -> CompileResult<WithWarnings<()>> {
+    pub fn compile_package(&self, package: &Package) -> CompileResult<()> {
         let (mut context, crate_id) =
             prepare_package(self.nargo_file_manager, self.nargo_parsed_files, package);
         // Enables reference tracking in the internal context.
-        context.activate_lsp_mode(); //
+        // context.activate_lsp_mode(); //
 
         // Perform compilation to check the code within it.
         let ((), warnings) = check_crate(
@@ -73,11 +70,36 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         )
         .map_err(|diagnostics| CompileError::CheckFailure { diagnostics })?;
 
-        Ok(WithWarnings::new(
-            // LeanEmitter::new(context, crate_id)
-            (),
-            warnings,
-        ))
+        let main = context.get_main_function(context.root_crate_id()).unwrap();
+
+        let program = monomorphize(main, &mut context.def_interner, false).unwrap();
+
+        // let options = SsaEvaluatorOptions {
+        //     ssa_logging: SsaLogging::None,
+        //     brillig_options: Default::default(),
+        //     print_codegen_timings: false,
+        //     expression_width: Default::default(),
+        //     emit_ssa: None,
+        //     skip_underconstrained_check: false,
+        //     skip_brillig_constraints_check: false,
+        //     enable_brillig_constraints_check_lookback: false,
+        //     inliner_aggressiveness: 0,
+        //     max_bytecode_increase_percent: None,
+        //     skip_passes: vec![],
+        // };
+
+        println!("SSA!");
+        let ssa = SsaBuilder::from_program(program, SsaLogging::All, true, &None, None).unwrap();
+        let ssa = ssa.run_passes(&minimal_passes()).unwrap();
+
+
+        let ssa  = SSA::from_noir(ssa.ssa);
+        println!("{}", ssa.to_string());
+
+        // ssa.ssa
+
+
+        Ok(())
     }
 }
 

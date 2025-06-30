@@ -2690,6 +2690,7 @@ name = "spartan-vm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ark-bn254",
  "clap",
  "convert_case",
  "derivative",

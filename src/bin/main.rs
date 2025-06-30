@@ -151,12 +151,6 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
 
     let result = project.extract()?;
 
-    if result.has_warnings() {
-        for warning in &result.warnings {
-            eprintln!("{warning:?}");
-        }
-    }
-
     Ok(ExitCode::SUCCESS)
 }
 
