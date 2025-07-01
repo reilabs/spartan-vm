@@ -106,11 +106,14 @@ pub struct SSA {
 }
 
 impl SSA {
-    pub fn to_string(&self) -> String {
+    pub fn to_string(
+        &self,
+        value_annotator: impl Fn(FunctionId, BlockId, ValueId) -> String,
+    ) -> String {
         println!("Entry point: {}", self.main_id.0);
         self.functions
             .iter()
-            .map(|(fn_id, func)| func.to_string(*fn_id))
+            .map(|(fn_id, func)| func.to_string(*fn_id, &value_annotator))
             .join("\n\n")
     }
 
@@ -126,9 +129,19 @@ impl SSA {
         }
     }
 
+    pub fn get_main_id(&self) -> FunctionId {
+        self.main_id
+    }
+
     pub fn get_main_mut(&mut self) -> &mut Function {
         self.functions
             .get_mut(&self.main_id)
+            .expect("Main function should exist")
+    }
+
+    pub fn get_main(&self) -> &Function {
+        self.functions
+            .get(&self.main_id)
             .expect("Main function should exist")
     }
 
@@ -153,15 +166,17 @@ impl SSA {
 
         for (fid, function) in self.functions.iter_mut() {
             if let Err(err) = function.typecheck(&function_types) {
-                panic!(
-                    "Typecheck failed for function {}: {}",
-                    fid.0, err
-                );
+                panic!("Typecheck failed for function {}: {}", fid.0, err);
             }
         }
     }
+
+    pub fn iter_functions(&self) -> impl Iterator<Item = (&FunctionId, &Function)> {
+        self.functions.iter()
+    }
 }
 
+#[derive(Clone)]
 pub struct Function {
     entry_block: BlockId,
     blocks: HashMap<BlockId, Block>,
@@ -170,12 +185,16 @@ pub struct Function {
 }
 
 impl Function {
-    pub fn to_string(&self, id: FunctionId) -> String {
+    pub fn to_string(
+        &self,
+        id: FunctionId,
+        value_annotator: impl Fn(FunctionId, BlockId, ValueId) -> String,
+    ) -> String {
         let header = format!("fn_{}@block_{} {{", id.0, self.entry_block.0);
         let blocks = self
             .blocks
             .iter()
-            .map(|(id, block)| block.to_string(id.clone()))
+            .map(|(bid, block)| block.to_string(id, *bid, &value_annotator))
             .join("\n");
         let footer = "}".to_string();
         format!("{}\n{}\n{}", header, blocks, footer)
@@ -255,8 +274,25 @@ impl Function {
 
         Ok(())
     }
+
+    pub fn clone_block(&mut self, id: BlockId) -> BlockId {
+        let block = self.blocks.get(&id).expect("Block should exist").clone();
+        let new_block = self.add_block();
+        let new_block_ref = self.get_block_mut(new_block);
+        *new_block_ref = block.clone();
+        new_block
+    }
+
+    pub fn get_returns(&self) -> &[Type] {
+        &self.returns
+    }
+
+    pub fn get_blocks(&self) -> impl Iterator<Item = (&BlockId, &Block)> {
+        self.blocks.iter()
+    }
 }
 
+#[derive(Clone)]
 pub struct Block {
     parameters: Vec<(ValueId, Type)>,
     instructions: Vec<OpCode>,
@@ -266,16 +302,33 @@ pub struct Block {
 }
 
 impl Block {
-    fn to_string(&self, id: BlockId) -> String {
+    fn to_string(
+        &self,
+        func_id: FunctionId,
+        id: BlockId,
+        value_annotator: impl Fn(FunctionId, BlockId, ValueId) -> String,
+    ) -> String {
         let params = self
             .parameters
             .iter()
-            .map(|v| format!("v{} : {}", v.0.0, v.1.to_string()))
+            .map(|v| {
+                format!(
+                    "v{} : {} [{}]",
+                    v.0.0,
+                    v.1.to_string(),
+                    value_annotator(func_id, id, v.0)
+                )
+            })
             .join(", ");
         let instructions = self
             .instructions
             .iter()
-            .map(|i| format!("    {}", i.to_string()))
+            .map(|i| {
+                format!(
+                    "    {}",
+                    i.to_string(|vid| value_annotator(func_id, id, vid))
+                )
+            })
             .join("\n");
         let terminator = match &self.terminator {
             Some(t) => format!("    {}", t.to_string()),
@@ -367,6 +420,7 @@ impl Block {
         value_id
     }
     pub fn push_assert_eq(&mut self, lhs: ValueId, rhs: ValueId) {
+        println!("Adding assert_eq for {:?} and {:?}", lhs, rhs);
         self.push_instruction(OpCode::AssertEq(lhs, rhs));
     }
     pub fn push_call(
@@ -413,6 +467,13 @@ impl Block {
 
         Ok(())
     }
+
+    pub fn get_parameters(&self) -> impl Iterator<Item = &(ValueId, Type)> {
+        self.parameters.iter()
+    }
+    pub fn get_parameter_values(&self) -> impl Iterator<Item = &ValueId> {
+        self.parameters.iter().map(|(id, _)| id)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -433,24 +494,67 @@ enum OpCode {
 }
 
 impl OpCode {
-    pub fn to_string(&self) -> String {
+    pub fn to_string(&self, value_annotator: impl Fn(ValueId) -> String) -> String {
         match self {
             OpCode::FieldConst(result, value) => {
-                format!("v{} = constant({}:Field)", result.0, value)
+                format!(
+                    "v{}[{}] = constant({}:Field)",
+                    result.0,
+                    value_annotator(*result),
+                    value
+                )
             }
-            OpCode::UConst(result, value) => format!("v{} = constant({}:u32)", result.0, value),
-            OpCode::BConst(result, value) => format!("v{} = constant({}:bool)", result.0, value),
-            OpCode::Eq(result, lhs, rhs) => format!("v{} = v{} == v{}", result.0, lhs.0, rhs.0),
-            OpCode::Add(result, lhs, rhs) => format!("v{} = v{} + v{}", result.0, lhs.0, rhs.0),
-            OpCode::Lt(result, lhs, rhs) => format!("v{} = v{} < v{}", result.0, lhs.0, rhs.0),
-            OpCode::Alloc(result, typ) => format!("v{} = alloc({})", result.0, typ.to_string()),
+            OpCode::UConst(result, value) => format!(
+                "v{}[{}] = constant({}:u32)",
+                result.0,
+                value_annotator(*result),
+                value
+            ),
+            OpCode::BConst(result, value) => format!(
+                "v{}[{}] = constant({}:bool)",
+                result.0,
+                value_annotator(*result),
+                value
+            ),
+            OpCode::Eq(result, lhs, rhs) => format!(
+                "v{}[{}] = v{} == v{}",
+                result.0,
+                value_annotator(*result),
+                lhs.0,
+                rhs.0
+            ),
+            OpCode::Add(result, lhs, rhs) => format!(
+                "v{}[{}] = v{} + v{}",
+                result.0,
+                value_annotator(*result),
+                lhs.0,
+                rhs.0
+            ),
+            OpCode::Lt(result, lhs, rhs) => format!(
+                "v{}[{}] = v{} < v{}",
+                result.0,
+                value_annotator(*result),
+                lhs.0,
+                rhs.0
+            ),
+            OpCode::Alloc(result, typ) => format!(
+                "v{}[{}] = alloc({})",
+                result.0,
+                value_annotator(*result),
+                typ.to_string()
+            ),
             OpCode::Store(ptr, value) => format!("*v{} = v{}", ptr.0, value.0),
-            OpCode::Load(result, ptr) => format!("v{} = *v{}", result.0, ptr.0),
+            OpCode::Load(result, ptr) => {
+                format!("v{}[{}] = *v{}", result.0, value_annotator(*result), ptr.0)
+            }
             OpCode::AssertEq(lhs, rhs) => format!("assert v{} == v{}", lhs.0, rhs.0),
             OpCode::Call(result, fn_id, args) => {
                 let args_str = args.iter().map(|v| format!("v{}", v.0)).join(", ");
-                let result_str = result.iter().map(|v| format!("v{}", v.0)).join(", ");
-                format!("v{} = call {}({})", result_str, fn_id.0, args_str)
+                let result_str = result
+                    .iter()
+                    .map(|v| format!("v{}[{}]", v.0, value_annotator(*v)))
+                    .join(", ");
+                format!("{} = call {}({})", result_str, fn_id.0, args_str)
             }
             OpCode::ArrayGet(result, array, index) => {
                 format!("v{} = v{}[v{}]", result.0, array.0, index.0)

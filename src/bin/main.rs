@@ -15,6 +15,7 @@ use std::{fs, panic, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, arg};
 use spartan_vm::compiler::ssa::{SSA, Terminator, Type};
+use spartan_vm::compiler::taint_analysis::TaintAnalysis;
 use spartan_vm::{Error, Project, noir_error, noir_error::file};
 
 /// The default Noir project path for the CLI to extract from.
@@ -152,8 +153,17 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
 
     let result = project.extract()?;
 
-    let ex = merkle_program().to_string();
+    let ex = merkle_program().to_string(|_, _, _| "".to_string());
     println!("Example program:\n{ex}");
+
+    let mut taint = TaintAnalysis::new();
+    let ssa = merkle_program();
+    taint.run(&ssa).unwrap();
+
+    println!(
+        "Example program taint analysis:\n{}",
+        ssa.to_string(|a, b, c| taint.annotate_value(a, b, c))
+    );
 
     Ok(ExitCode::SUCCESS)
 }
@@ -191,6 +201,7 @@ fn merkle_program() -> SSA {
         let v2 = b0.add_parameter(Type::field());
         let v3 = b0.add_parameter(Type::bool().array_of(32));
         let v5 = b0.push_call(mtree_recover, vec![v3, v1, v2], 1)[0];
+        println!("v0: {v0:?}, v1: {v1:?}, v2: {v2:?}, v3: {v3:?}, v5: {v5:?}");
         b0.push_assert_eq(v0, v5);
         b0.set_terminator(Terminator::Return(vec![]));
     }
@@ -227,7 +238,13 @@ fn merkle_program() -> SSA {
 
         let vconst32 = b1.push_u32_const(32);
         let v7 = b1.push_lt(v3, vconst32);
-        b1.set_terminator(Terminator::JmpIf(v7, b2id, vec![v3, v0, v1, v4], b3id, vec![v4]));
+        b1.set_terminator(Terminator::JmpIf(
+            v7,
+            b2id,
+            vec![v3, v0, v1, v4],
+            b3id,
+            vec![v4],
+        ));
     }
 
     {
@@ -246,7 +263,13 @@ fn merkle_program() -> SSA {
         let v12 = b2.push_lt(v3, vconst32);
         b2.push_assert_eq(v12, vconst_true);
         let v13 = b2.push_array_get(v1, v3);
-        b2.set_terminator(Terminator::JmpIf(v11, b4id, vec![v4, v13, v3, v0, v1], b5id, vec![v4, v13, v3, v0, v1]));
+        b2.set_terminator(Terminator::JmpIf(
+            v11,
+            b4id,
+            vec![v4, v13, v3, v0, v1],
+            b5id,
+            vec![v4, v13, v3, v0, v1],
+        ));
     }
 
     {
