@@ -20,7 +20,7 @@ mod noir;
 
 pub mod error;
 pub mod project;
-mod compiler;
+pub mod compiler;
 
 pub use error::Error;
 pub use noir::error as noir_error;

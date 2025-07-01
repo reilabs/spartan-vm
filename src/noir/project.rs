@@ -92,9 +92,9 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let ssa = SsaBuilder::from_program(program, SsaLogging::All, true, &None, None).unwrap();
         let ssa = ssa.run_passes(&minimal_passes()).unwrap();
 
-
-        let ssa  = SSA::from_noir(ssa.ssa);
-        println!("{}", ssa.to_string());
+        //
+        // let ssa  = SSA::from_noir(ssa.ssa);
+        // println!("{}", ssa.to_string());
 
         // ssa.ssa
 
