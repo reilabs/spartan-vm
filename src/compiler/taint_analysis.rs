@@ -20,7 +20,7 @@ pub enum Taint {
     Witness,
     Variable(TypeVariable),
     Meet(Box<Taint>, Box<Taint>), // under the Pure > Witness ordering
-    Instantiate(TypeVariable, Vec<(TypeVariable, Taint)>),
+    Instantiate(Box<Taint>, Vec<(TypeVariable, Taint)>),
 }
 
 impl Taint {
@@ -36,7 +36,7 @@ impl Taint {
                     .map(|(from, to)| format!("V{} -> {}", from.0, to.to_string()))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("I(V{})[{}]", var.0, subs)
+                format!("I({})[{}]", var.to_string(), subs)
             }
         }
     }
@@ -493,20 +493,20 @@ impl TaintAnalysis {
         instantiations: &[(TypeVariable, Taint)],
     ) -> TaintType {
         match typ {
-            TaintType::Primitive(Taint::Variable(t)) => {
-                TaintType::Primitive(Taint::Instantiate(*t, instantiations.to_vec()))
+            TaintType::Primitive(t) => {
+                TaintType::Primitive(Taint::Instantiate(Box::new(t.clone()), instantiations.to_vec()))
             }
-            TaintType::NestedImmutable(Taint::Variable(t), inner) => {
+            TaintType::NestedImmutable(t, inner) => {
                 let instantiated_inner = self.instantiate_type(inner, instantiations);
                 TaintType::NestedImmutable(
-                    Taint::Instantiate(*t, instantiations.to_vec()),
+                    Taint::Instantiate(Box::new(t.clone()), instantiations.to_vec()),
                     Box::new(instantiated_inner),
                 )
             }
-            TaintType::NestedMutable(Taint::Variable(t), inner) => {
+            TaintType::NestedMutable(t, inner) => {
                 let instantiated_inner = self.instantiate_type(inner, instantiations);
                 TaintType::NestedMutable(
-                    Taint::Instantiate(*t, instantiations.to_vec()),
+                    Taint::Instantiate(Box::new(t.clone()), instantiations.to_vec()),
                     Box::new(instantiated_inner),
                 )
             }

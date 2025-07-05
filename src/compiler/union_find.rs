@@ -132,5 +132,37 @@ impl UnionFind {
         self.get_taint(representative)
     }
 
-
+    /// Recursively substitute variables with their representatives in a taint
+    pub fn substitute_variables(&self, taint: &Taint) -> Taint {
+        match taint {
+            Taint::Variable(var) => {
+                let representative = self.find(*var);
+                // Check if the representative has a concrete taint value
+                if let Some(concrete_taint) = self.get_taint(representative) {
+                    self.substitute_variables(&concrete_taint)
+                } else {
+                    Taint::Variable(representative)
+                }
+            }
+            Taint::Pure => Taint::Pure,
+            Taint::Witness => Taint::Witness,
+            Taint::Meet(left, right) => {
+                let left_substituted = self.substitute_variables(left);
+                let right_substituted = self.substitute_variables(right);
+                Taint::Meet(Box::new(left_substituted), Box::new(right_substituted))
+            }
+            Taint::Instantiate(var, substitutions) => {
+                let var_substituted = self.substitute_variables(var);
+                let substituted_subs = substitutions
+                    .iter()
+                    .map(|(from, to)| {
+                        let from_representative = self.find(*from);
+                        let to_substituted = self.substitute_variables(to);
+                        (from_representative, to_substituted)
+                    })
+                    .collect::<Vec<_>>();
+                Taint::Instantiate(Box::new(var_substituted), substituted_subs)
+            }
+        }
+    }
 } 
