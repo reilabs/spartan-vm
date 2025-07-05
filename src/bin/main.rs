@@ -149,9 +149,9 @@ pub fn run_test_mode(args: &ProgramOptions) -> Result<ExitCode, Error> {
 ///
 /// - [`Error`] if the extraction process fails for any reason.
 pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
-    let project = Project::new(args.root.clone())?;
+    // let project = Project::new(args.root.clone())?;
 
-    let result = project.extract()?;
+    // let result = project.extract()?;
 
     let ex = merkle_program().to_string(|_, _, _| "".to_string());
     println!("Example program:\n{ex}");
@@ -164,6 +164,8 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         "Example program taint analysis:\n{}",
         ssa.to_string(|a, b, c| taint.annotate_value(a, b, c))
     );
+
+    println!("Judgements:\n{}", taint.judgements_string());
 
     Ok(ExitCode::SUCCESS)
 }

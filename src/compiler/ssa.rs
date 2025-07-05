@@ -5,7 +5,7 @@ use std::collections::HashMap;
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ValueId(u64);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct BlockId(u64);
+pub struct BlockId(pub u64);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct FunctionId(u64);
 
@@ -145,6 +145,10 @@ impl SSA {
             .expect("Main function should exist")
     }
 
+    pub fn get_function(&self, id: FunctionId) -> &Function {
+        self.functions.get(&id).expect("Function should exist")
+    }
+
     pub fn get_function_mut(&mut self, id: FunctionId) -> &mut Function {
         self.functions.get_mut(&id).expect("Function should exist")
     }
@@ -223,6 +227,14 @@ impl Function {
         self.blocks
             .get(&self.entry_block)
             .expect("Entry block should exist")
+    }
+
+    pub fn get_entry_id(&self) -> BlockId {
+        self.entry_block
+    }
+
+    pub fn get_block(&self, id: BlockId) -> &Block {
+        self.blocks.get(&id).expect("Block should exist")
     }
 
     pub fn get_block_mut(&mut self, id: BlockId) -> &mut Block {
@@ -474,11 +486,22 @@ impl Block {
     pub fn get_parameter_values(&self) -> impl Iterator<Item = &ValueId> {
         self.parameters.iter().map(|(id, _)| id)
     }
+
+    pub fn get_instructions(&self) -> impl Iterator<Item = &OpCode> {
+        self.instructions.iter()
+    }
+
+    pub fn get_terminator(&self) -> Option<&Terminator> {
+        self.terminator.as_ref()
+    }
+
+    pub fn get_value_type(&self, value: ValueId) -> Option<&Type> {
+        self.value_info.get(&value)
+    }
 }
 
 #[derive(Debug, Clone)]
-
-enum OpCode {
+pub enum OpCode {
     FieldConst(ValueId, ark_bn254::Fr),           // _1 = constant(_2)
     BConst(ValueId, bool),                        // _1 = constant(_2)
     UConst(ValueId, u32),                         // _1 = constant(_2)
@@ -557,7 +580,13 @@ impl OpCode {
                 format!("{} = call {}({})", result_str, fn_id.0, args_str)
             }
             OpCode::ArrayGet(result, array, index) => {
-                format!("v{} = v{}[v{}]", result.0, array.0, index.0)
+                format!(
+                    "v{}[{}] = v{}[v{}]",
+                    result.0,
+                    value_annotator(*result),
+                    array.0,
+                    index.0
+                )
             }
         }
     }
