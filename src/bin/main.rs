@@ -14,8 +14,9 @@
 use std::{fs, panic, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, arg};
-use spartan_vm::compiler::ssa::{SSA, Terminator, Type};
-use spartan_vm::compiler::taint_analysis::TaintAnalysis;
+use spartan_vm::compiler::ssa::{SSA, Terminator, Type, ValueId, FunctionId, BlockId};
+use spartan_vm::compiler::taint_analysis::{TaintAnalysis, Taint, TypeVariable};
+use spartan_vm::compiler::constraint_solver::ConstraintSolver;
 use spartan_vm::{Error, Project, noir_error, noir_error::file};
 
 /// The default Noir project path for the CLI to extract from.
@@ -165,7 +166,16 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         ssa.to_string(|a, b, c| taint.annotate_value(a, b, c))
     );
 
-    println!("Judgements:\n{}", taint.judgements_string());
+    // println!("Judgements:\n{}", taint.judgements_string());
+
+    // Initialize and run constraint solver
+    println!("\n=== Constraint Solver ===");
+    let mut solver = ConstraintSolver::new(&taint);
+
+    println!("Judgements:\n{}", solver.judgements_string());
+    println!("Number of judgements: {}", solver.num_judgements());
+
+    solver.solve();
 
     Ok(ExitCode::SUCCESS)
 }

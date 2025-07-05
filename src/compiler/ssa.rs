@@ -3,11 +3,11 @@ use noirc_evaluator::ssa::ir::value::Value;
 use std::collections::HashMap;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct ValueId(u64);
+pub struct ValueId(pub u64);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct BlockId(pub u64);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct FunctionId(u64);
+pub struct FunctionId(pub u64);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {

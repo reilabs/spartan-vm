@@ -3,10 +3,16 @@ use crate::compiler::ssa::{
 };
 use crate::compiler::taint_analysis::Taint::Pure;
 use crate::compiler::taint_analysis::TaintType::{NestedImmutable, NestedMutable, Primitive};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
-struct TypeVariable(usize);
+pub struct TypeVariable(pub usize);
+
+impl std::fmt::Display for TypeVariable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "V{}", self.0)
+    }
+}
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Taint {
@@ -177,7 +183,8 @@ impl BlockTaintAnalysis {
     }
 }
 
-enum Judgement {
+#[derive(Clone)]
+pub enum Judgement {
     Eq(Taint, Taint),
     Le(Taint, Taint),
 }
@@ -345,11 +352,18 @@ impl TaintAnalysis {
             OpCode::Call(outputs, func, inputs) => {
                 // Get SSA types for parameters and arguments
                 let callee_func = ssa.get_function(*func);
-                let param_types: Vec<_> = callee_func.get_entry().get_parameters().map(|(_, t)| t).collect();
+                let param_types: Vec<_> = callee_func
+                    .get_entry()
+                    .get_parameters()
+                    .map(|(_, t)| t)
+                    .collect();
                 let caller_block = ssa.get_function(fun_id).get_block(block_id);
-                let arg_types: Vec<_> = inputs.iter().map(|v| {
-                    caller_block.get_value_type(*v).unwrap_or(&Type::Field) // fallback to Field for debug
-                }).collect();
+                let arg_types: Vec<_> = inputs
+                    .iter()
+                    .map(|v| {
+                        caller_block.get_value_type(*v).unwrap_or(&Type::Field) // fallback to Field for debug
+                    })
+                    .collect();
 
                 let input_taints = inputs
                     .iter()
@@ -368,15 +382,9 @@ impl TaintAnalysis {
 
                 let instantiations = self.prepare_instantiations(&param_taints, &input_taints);
 
-                let declared_outputs = self
-                    .get_function_analysis(*func)
-                    .returns_taint
-                    .clone();
+                let declared_outputs = self.get_function_analysis(*func).returns_taint.clone();
 
-                for (output, declared_output) in outputs
-                    .iter()
-                    .zip(declared_outputs.iter())
-                {
+                for (output, declared_output) in outputs.iter().zip(declared_outputs.iter()) {
                     let output_taint = self.instantiate_type(declared_output, &instantiations);
                     self.set_taint_type(fun_id, block_id, *output, output_taint);
                 }
@@ -458,22 +466,25 @@ impl TaintAnalysis {
 
         let instantiations = self.prepare_instantiations(&param_taints, &value_taints);
 
-        for (val, param) in value_taints.iter().zip(param_taints.iter()) {
-            match (val, param) {
-                // Pointers may get tainted in the caller. Therefore, we assert that the current
-                // type of the caller is no greater than the type inferred in the callee.
-                (
-                    TaintType::NestedMutable(val_taint, _),
-                    TaintType::NestedMutable(Taint::Variable(tv), _),
-                ) => {
-                    self.emit_le(
-                        val_taint.clone(),
-                        Taint::Instantiate(tv.clone(), instantiations.clone()),
-                    );
-                }
-                _ => (),
-            }
+        for (pt, vt) in instantiations {
+            self.emit_le(Taint::Variable(pt), vt);
         }
+        // for (val, param) in value_taints.iter().zip(param_taints.iter()) {
+        //     match (val, param) {
+        //         // Pointers may get tainted in the caller. Therefore, we assert that the current
+        //         // type of the caller is no greater than the type inferred in the callee.
+        //         (
+        //             TaintType::NestedMutable(val_taint, _),
+        //             TaintType::NestedMutable(Taint::Variable(tv), _),
+        //         ) => {
+        //             self.emit_le(
+        //                 val_taint.clone(),
+        //                 Taint::Instantiate(tv.clone(), instantiations.clone()),
+        //             );
+        //         }
+        //         _ => (),
+        //     }
+        // }
     }
 
     fn instantiate_type(
@@ -499,7 +510,7 @@ impl TaintAnalysis {
                     Box::new(instantiated_inner),
                 )
             }
-            _ => panic!("Instantiated type must be fully free")
+            _ => panic!("Instantiated type must be fully free"),
         }
     }
 
@@ -542,7 +553,11 @@ impl TaintAnalysis {
                     .extend(self.prepare_instantiations_for_type(inner_param, inner_value));
                 instantiations
             }
-            _ => panic!("Malformed params for instantiation {} and {}", param.to_string(), value.to_string()),
+            _ => panic!(
+                "Malformed params for instantiation {} and {}",
+                param.to_string(),
+                value.to_string()
+            ),
         }
     }
 
@@ -666,5 +681,26 @@ impl TaintAnalysis {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    pub fn get_judgements(&self) -> Vec<String> {
+        self.unification_context
+            .judgements
+            .iter()
+            .map(|j| format!("{}", j))
+            .collect()
+    }
+
+    pub fn get_judgements_data(&self) -> &[Judgement] {
+        &self.unification_context.judgements
+    }
+}
+
+impl std::fmt::Display for Judgement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Judgement::Eq(a, b) => write!(f, "{} = {}", a.to_string(), b.to_string()),
+            Judgement::Le(a, b) => write!(f, "{} ≤ {}", a.to_string(), b.to_string()),
+        }
     }
 }
