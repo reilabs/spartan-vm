@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use crate::compiler::taint_analysis::{TypeVariable, Taint};
 
 /// Union-Find data structure for type variables with taint mapping
+#[derive(Debug, Clone)]
 pub struct UnionFind {
     parent: RefCell<HashMap<TypeVariable, TypeVariable>>,
     rank: RefCell<HashMap<TypeVariable, usize>>,

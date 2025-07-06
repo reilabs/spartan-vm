@@ -12,6 +12,7 @@
 #![allow(clippy::multiple_crate_versions)]
 
 use std::{fs, panic, path::PathBuf, process::ExitCode};
+use graphviz_rust::{dot_generator::*, dot_structures::*, printer::PrinterContext};
 
 use clap::{Parser, arg};
 use spartan_vm::compiler::ssa::{SSA, Terminator, Type, ValueId, FunctionId, BlockId};
@@ -150,9 +151,9 @@ pub fn run_test_mode(args: &ProgramOptions) -> Result<ExitCode, Error> {
 ///
 /// - [`Error`] if the extraction process fails for any reason.
 pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
-    // let project = Project::new(args.root.clone())?;
+    let project = Project::new(args.root.clone())?;
 
-    // let result = project.extract()?;
+    let result = project.extract()?;
 
     let ex = merkle_program().to_string(|_, _, _| "".to_string());
     println!("Example program:\n{ex}");
@@ -176,6 +177,17 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     println!("Number of judgements: {}", solver.num_judgements());
 
     solver.solve();
+
+    // Generate and display the inequality graph
+    println!("\n=== Inequality Graph (Graphviz DOT) ===");
+    let graph_dot = solver.generate_inequality_graph();
+
+    // Generate the image file
+    println!("\n=== Generating Image ===");
+    match generate_graph_image(&graph_dot, "inequality_graph.png") {
+        Ok(_) => println!("✅ Image generated successfully: inequality_graph.png"),
+        Err(e) => eprintln!("❌ Failed to generate image: {}", e),
+    }
 
     Ok(ExitCode::SUCCESS)
 }
@@ -363,4 +375,28 @@ fn parse_path(path: &str) -> Result<PathBuf, String> {
         path = std::env::current_dir().unwrap().join(path).normalize();
     }
     Ok(path)
+}
+
+/// Generate a PNG image from a DOT graph string
+fn generate_graph_image(dot_content: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use std::process::Command;
+    
+    // Write DOT content to a temporary file
+    let temp_dot_path = "temp_graph.dot";
+    fs::write(temp_dot_path, dot_content)?;
+    
+    // Use system dot command to generate PNG
+    let output = Command::new("dot")
+        .args(&["-Tpng", temp_dot_path, "-o", output_path])
+        .output()?;
+    
+    // Clean up temporary file
+    let _ = fs::remove_file(temp_dot_path);
+    
+    if output.status.success() {
+        Ok(())
+    } else {
+        let error_msg = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Graphviz dot command failed: {}", error_msg).into())
+    }
 }

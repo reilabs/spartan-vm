@@ -14,7 +14,7 @@ impl std::fmt::Display for TypeVariable {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub enum Taint {
     Pure,
     Witness,

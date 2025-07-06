@@ -23,6 +23,7 @@ convert_case = "0.8.0"
 serde = { version = "1.0.204", features = ["derive"] }
 toml = { version = "0.8.20" }
 ark-bn254 = "0.5.0"
+graphviz-rust = "0.6.0"
 
 [dev-dependencies]
 anyhow = "1.0.87"
