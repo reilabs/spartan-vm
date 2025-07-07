@@ -357,11 +357,11 @@ impl TaintAnalysis {
                     .get_parameters()
                     .map(|(_, t)| t)
                     .collect();
-                let caller_block = ssa.get_function(fun_id).get_block(block_id);
+                let caller_function = ssa.get_function(fun_id);
                 let arg_types: Vec<_> = inputs
                     .iter()
                     .map(|v| {
-                        caller_block.get_value_type(*v).unwrap_or(&Type::Field) // fallback to Field for debug
+                        caller_function.get_value_type(*v).unwrap_or(&Type::Field) // fallback to Field for debug
                     })
                     .collect();
 
@@ -434,9 +434,9 @@ impl TaintAnalysis {
             Terminator::Jmp(target, params) => {
                 self.analyze_jump(ssa, fun_id, block_id, *target, params);
             }
-            Terminator::JmpIf(cond, t1, p1, t2, p2) => {
-                self.analyze_jump(ssa, fun_id, block_id, *t1, p1);
-                self.analyze_jump(ssa, fun_id, block_id, *t2, p2);
+            Terminator::JmpIf(cond, t1, t2) => {
+                self.analyze_jump(ssa, fun_id, block_id, *t1, &[]);
+                self.analyze_jump(ssa, fun_id, block_id, *t2, &[]);
             }
         }
     }

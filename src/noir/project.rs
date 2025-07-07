@@ -92,12 +92,10 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let ssa = SsaBuilder::from_program(program, SsaLogging::All, true, &None, None).unwrap();
         let ssa = ssa.run_passes(&minimal_passes()).unwrap();
 
-        //
-        // let ssa  = SSA::from_noir(ssa.ssa);
-        // println!("{}", ssa.to_string());
-
-        // ssa.ssa
-
+        // Convert to custom SSA
+        let mut custom_ssa = SSA::from_noir(&ssa.ssa);
+        custom_ssa.typecheck();
+        println!("Converted SSA:\n{}", custom_ssa.to_string(|_, _, _| "".to_string()));
 
         Ok(())
     }

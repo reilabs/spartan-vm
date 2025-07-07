@@ -1,6 +1,6 @@
 use itertools::Itertools;
-use noirc_evaluator::ssa::ir::value::Value;
 use std::collections::HashMap;
+use crate::compiler::ssa_gen::SsaConverter;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ValueId(pub u64);
@@ -92,13 +92,6 @@ impl Type {
     }
 }
 
-#[derive(Debug, Clone)]
-
-enum Level {
-    Witness,
-    Runtime,
-}
-
 pub struct SSA {
     functions: HashMap<FunctionId, Function>,
     main_id: FunctionId,
@@ -113,6 +106,7 @@ impl SSA {
         println!("Entry point: {}", self.main_id.0);
         self.functions
             .iter()
+            .sorted_by_key(|(fn_id, _)| fn_id.0)
             .map(|(fn_id, func)| func.to_string(*fn_id, &value_annotator))
             .join("\n\n")
     }
@@ -178,6 +172,12 @@ impl SSA {
     pub fn iter_functions(&self) -> impl Iterator<Item = (&FunctionId, &Function)> {
         self.functions.iter()
     }
+
+    /// Create a custom SSA from a Noir SSA
+    pub fn from_noir(noir_ssa: &noirc_evaluator::ssa::ssa_gen::Ssa) -> Self {
+        let mut converter = SsaConverter::new();
+        converter.convert_noir_ssa(noir_ssa)
+    }
 }
 
 #[derive(Clone)]
@@ -186,6 +186,8 @@ pub struct Function {
     blocks: HashMap<BlockId, Block>,
     returns: Vec<Type>,
     next_block: u64,
+    value_info: HashMap<ValueId, Type>,
+    next_value: u64,
 }
 
 impl Function {
@@ -194,10 +196,11 @@ impl Function {
         id: FunctionId,
         value_annotator: impl Fn(FunctionId, BlockId, ValueId) -> String,
     ) -> String {
-        let header = format!("fn_{}@block_{} {{", id.0, self.entry_block.0);
+        let header = format!("fn_{}@block_{} -> {} {{", id.0, self.entry_block.0, self.returns.iter().map(|t| t.to_string()).join(", "));
         let blocks = self
             .blocks
             .iter()
+            .sorted_by_key(|(bid, _)| bid.0)
             .map(|(bid, block)| block.to_string(id, *bid, &value_annotator))
             .join("\n");
         let footer = "}".to_string();
@@ -214,6 +217,8 @@ impl Function {
             blocks,
             next_block: 1,
             returns: Vec::new(),
+            value_info: HashMap::new(),
+            next_value: 0,
         }
     }
 
@@ -280,8 +285,18 @@ impl Function {
             })
             .collect::<HashMap<_, _>>();
 
-        for block in self.blocks.values_mut() {
-            block.typecheck(function_types, &block_input_types, &self.returns)?;
+        // Typecheck all instructions in all blocks using the function's value_info
+        for block in self.blocks.values() {
+            for instruction in block.get_instructions() {
+                instruction.typecheck(&mut self.value_info, function_types)?;
+            }
+        }
+
+        // Typecheck all terminators
+        for block in self.blocks.values() {
+            if let Some(terminator) = block.get_terminator() {
+                terminator.typecheck(&block_input_types, &self.value_info, &self.returns)?;
+            }
         }
 
         Ok(())
@@ -302,6 +317,120 @@ impl Function {
     pub fn get_blocks(&self) -> impl Iterator<Item = (&BlockId, &Block)> {
         self.blocks.iter()
     }
+
+    pub fn get_value_type(&self, value: ValueId) -> Option<&Type> {
+        self.value_info.get(&value)
+    }
+
+    pub fn add_parameter(&mut self, block_id: BlockId, typ: Type) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.value_info.insert(value_id, typ.clone());
+        self.blocks.get_mut(&block_id).unwrap().parameters.push((value_id, typ));
+        value_id
+    }
+    pub fn push_bool_const(&mut self, block_id: BlockId, value: bool) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.value_info.insert(value_id, Type::Bool);
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::BConst(value_id, value));
+        value_id
+    }
+    pub fn push_u32_const(&mut self, block_id: BlockId, value: u32) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.value_info.insert(value_id, Type::U32);
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::UConst(value_id, value));
+        value_id
+    }
+    pub fn push_field_const(&mut self, block_id: BlockId, value: ark_bn254::Fr) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.value_info.insert(value_id, Type::Field);
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::FieldConst(value_id, value));
+        value_id
+    }
+    pub fn push_eq(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.value_info.insert(value_id, Type::Bool);
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Eq(value_id, lhs, rhs));
+        value_id
+    }
+    pub fn push_add(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        if let Some(lhs_type) = self.value_info.get(&lhs) {
+            self.value_info.insert(value_id, lhs_type.clone());
+        }
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Add(value_id, lhs, rhs));
+        value_id
+    }
+    pub fn push_lt(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.value_info.insert(value_id, Type::Bool);
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Lt(value_id, lhs, rhs));
+        value_id
+    }
+    pub fn push_alloc(&mut self, block_id: BlockId, typ: Type) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.value_info.insert(value_id, Type::Ref(Box::new(typ.clone())));
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Alloc(value_id, typ));
+        value_id
+    }
+    pub fn push_store(&mut self, block_id: BlockId, ptr: ValueId, value: ValueId) {
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Store(ptr, value));
+    }
+    pub fn push_load(&mut self, block_id: BlockId, ptr: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        if let Some(ptr_type) = self.value_info.get(&ptr) {
+            if let Type::Ref(ref_type) = ptr_type {
+                self.value_info.insert(value_id, *ref_type.clone());
+            }
+        }
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Load(value_id, ptr));
+        value_id
+    }
+    pub fn push_assert_eq(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) {
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::AssertEq(lhs, rhs));
+    }
+    pub fn push_call(&mut self, block_id: BlockId, fn_id: FunctionId, args: Vec<ValueId>, return_size: usize) -> Vec<ValueId> {
+        let mut return_values = Vec::new();
+        for _ in 0..return_size {
+            let value_id = ValueId(self.next_value);
+            self.next_value += 1;
+            self.value_info.insert(value_id, Type::Field); // TODO: use actual return type
+            return_values.push(value_id);
+        }
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Call(return_values.clone(), fn_id, args));
+        return_values
+    }
+    pub fn push_array_get(&mut self, block_id: BlockId, array: ValueId, index: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        if let Some(array_type) = self.value_info.get(&array) {
+            if let Type::Array(element_type, _) = array_type {
+                self.value_info.insert(value_id, *element_type.clone());
+            }
+        }
+        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::ArrayGet(value_id, array, index));
+        value_id
+    }
+
+    pub fn terminate_block_with_jmp_if(&mut self, block_id: BlockId, condition: ValueId, then_destination: BlockId, else_destination: BlockId) {
+        self.blocks.get_mut(&block_id).unwrap().set_terminator(Terminator::JmpIf(condition, then_destination, else_destination));
+    }
+
+    pub fn terminate_block_with_return(&mut self, block_id: BlockId, return_values: Vec<ValueId>) {
+        self.blocks.get_mut(&block_id).unwrap().set_terminator(Terminator::Return(return_values));
+    }
+
+    pub fn terminate_block_with_jmp(&mut self, block_id: BlockId, destination: BlockId, arguments: Vec<ValueId>) {
+        self.blocks.get_mut(&block_id).unwrap().set_terminator(Terminator::Jmp(destination, arguments));
+    }
 }
 
 #[derive(Clone)]
@@ -309,8 +438,6 @@ pub struct Block {
     parameters: Vec<(ValueId, Type)>,
     instructions: Vec<OpCode>,
     terminator: Option<Terminator>,
-    value_info: HashMap<ValueId, Type>,
-    next_value: u64,
 }
 
 impl Block {
@@ -357,16 +484,7 @@ impl Block {
             parameters: Vec::new(),
             instructions: Vec::new(),
             terminator: None,
-            value_info: HashMap::new(),
-            next_value: 0,
         }
-    }
-
-    pub fn add_parameter(&mut self, typ: Type) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.parameters.push((value_id, typ));
-        value_id
     }
 
     fn push_instruction(&mut self, instruction: OpCode) {
@@ -375,109 +493,6 @@ impl Block {
 
     pub fn set_terminator(&mut self, terminator: Terminator) {
         self.terminator = Some(terminator);
-    }
-
-    pub fn push_bool_const(&mut self, value: bool) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.push_instruction(OpCode::BConst(value_id, value));
-        value_id
-    }
-
-    pub fn push_u32_const(&mut self, value: u32) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.push_instruction(OpCode::UConst(value_id, value));
-        value_id
-    }
-
-    pub fn push_field_const(&mut self, value: ark_bn254::Fr) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.push_instruction(OpCode::FieldConst(value_id, value));
-        value_id
-    }
-
-    pub fn push_eq(&mut self, lhs: ValueId, rhs: ValueId) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.push_instruction(OpCode::Eq(value_id, lhs, rhs));
-        value_id
-    }
-    pub fn push_add(&mut self, lhs: ValueId, rhs: ValueId) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.push_instruction(OpCode::Add(value_id, lhs, rhs));
-        value_id
-    }
-    pub fn push_lt(&mut self, lhs: ValueId, rhs: ValueId) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.push_instruction(OpCode::Lt(value_id, lhs, rhs));
-        value_id
-    }
-    pub fn push_alloc(&mut self, typ: Type) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.push_instruction(OpCode::Alloc(value_id, typ));
-        value_id
-    }
-    pub fn push_store(&mut self, ptr: ValueId, value: ValueId) {
-        self.push_instruction(OpCode::Store(ptr, value));
-    }
-    pub fn push_load(&mut self, ptr: ValueId) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.push_instruction(OpCode::Load(value_id, ptr));
-        value_id
-    }
-    pub fn push_assert_eq(&mut self, lhs: ValueId, rhs: ValueId) {
-        println!("Adding assert_eq for {:?} and {:?}", lhs, rhs);
-        self.push_instruction(OpCode::AssertEq(lhs, rhs));
-    }
-    pub fn push_call(
-        &mut self,
-        fn_id: FunctionId,
-        args: Vec<ValueId>,
-        return_size: usize,
-    ) -> Vec<ValueId> {
-        let mut returns = Vec::with_capacity(return_size);
-        for i in 0..return_size {
-            let value_id = ValueId(self.next_value);
-            self.next_value += 1;
-            returns.push(value_id);
-        }
-
-        self.push_instruction(OpCode::Call(returns.clone(), fn_id, args));
-        returns
-    }
-    pub fn push_array_get(&mut self, array: ValueId, index: ValueId) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.push_instruction(OpCode::ArrayGet(value_id, array, index));
-        value_id
-    }
-
-    fn typecheck(
-        &mut self,
-        function_types: &HashMap<FunctionId, (Vec<Type>, Vec<Type>)>,
-        block_input_types: &HashMap<BlockId, Vec<Type>>,
-        function_returns: &[Type],
-    ) -> Result<(), String> {
-        for (value, tp) in &self.parameters {
-            self.value_info.insert(*value, tp.clone());
-        }
-
-        for instruction in &self.instructions {
-            instruction.typecheck(&mut self.value_info, function_types)?;
-        }
-
-        match &self.terminator {
-            Some(t) => t.typecheck(block_input_types, &self.value_info, function_returns)?,
-            None => (),
-        }
-
-        Ok(())
     }
 
     pub fn get_parameters(&self) -> impl Iterator<Item = &(ValueId, Type)> {
@@ -493,10 +508,6 @@ impl Block {
 
     pub fn get_terminator(&self) -> Option<&Terminator> {
         self.terminator.as_ref()
-    }
-
-    pub fn get_value_type(&self, value: ValueId) -> Option<&Type> {
-        self.value_info.get(&value)
     }
 }
 
@@ -814,7 +825,7 @@ impl OpCode {
 #[derive(Debug, Clone)]
 pub enum Terminator {
     Jmp(BlockId, Vec<ValueId>),
-    JmpIf(ValueId, BlockId, Vec<ValueId>, BlockId, Vec<ValueId>),
+    JmpIf(ValueId, BlockId, BlockId),
     Return(Vec<ValueId>),
 }
 
@@ -825,12 +836,10 @@ impl Terminator {
                 let args_str = args.iter().map(|v| format!("v{}", v.0)).join(", ");
                 format!("jmp block_{}({})", block_id.0, args_str)
             }
-            Terminator::JmpIf(cond, true_block, true_args, false_block, false_args) => {
-                let true_args = true_args.iter().map(|v| format!("v{}", v.0)).join(", ");
-                let false_args = false_args.iter().map(|v| format!("v{}", v.0)).join(", ");
+            Terminator::JmpIf(cond, true_block, false_block) => {
                 format!(
-                    "jmp_if v{} to block_{}({}), else to block_{}({})",
-                    cond.0, true_block.0, true_args, false_block.0, false_args
+                    "jmp_if v{} to block_{}, else to block_{}",
+                    cond.0, true_block.0, false_block.0
                 )
             }
             Terminator::Return(values) => {
@@ -886,16 +895,16 @@ impl Terminator {
             Terminator::Jmp(bid, args) => {
                 Self::typecheck_jump_target(*bid, args, block_input_types, value_types)?;
             }
-            Terminator::JmpIf(cond, true_block, true_args, false_block, false_args) => {
+            Terminator::JmpIf(cond, true_block, false_block) => {
                 Self::typecheck_jump_target(
                     *true_block,
-                    true_args,
+                    &[],
                     block_input_types,
                     value_types,
                 )?;
                 Self::typecheck_jump_target(
                     *false_block,
-                    false_args,
+                    &[],
                     block_input_types,
                     value_types,
                 )?;
