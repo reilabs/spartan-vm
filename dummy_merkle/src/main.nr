@@ -24,10 +24,10 @@ where
     for i in 0..N {
         let dir = idx[i];
         let sibling_root = p[i];
-        if dir {
-            curr_h = H::hash(sibling_root, curr_h);
+        curr_h = if dir {
+            H::hash(sibling_root, curr_h)
         } else {
-            curr_h = H::hash(curr_h, sibling_root);
+            H::hash(curr_h, sibling_root)
         }
     }
     curr_h
