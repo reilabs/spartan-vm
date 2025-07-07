@@ -1,9 +1,8 @@
 //! Functionality for working with projects of Noir sources.
 
-use crate::noir::{
-    WithWarnings,
-    error::compilation::{Error as CompileError, Result as CompileResult},
-};
+use crate::{compiler::flow_analysis::FlowAnalysis, noir::{
+    error::compilation::{Error as CompileError, Result as CompileResult}, WithWarnings
+}};
 use fm::FileManager;
 use nargo::{
     insert_all_files_for_workspace_into_file_manager, package::Package, parse_all, prepare_package,
@@ -96,6 +95,10 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let mut custom_ssa = SSA::from_noir(&ssa.ssa);
         custom_ssa.typecheck();
         println!("Converted SSA:\n{}", custom_ssa.to_string(|_, _, _| "".to_string()));
+
+        let mut flow_analysis = FlowAnalysis::new();
+        flow_analysis.run(&custom_ssa);
+        flow_analysis.save_as_png("flow_analysis.png").unwrap();
 
         Ok(())
     }
