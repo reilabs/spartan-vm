@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use crate::compiler::taint_analysis::{Judgement, Taint, TaintType, TypeVariable};
 use std::cell::RefCell;
-use crate::compiler::taint_analysis::{TypeVariable, Taint};
+use std::collections::HashMap;
 
 /// Union-Find data structure for type variables with taint mapping
 #[derive(Debug, Clone)]
@@ -23,27 +23,27 @@ impl UnionFind {
     pub fn find(&self, x: TypeVariable) -> TypeVariable {
         let mut parent = self.parent.borrow_mut();
         let mut rank = self.rank.borrow_mut();
-        
+
         if !parent.contains_key(&x) {
             parent.insert(x, x);
             rank.insert(x, 0);
             return x;
         }
-        
+
         // Find the root iteratively (no recursion)
         let mut current = x;
         let mut path = Vec::new();
-        
+
         while parent[&current] != current {
             path.push(current);
             current = parent[&current];
         }
-        
+
         // Path compression: update all nodes on the path to point directly to root
         for node in path {
             parent.insert(node, current);
         }
-        
+
         current
     }
 
@@ -51,17 +51,17 @@ impl UnionFind {
     pub fn union(&mut self, x: TypeVariable, y: TypeVariable) {
         let root_x = self.find(x);
         let root_y = self.find(y);
-        
+
         if root_x == root_y {
             return;
         }
-        
+
         // Union by rank first
         let mut parent = self.parent.borrow_mut();
         let mut rank = self.rank.borrow_mut();
         let rank_x = rank[&root_x];
         let rank_y = rank[&root_y];
-        
+
         let new_root;
         if rank_x < rank_y {
             parent.insert(root_x, root_y);
@@ -74,16 +74,16 @@ impl UnionFind {
             rank.insert(root_x, rank_x + 1);
             new_root = root_x;
         }
-        
+
         // Now handle taint merging
         let taint_x = self.taint_mapping.borrow().get(&root_x).cloned();
         let taint_y = self.taint_mapping.borrow().get(&root_y).cloned();
-        
+
         // Merge taints if both representatives had taint values
         let mut mapping = self.taint_mapping.borrow_mut();
         match (taint_x, taint_y) {
             (Some(taint_x), Some(taint_y)) => {
-                let merged_taint = taint_x.meet(&taint_y);
+                let merged_taint = taint_x.union(&taint_y);
                 mapping.insert(new_root, merged_taint);
             }
             (Some(taint_x), None) => {
@@ -147,23 +147,40 @@ impl UnionFind {
             }
             Taint::Pure => Taint::Pure,
             Taint::Witness => Taint::Witness,
-            Taint::Meet(left, right) => {
+            Taint::Union(left, right) => {
                 let left_substituted = self.substitute_variables(left);
                 let right_substituted = self.substitute_variables(right);
-                Taint::Meet(Box::new(left_substituted), Box::new(right_substituted))
-            }
-            Taint::Instantiate(var, substitutions) => {
-                let var_substituted = self.substitute_variables(var);
-                let substituted_subs = substitutions
-                    .iter()
-                    .map(|(from, to)| {
-                        let from_representative = self.find(*from);
-                        let to_substituted = self.substitute_variables(to);
-                        (from_representative, to_substituted)
-                    })
-                    .collect::<Vec<_>>();
-                Taint::Instantiate(Box::new(var_substituted), substituted_subs)
+                Taint::Union(Box::new(left_substituted), Box::new(right_substituted))
             }
         }
     }
-} 
+
+    pub fn substitute_taint_type(&self, taint_type: &TaintType) -> TaintType {
+        match taint_type {
+            TaintType::Primitive(taint) => TaintType::Primitive(self.substitute_variables(taint)),
+            TaintType::NestedImmutable(taint, inner) => TaintType::NestedImmutable(
+                self.substitute_variables(taint),
+                Box::new(self.substitute_taint_type(inner)),
+            ),
+            TaintType::NestedMutable(taint, inner) => TaintType::NestedMutable(
+                self.substitute_variables(taint),
+                Box::new(self.substitute_taint_type(inner)),
+            ),
+        }
+    }
+
+    pub fn substitute_judgement(&self, judgement: &Judgement) -> Judgement {
+        match judgement {
+            Judgement::Le(l, r) => {
+                let l_substituted = self.substitute_variables(l);
+                let r_substituted = self.substitute_variables(r);
+                Judgement::Le(l_substituted, r_substituted)
+            }
+            Judgement::Eq(l, r) => {
+                let l_substituted = self.substitute_variables(l);
+                let r_substituted = self.substitute_variables(r);
+                Judgement::Eq(l_substituted, r_substituted)
+            }
+        }
+    }
+}

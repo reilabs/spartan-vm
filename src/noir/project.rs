@@ -1,18 +1,28 @@
 //! Functionality for working with projects of Noir sources.
 
-use crate::{compiler::{flow_analysis::FlowAnalysis, ssa::{BlockId, FunctionId}}, noir::{
-    error::compilation::{Error as CompileError, Result as CompileResult}, WithWarnings
-}};
+use crate::compiler::ssa::SSA;
+use crate::compiler::taint_analysis::{Taint, TaintType};
+use crate::{
+    compiler::{
+        constraint_solver::ConstraintSolver,
+        flow_analysis::FlowAnalysis,
+        ssa::{BlockId, FunctionId},
+        taint_analysis::TaintAnalysis,
+    },
+    noir::{
+        WithWarnings,
+        error::compilation::{Error as CompileError, Result as CompileResult},
+    },
+};
 use fm::FileManager;
 use nargo::{
     insert_all_files_for_workspace_into_file_manager, package::Package, parse_all, prepare_package,
     workspace::Workspace,
 };
 use noirc_driver::{CompileOptions, check_crate};
-use noirc_evaluator::ssa::{minimal_passes, SsaBuilder, SsaEvaluatorOptions, SsaLogging};
+use noirc_evaluator::ssa::{SsaBuilder, SsaEvaluatorOptions, SsaLogging, minimal_passes};
 use noirc_frontend::hir::ParsedFiles;
 use noirc_frontend::monomorphization::monomorphize;
-use crate::compiler::ssa::SSA;
 
 /// A manager for source files for the Noir project that we intend to extract.
 #[derive(Clone)]
@@ -94,7 +104,10 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         // Convert to custom SSA
         let mut custom_ssa = SSA::from_noir(&ssa.ssa);
         custom_ssa.typecheck();
-        println!("Converted SSA:\n{}", custom_ssa.to_string(|_, _, _| "".to_string()));
+        println!(
+            "Converted SSA:\n{}",
+            custom_ssa.to_string(|_, _| "".to_string())
+        );
 
         let mut flow_analysis = FlowAnalysis::new();
         flow_analysis.run(&custom_ssa);
@@ -102,7 +115,10 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let call_loops = flow_analysis.detect_call_loops();
         if !call_loops.is_empty() {
-            panic!("Call loops detected: {:?}. We don't support recursion yet.", call_loops);
+            panic!(
+                "Call loops detected: {:?}. We don't support recursion yet.",
+                call_loops
+            );
         }
 
         for (func_id, cfg) in flow_analysis.function_cfgs.iter() {
@@ -111,7 +127,74 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             println!("  If merge points: {:?}", cfg.if_merge_points);
         }
 
+        let mut taint_analysis = TaintAnalysis::new();
+        taint_analysis.run(&custom_ssa, &flow_analysis).unwrap();
+
+        println!(
+            "After taint analysis SSA:\n{}",
+            custom_ssa.to_string(|func, val| taint_analysis.annotate_value(func, val))
+        );
+
+        let mut constraint_solver =
+            ConstraintSolver::new(&taint_analysis.get_function_taint(custom_ssa.get_main_id()));
+
+        let main_func = taint_analysis.get_function_taint(custom_ssa.get_main_id());
+        constraint_solver.add_assumption(
+            &TaintType::Primitive(main_func.cfg_taint.clone()),
+            &TaintType::Primitive(Taint::Pure),
+        );
+        for param in main_func.parameters.iter() {
+            constraint_solver.add_assumption(param, &mainify_taint(param));
+        }
+
+        constraint_solver.solve();
+
+        let mut cloned_main = main_func.clone();
+        cloned_main.judgements = Vec::new();
+        cloned_main.cfg_taint = constraint_solver
+            .unification
+            .substitute_variables(&cloned_main.cfg_taint);
+        cloned_main.returns_taint = main_func
+            .returns_taint
+            .iter()
+            .map(|taint| constraint_solver.unification.substitute_taint_type(taint))
+            .collect();
+        cloned_main.parameters = main_func
+            .parameters
+            .iter()
+            .map(|taint| constraint_solver.unification.substitute_taint_type(taint))
+            .collect();
+        cloned_main.value_taints = main_func
+            .value_taints
+            .iter()
+            .map(|(value_id, taint)| {
+                (
+                    *value_id,
+                    constraint_solver.unification.substitute_taint_type(taint),
+                )
+            })
+            .collect();
+
+        println!(
+            "Monomorphized SSA:\n{}",
+            custom_ssa
+                .get_main()
+                .to_string(custom_ssa.get_main_id(), |_, val| cloned_main
+                    .annotate_value(val))
+        );
+        // println!("Taint analysis:\n{}", taint_analysis.to_string());
+
         Ok(())
+    }
+}
+
+pub fn mainify_taint(taint: &TaintType) -> TaintType {
+    match taint {
+        TaintType::Primitive(_) => TaintType::Primitive(Taint::Witness),
+        TaintType::NestedImmutable(_, inner) => {
+            TaintType::NestedImmutable(Taint::Pure, Box::new(mainify_taint(inner)))
+        }
+        _ => panic!("Cannot mainify taint: {:?}", taint),
     }
 }
 

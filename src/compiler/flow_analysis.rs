@@ -4,10 +4,10 @@ use std::fs;
 use std::io::Write;
 use std::process::Command;
 
+use petgraph::Direction;
 use petgraph::algo::dominators::{self, Dominators};
 use petgraph::graph::{DiGraph, NodeIndex};
-use petgraph::visit::EdgeRef;
-use petgraph::Direction;
+use petgraph::visit::{Bfs, DfsPostOrder, EdgeRef, Walker};
 
 use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SSA, Terminator};
 
@@ -184,14 +184,18 @@ impl FlowAnalysis {
         dominator_tree
     }
 
-    fn compute_merge_point(post_dom: &Dominators<NodeIndex<u32>>, mut blk1: NodeIndex<u32>, mut blk2: NodeIndex<u32>) -> NodeIndex<u32> {
+    fn compute_merge_point(
+        post_dom: &Dominators<NodeIndex<u32>>,
+        mut blk1: NodeIndex<u32>,
+        mut blk2: NodeIndex<u32>,
+    ) -> NodeIndex<u32> {
         let mut depth1 = Self::get_depth_in_post_dominator_tree(&post_dom, blk1);
         let mut depth2 = Self::get_depth_in_post_dominator_tree(&post_dom, blk2);
         if depth1 > depth2 {
             std::mem::swap(&mut blk1, &mut blk2);
             std::mem::swap(&mut depth1, &mut depth2);
         }
-        let mut cur2 = Self::get_ancestor_in_post_dominator_tree(&post_dom, blk2, depth2-depth1);
+        let mut cur2 = Self::get_ancestor_in_post_dominator_tree(&post_dom, blk2, depth2 - depth1);
         let mut cur1 = blk1;
         while cur1 != cur2 {
             cur1 = post_dom.immediate_dominator(cur1).unwrap();
@@ -225,13 +229,20 @@ impl FlowAnalysis {
             if cfg.loop_entrys.contains(&cfg.node_to_block[&node]) {
                 continue;
             }
-            let outgoing_edges = cfg.cfg.edges_directed(node, Direction::Outgoing).collect::<Vec<_>>();
-            if outgoing_edges.iter().any(|edge| edge.weight() == &JumpType::JmpIf) {
+            let outgoing_edges = cfg
+                .cfg
+                .edges_directed(node, Direction::Outgoing)
+                .collect::<Vec<_>>();
+            if outgoing_edges
+                .iter()
+                .any(|edge| edge.weight() == &JumpType::JmpIf)
+            {
                 assert!(outgoing_edges.len() == 2);
                 let t1 = outgoing_edges[0].target();
                 let t2 = outgoing_edges[1].target();
                 let merge_point = Self::compute_merge_point(&post_dom, t1, t2);
-                cfg.if_merge_points.insert(cfg.node_to_block[&node], cfg.node_to_block[&merge_point]);
+                cfg.if_merge_points
+                    .insert(cfg.node_to_block[&node], cfg.node_to_block[&merge_point]);
             }
         }
     }
@@ -240,13 +251,16 @@ impl FlowAnalysis {
         let cfg = self.function_cfgs.get(&function_id).unwrap();
         cfg.loop_entrys.contains(&block_id)
     }
-    
+
     pub fn get_merge_point(&self, function_id: FunctionId, block_id: BlockId) -> BlockId {
         let cfg = self.function_cfgs.get(&function_id).unwrap();
         *cfg.if_merge_points.get(&block_id).unwrap()
     }
 
-    fn get_depth_in_post_dominator_tree(post_dom: &Dominators<NodeIndex<u32>>, node: NodeIndex<u32>) -> u32 {
+    fn get_depth_in_post_dominator_tree(
+        post_dom: &Dominators<NodeIndex<u32>>,
+        node: NodeIndex<u32>,
+    ) -> u32 {
         let mut depth = 0;
         let mut current = node;
         while let Some(parent) = post_dom.immediate_dominator(current) {
@@ -256,12 +270,32 @@ impl FlowAnalysis {
         depth
     }
 
-    fn get_ancestor_in_post_dominator_tree(post_dom: &Dominators<NodeIndex<u32>>, node: NodeIndex<u32>, depth: u32) -> NodeIndex<u32> {
+    fn get_ancestor_in_post_dominator_tree(
+        post_dom: &Dominators<NodeIndex<u32>>,
+        node: NodeIndex<u32>,
+        depth: u32,
+    ) -> NodeIndex<u32> {
         let mut current = node;
         for _ in 0..depth {
             current = post_dom.immediate_dominator(current).unwrap();
         }
         current
+    }
+
+    pub fn get_functions_post_order(
+        &self,
+        main_fn_id: FunctionId,
+    ) -> impl Iterator<Item = FunctionId> {
+        DfsPostOrder::new(&self.call_graph, self.func_to_node[&main_fn_id])
+            .iter(&self.call_graph)
+            .filter_map(|node| self.node_to_func.get(&node).cloned())
+    }
+
+    pub fn get_blocks_bfs(&self, function_id: FunctionId) -> impl Iterator<Item = BlockId> {
+        let cfg = self.function_cfgs.get(&function_id).unwrap();
+        Bfs::new(&cfg.cfg, cfg.entry_node)
+            .iter(&cfg.cfg)
+            .filter_map(|node| cfg.node_to_block.get(&node).cloned())
     }
 
     /// Generate a Graphviz dot representation of the flow analysis

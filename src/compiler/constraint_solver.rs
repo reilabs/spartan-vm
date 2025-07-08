@@ -1,4 +1,4 @@
-use crate::compiler::taint_analysis::{Judgement, Taint, TaintAnalysis, TaintType, TypeVariable};
+use crate::compiler::taint_analysis::{FunctionTaint, Judgement, Taint, TaintType, TypeVariable};
 use crate::compiler::union_find::UnionFind;
 use petgraph::algo::tarjan_scc;
 use petgraph::graph::{DiGraph, NodeIndex};
@@ -7,39 +7,73 @@ use std::collections::HashMap;
 /// Constraint solver for taint analysis
 #[derive(Clone)]
 pub struct ConstraintSolver {
-    unification: UnionFind,
+    pub unification: UnionFind,
     judgements: Vec<Judgement>,
-    // TODO: Add fields for subtyping and instantiation constraints
 }
 
 impl ConstraintSolver {
-    pub fn new(taint_analysis: &TaintAnalysis) -> Self {
+    pub fn new(taint_analysis: &FunctionTaint) -> Self {
         ConstraintSolver {
             unification: UnionFind::new(),
-            judgements: taint_analysis.get_judgements_data().to_vec(),
+            judgements: taint_analysis.get_judgements().clone(),
         }
+    }
+
+    pub fn add_assumption(&mut self, left_type: &TaintType, right_type: &TaintType) {
+        self.push_deep_eq(left_type, right_type);
     }
 
     /// Main entry point for constraint solving
     pub fn solve(&mut self) {
+        println!("Solving constraints...");
+        println!("{}", self.judgements_string());
+        println!("Number of judgements: {}", self.num_judgements());
+        self.simplify_unions_algebraically();
+        println!("\n\n=== Simplified unions algebraically ===");
+        println!("{}", self.judgements_string());
+        println!("Number of judgements: {}", self.num_judgements());
         // TODO: Implement constraint solving logic
         self.inline_equalities();
-        // println!("\n\n=== Inlined equalities ===");
-        // println!("{}", self.judgements_string());
-        // println!("Number of judgements: {}", self.num_judgements());
+        println!("\n\n=== Inlined equalities ===");
+        println!("{}", self.judgements_string());
+        println!("Number of judgements: {}", self.num_judgements());
         self.blow_up_le_of_meet();
-        // println!("\n\n=== Blow up le of meet ===");
-        // println!("{}", self.judgements_string());
-        // println!("Number of judgements: {}", self.num_judgements());
-        self.simplify_le_pure();
-        // println!("\n\n=== Simplified le of pure ===");
-        // println!("{}", self.judgements_string());
-        // println!("Number of judgements: {}", self.num_judgements());
-        self.unify_cycles();
+        println!("\n\n=== Blow up le of meet ===");
+        println!("{}", self.judgements_string());
+        println!("Number of judgements: {}", self.num_judgements());
+        self.simplify_unions_algebraically();
+        println!("\n\n=== Simplified unions algebraically ===");
+        println!("{}", self.judgements_string());
+        println!("Number of judgements: {}", self.num_judgements());
+
+        let mut current_judgements = self.num_judgements();
+        loop {
+            self.simplify_le_const();
+            self.inline_equalities();
+            if self.num_judgements() == current_judgements {
+                break;
+            }
+            current_judgements = self.num_judgements();
+        }
+        println!("\n\n=== EQ / LE CONST LOOP ===");
+        println!("{}", self.judgements_string());
+        println!("Number of judgements: {}", self.num_judgements());
+
+        self.run_defaulting();
+        println!("\n\n=== Defaulting ===");
+        println!("{}", self.judgements_string());
+        println!("Number of judgements: {}", self.num_judgements());
+
+        self.inline_equalities();
+        println!("\n\n=== Inlined equalities ===");
+        println!("{}", self.judgements_string());
+        println!("Number of judgements: {}", self.num_judgements());
+
+        // self.unify_cycles();
         // println!("\n\n=== Unified cycles ===");
         // println!("{}", self.judgements_string());
         // println!("Number of judgements: {}", self.num_judgements());
-        self.cleanup_judgements();
+        // self.cleanup_judgements();
         // println!("\n\n=== Cleaned up judgements ===");
         // println!("{}", self.judgements_string());
         // println!("Number of judgements: {}", self.num_judgements());
@@ -87,11 +121,9 @@ impl ConstraintSolver {
                     // TODO: Occurs check
                     self.unification.set_taint(*l, t.clone());
                 }
-                Judgement::Eq(l, r) => {
-                    panic!(
-                        "Don't know how to handle this equality yet: {:?} = {:?}",
-                        l, r
-                    );
+                Judgement::Eq(t, Taint::Variable(l)) => {
+                    // TODO: Occurs check
+                    self.unification.set_taint(*l, t.clone());
                 }
                 _ => new_judgements.push(judgement.clone()),
             }
@@ -99,15 +131,34 @@ impl ConstraintSolver {
         self.judgements = new_judgements;
     }
 
-    fn flatten_meets(&self, taint: &Taint) -> Vec<Taint> {
+    fn flatten_unions(&self, taint: &Taint) -> Vec<Taint> {
         match taint {
-            Taint::Meet(l, r) => {
+            Taint::Union(l, r) => {
                 let mut result = Vec::new();
-                result.extend(self.flatten_meets(l));
-                result.extend(self.flatten_meets(r));
+                result.extend(self.flatten_unions(l));
+                result.extend(self.flatten_unions(r));
                 result
             }
             _ => vec![taint.clone()],
+        }
+    }
+
+    fn simplify_union_algebraically(&self, taint: Taint) -> Taint {
+        match taint {
+            Taint::Union(l, r) => {
+                let l_simplified =
+                    self.simplify_union_algebraically(self.unification.substitute_variables(&l));
+                let r_simplified =
+                    self.simplify_union_algebraically(self.unification.substitute_variables(&r));
+                match (l_simplified, r_simplified) {
+                    (Taint::Pure, r) => r,
+                    (l, Taint::Pure) => l,
+                    (Taint::Witness, _) => Taint::Witness,
+                    (_, Taint::Witness) => Taint::Witness,
+                    (l, r) => Taint::Union(Box::new(l), Box::new(r)),
+                }
+            }
+            _ => taint,
         }
     }
 
@@ -116,9 +167,9 @@ impl ConstraintSolver {
         for judgement in &self.judgements {
             match judgement {
                 Judgement::Le(l, r) => {
-                    let flattened_meets = self.flatten_meets(r);
-                    for meet in flattened_meets {
-                        new_judgements.push(Judgement::Le(l.clone(), meet));
+                    let flattened_unions = self.flatten_unions(l);
+                    for union in flattened_unions {
+                        new_judgements.push(Judgement::Le(union, r.clone()));
                     }
                 }
                 _ => new_judgements.push(judgement.clone()),
@@ -127,14 +178,37 @@ impl ConstraintSolver {
         self.judgements = new_judgements;
     }
 
-    fn simplify_le_pure(&mut self) {
+    fn simplify_unions_algebraically(&mut self) {
         let mut new_judgements = Vec::new();
         for judgement in &self.judgements {
             match judgement {
-                Judgement::Le(Taint::Pure, r) => {
-                    new_judgements.push(Judgement::Eq(Taint::Pure, r.clone()));
+                Judgement::Le(l, r) => {
+                    let l_simplified = self.simplify_union_algebraically(l.clone());
+                    let r_simplified = self.simplify_union_algebraically(r.clone());
+                    new_judgements.push(Judgement::Le(l_simplified, r_simplified));
                 }
-                Judgement::Le(l, Taint::Pure) => {}
+                Judgement::Eq(l, r) => {
+                    let l_simplified = self.simplify_union_algebraically(l.clone());
+                    let r_simplified = self.simplify_union_algebraically(r.clone());
+                    new_judgements.push(Judgement::Eq(l_simplified, r_simplified));
+                }
+            }
+        }
+        self.judgements = new_judgements;
+    }
+
+    fn simplify_le_const(&mut self) {
+        let mut new_judgements = Vec::new();
+        for judgement in &self.judgements {
+            match self.unification.substitute_judgement(judgement) {
+                Judgement::Le(Taint::Pure, r) => {}
+                Judgement::Le(Taint::Witness, r) => {
+                    new_judgements.push(Judgement::Eq(Taint::Witness, r.clone()));
+                }
+                Judgement::Le(l, Taint::Pure) => {
+                    new_judgements.push(Judgement::Eq(l.clone(), Taint::Pure));
+                }
+                Judgement::Le(l, Taint::Witness) => {}
                 _ => new_judgements.push(judgement.clone()),
             }
         }
@@ -279,57 +353,41 @@ impl ConstraintSolver {
         self.judgements = new_judgements;
     }
 
-    fn solve_under_instantiations(
-        &mut self,
-        insts: Vec<(TypeVariable, Taint)>,
-        constraints: Vec<(TypeVariable, Taint)>,
-        other_judgements: &Vec<Judgement>,
-    ) {
-        let cloned = self.with_judgements(
-            other_judgements.iter().cloned().chain(
-                constraints
-                    .iter()
-                    .cloned()
-                    .map(|(l, r)| Judgement::Le(Taint::Variable(l), r)),
-            )
-            .chain(
-                insts.iter()
-                    .cloned()
-                    .map(|(l, r)| Judgement::Eq(Taint::Variable(l), r)),
-            )
-            .collect(),
-        );
+    fn push_deep_eq(&mut self, left_type: &TaintType, right_type: &TaintType) {
+        match (left_type, right_type) {
+            (TaintType::Primitive(l), TaintType::Primitive(r)) => {
+                self.judgements.push(Judgement::Eq(l.clone(), r.clone()));
+            }
+            (TaintType::NestedImmutable(l, inner_l), TaintType::NestedImmutable(r, inner_r)) => {
+                self.judgements.push(Judgement::Eq(l.clone(), r.clone()));
+                self.push_deep_eq(inner_l, inner_r);
+            }
+            (TaintType::NestedMutable(l, inner_l), TaintType::NestedMutable(r, inner_r)) => {
+                self.judgements.push(Judgement::Eq(l.clone(), r.clone()));
+                self.push_deep_eq(inner_l, inner_r);
+            }
+            _ => panic!("Cannot unify different taint types"),
+        }
     }
 
-    fn with_judgements(&mut self, judgements: Vec<Judgement>) -> Self {
-        let mut cloned = self.clone();
-        cloned.judgements = judgements;
-        cloned
-    }
-
-    fn solve_instantiation_constraints(&mut self) {
-        let mut judgements_with_instantiation_constraints: HashMap<
-            Vec<(TypeVariable, Taint)>,
-            Vec<(TypeVariable, Taint)>,
-        > = HashMap::new();
-        let mut other_judgements: Vec<Judgement> = Vec::new();
-
-        for judgement in &self.judgements {
-            match judgement {
-                Judgement::Le(Taint::Variable(l), Taint::Instantiate(r, insts)) => {
-                    judgements_with_instantiation_constraints
-                        .entry(insts.clone())
-                        .or_insert(Vec::new())
-                        .push((*l, *r.clone()));
-                }
-                _ => {
-                    other_judgements.push(judgement.clone());
+    fn run_defaulting(&mut self) {
+        let has_constants = self.judgements.iter().any(|j| self.unification.substitute_judgement(j).has_constants());
+        if !has_constants {
+            let mut new_judgements = Vec::new();
+            for judgement in &self.judgements {
+                match judgement {
+                    Judgement::Le(l, r) => {
+                        new_judgements.push(Judgement::Eq(l.clone(), Taint::Pure));
+                        new_judgements.push(Judgement::Eq(r.clone(), Taint::Pure));
+                    }
+                    Judgement::Eq(l, r) => {
+                        new_judgements.push(Judgement::Eq(l.clone(), Taint::Pure));
+                        new_judgements.push(Judgement::Eq(r.clone(), Taint::Pure));
+                    }
                 }
             }
-        }
-
-        for (insts, constraints) in judgements_with_instantiation_constraints {
-            self.solve_under_instantiations(insts, constraints, &other_judgements);
+            self.judgements = new_judgements;
         }
     }
+
 }

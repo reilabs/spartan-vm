@@ -101,7 +101,7 @@ pub struct SSA {
 impl SSA {
     pub fn to_string(
         &self,
-        value_annotator: impl Fn(FunctionId, BlockId, ValueId) -> String,
+        value_annotator: impl Fn(FunctionId, ValueId) -> String,
     ) -> String {
         println!("Entry point: {}", self.main_id.0);
         self.functions
@@ -194,7 +194,7 @@ impl Function {
     pub fn to_string(
         &self,
         id: FunctionId,
-        value_annotator: impl Fn(FunctionId, BlockId, ValueId) -> String,
+        value_annotator: impl Fn(FunctionId, ValueId) -> String,
     ) -> String {
         let header = format!("fn_{}@block_{} -> {} {{", id.0, self.entry_block.0, self.returns.iter().map(|t| t.to_string()).join(", "));
         let blocks = self
@@ -445,7 +445,7 @@ impl Block {
         &self,
         func_id: FunctionId,
         id: BlockId,
-        value_annotator: impl Fn(FunctionId, BlockId, ValueId) -> String,
+        value_annotator: impl Fn(FunctionId, ValueId) -> String,
     ) -> String {
         let params = self
             .parameters
@@ -455,7 +455,7 @@ impl Block {
                     "v{} : {} [{}]",
                     v.0.0,
                     v.1.to_string(),
-                    value_annotator(func_id, id, v.0)
+                    value_annotator(func_id, v.0)
                 )
             })
             .join(", ");
@@ -465,7 +465,7 @@ impl Block {
             .map(|i| {
                 format!(
                     "    {}",
-                    i.to_string(|vid| value_annotator(func_id, id, vid))
+                    i.to_string(|vid| value_annotator(func_id, vid))
                 )
             })
             .join("\n");
