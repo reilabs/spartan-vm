@@ -34,10 +34,10 @@ impl FunctionConverter {
     ) -> Function {
         // Create an empty function
         let mut custom_function = Function::empty();
-
+        
         // Get the entry block ID
         let entry_block_id = custom_function.get_entry_id();
-
+        
         // // Convert function parameters
         // // The parameters are stored in the entry block's parameters
         // for param_value_id in noir_function.parameters() {
@@ -47,12 +47,12 @@ impl FunctionConverter {
         //     let param_id = custom_function.add_parameter(entry_block_id, converted_type);
         //     self.value_mapper.map_value(*param_value_id, param_id);
         // }
-
+        
         // Convert function return types
         for return_val in noir_function.returns().iter() {
             let return_type = &noir_function.dfg.values[*return_val].get_type();
             let converted_return_type = self.type_converter.convert_type(return_type);
-            custom_function.add_return_type(converted_return_type);
+                            custom_function.add_return_type(converted_return_type);
         }
 
         for (block_id, _) in noir_function.dfg.basic_blocks_iter() {
@@ -350,10 +350,10 @@ impl FunctionConverter {
                 _ => panic!("Unsupported terminator: {:?}", block.terminator()),
             }
         }
-
+        
         // TODO: Convert function body (blocks, instructions, terminators)
         // For now, we leave the body empty as requested
-
+        
         custom_function
     }
 

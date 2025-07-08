@@ -1,6 +1,6 @@
 //! Functionality for working with projects of Noir sources.
 
-use crate::{compiler::flow_analysis::FlowAnalysis, noir::{
+use crate::{compiler::{flow_analysis::FlowAnalysis, ssa::{BlockId, FunctionId}}, noir::{
     error::compilation::{Error as CompileError, Result as CompileResult}, WithWarnings
 }};
 use fm::FileManager;
@@ -99,6 +99,17 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let mut flow_analysis = FlowAnalysis::new();
         flow_analysis.run(&custom_ssa);
         flow_analysis.save_as_png("flow_analysis.png").unwrap();
+
+        let call_loops = flow_analysis.detect_call_loops();
+        if !call_loops.is_empty() {
+            panic!("Call loops detected: {:?}. We don't support recursion yet.", call_loops);
+        }
+
+        for (func_id, cfg) in flow_analysis.function_cfgs.iter() {
+            println!("Function {:?}:", func_id);
+            println!("  Loop entrys: {:?}", cfg.loop_entrys);
+            println!("  If merge points: {:?}", cfg.if_merge_points);
+        }
 
         Ok(())
     }
