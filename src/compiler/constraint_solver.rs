@@ -49,7 +49,13 @@ impl ConstraintSolver {
         let mut current_judgements = self.num_judgements();
         loop {
             self.simplify_le_const();
+            println!("\n\n=== Simplified le const ===");
+            println!("{}", self.judgements_string());
+            println!("Number of judgements: {}", self.num_judgements());
             self.inline_equalities();
+            println!("\n\n=== Inlined equalities ===");
+            println!("{}", self.judgements_string());
+            println!("Number of judgements: {}", self.num_judgements());
             if self.num_judgements() == current_judgements {
                 break;
             }
@@ -119,11 +125,22 @@ impl ConstraintSolver {
                 }
                 Judgement::Eq(Taint::Variable(l), t) => {
                     // TODO: Occurs check
-                    self.unification.set_taint(*l, t.clone());
+                    if let Some(old) = self.unification.set_taint(*l, t.clone()) {
+                        new_judgements.push(Judgement::Eq(old, t.clone()));
+                    }
                 }
                 Judgement::Eq(t, Taint::Variable(l)) => {
                     // TODO: Occurs check
-                    self.unification.set_taint(*l, t.clone());
+                    if let Some(old) = self.unification.set_taint(*l, t.clone()) {
+                        new_judgements.push(Judgement::Eq(old, t.clone()));
+                    }
+                }
+                Judgement::Eq(t1, t2) => {
+                    let t1_substituted = self.unification.substitute_variables(t1);
+                    let t2_substituted = self.unification.substitute_variables(t2);
+                    if t1_substituted != t2_substituted {
+                        new_judgements.push(Judgement::Eq(t1_substituted, t2_substituted));
+                    }
                 }
                 _ => new_judgements.push(judgement.clone()),
             }
@@ -201,7 +218,7 @@ impl ConstraintSolver {
         let mut new_judgements = Vec::new();
         for judgement in &self.judgements {
             match self.unification.substitute_judgement(judgement) {
-                Judgement::Le(Taint::Pure, r) => {}
+                Judgement::Le(Taint::Pure, _) => {}
                 Judgement::Le(Taint::Witness, r) => {
                     new_judgements.push(Judgement::Eq(Taint::Witness, r.clone()));
                 }

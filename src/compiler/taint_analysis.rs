@@ -4,6 +4,7 @@ use crate::compiler::ssa::{
 };
 use crate::compiler::taint_analysis::Taint::Pure;
 use crate::compiler::taint_analysis::TaintType::{NestedImmutable, NestedMutable, Primitive};
+use crate::compiler::union_find::UnionFind;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
@@ -77,6 +78,23 @@ impl Taint {
             Taint::Pure | Taint::Witness => true,
             Taint::Variable(_) => false,
             Taint::Union(left, right) => left.has_constants() || right.has_constants(),
+        }
+    }
+
+    pub fn simplify_and_default(&self) -> Taint {
+        match self {
+            Taint::Pure => Taint::Pure,
+            Taint::Witness => Taint::Witness,
+            Taint::Variable(_) => Taint::Pure, // TODO is this correct?
+            Taint::Union(left, right) => {
+                match (left.simplify_and_default(), right.simplify_and_default()) {
+                    (Taint::Pure, r) => r,
+                    (Taint::Witness, _) => Taint::Witness,
+                    (l, Taint::Pure) => l,
+                    (_, Taint::Witness) => Taint::Witness,
+                    _ => panic!("This should be impossible here"),
+                }
+            }
         }
     }
 }
@@ -173,6 +191,20 @@ impl TaintType {
                 t.substitute(varmap);
                 inner.substitute(varmap);
             }
+        }
+    }
+
+    pub fn simplify_and_default(&self) -> TaintType {
+        match self {
+            TaintType::Primitive(taint) => TaintType::Primitive(taint.simplify_and_default()),
+            TaintType::NestedImmutable(taint, inner) => TaintType::NestedImmutable(
+                taint.simplify_and_default(),
+                Box::new(inner.simplify_and_default()),
+            ),
+            TaintType::NestedMutable(taint, inner) => TaintType::NestedMutable(
+                taint.simplify_and_default(),
+                Box::new(inner.simplify_and_default()),
+            ),
         }
     }
 }
@@ -297,6 +329,46 @@ impl FunctionTaint {
         };
         taint.to_string()
     }
+
+    pub fn update_from_unification(&self, unification: &UnionFind) -> Self {
+        let mut new_taint = self.clone();
+
+        new_taint.judgements = Vec::new();
+        new_taint.cfg_taint = unification
+            .substitute_variables(&new_taint.cfg_taint)
+            .simplify_and_default();
+        new_taint.returns_taint = new_taint
+            .returns_taint
+            .iter()
+            .map(|taint| {
+                unification
+                    .substitute_taint_type(taint)
+                    .simplify_and_default()
+            })
+            .collect();
+        new_taint.parameters = new_taint
+            .parameters
+            .iter()
+            .map(|taint| {
+                unification
+                    .substitute_taint_type(taint)
+                    .simplify_and_default()
+            })
+            .collect();
+        new_taint.value_taints = new_taint
+            .value_taints
+            .iter()
+            .map(|(value_id, taint)| {
+                (
+                    *value_id,
+                    unification
+                        .substitute_taint_type(taint)
+                        .simplify_and_default(),
+                )
+            })
+            .collect();
+        new_taint
+    }
 }
 
 #[derive(Clone)]
@@ -340,12 +412,8 @@ impl Judgement {
 
     pub fn has_constants(&self) -> bool {
         match self {
-            Judgement::Eq(left, right) => {
-                left.has_constants() || right.has_constants()
-            }
-            Judgement::Le(left, right) => {
-                left.has_constants() || right.has_constants()
-            }
+            Judgement::Eq(left, right) => left.has_constants() || right.has_constants(),
+            Judgement::Le(left, right) => left.has_constants() || right.has_constants(),
         }
     }
 }
@@ -418,6 +486,11 @@ impl TaintAnalysis {
                 cfg_taint = cfg_taint.union(&taint.taint.clone());
             }
 
+            println!(
+                "Function {:?} block {:?} cfg taint: {:?}",
+                func_id, block_id, cfg_taint
+            );
+
             for instruction in block.get_instructions() {
                 match instruction {
                     OpCode::Add(r, lhs, rhs)
@@ -477,7 +550,8 @@ impl TaintAnalysis {
                         let result_taint = elem_taint.with_toplevel_taint(
                             arr_taint
                                 .toplevel_taint()
-                                .union(&idx_taint.toplevel_taint()),
+                                .union(&idx_taint.toplevel_taint())
+                                .union(&elem_taint.toplevel_taint()),
                         );
                         function_taint.value_taints.insert(*r, result_taint);
                     }

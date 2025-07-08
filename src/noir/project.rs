@@ -149,31 +149,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         constraint_solver.solve();
 
-        let mut cloned_main = main_func.clone();
-        cloned_main.judgements = Vec::new();
-        cloned_main.cfg_taint = constraint_solver
-            .unification
-            .substitute_variables(&cloned_main.cfg_taint);
-        cloned_main.returns_taint = main_func
-            .returns_taint
-            .iter()
-            .map(|taint| constraint_solver.unification.substitute_taint_type(taint))
-            .collect();
-        cloned_main.parameters = main_func
-            .parameters
-            .iter()
-            .map(|taint| constraint_solver.unification.substitute_taint_type(taint))
-            .collect();
-        cloned_main.value_taints = main_func
-            .value_taints
-            .iter()
-            .map(|(value_id, taint)| {
-                (
-                    *value_id,
-                    constraint_solver.unification.substitute_taint_type(taint),
-                )
-            })
-            .collect();
+        let cloned_main = main_func.update_from_unification(&constraint_solver.unification);
 
         println!(
             "Monomorphized SSA:\n{}",
@@ -183,6 +159,32 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
                     .annotate_value(val))
         );
         // println!("Taint analysis:\n{}", taint_analysis.to_string());
+
+        let big_function_id = FunctionId(1);
+        let big_function_taint = taint_analysis.get_function_taint(big_function_id);
+
+        let mut constraint_solver = ConstraintSolver::new(&big_function_taint);
+        constraint_solver.add_assumption(
+            &TaintType::Primitive(big_function_taint.cfg_taint.clone()),
+            &TaintType::Primitive(Taint::Pure),
+        );
+        for param in big_function_taint.parameters.iter() {
+            constraint_solver.add_assumption(param, &mainify_taint(param));
+        }
+        constraint_solver.add_assumption(
+            &big_function_taint.returns_taint[0],
+            &TaintType::Primitive(Taint::Witness),
+        );
+        constraint_solver.solve();
+
+        let big_function_taint = big_function_taint.update_from_unification(&constraint_solver.unification);
+        println!(
+            "Monomorphized SSA:\n{}",
+            custom_ssa
+                .get_function(big_function_id)
+                .to_string(big_function_id, |_, val| big_function_taint
+                    .annotate_value(val))
+        );
 
         Ok(())
     }

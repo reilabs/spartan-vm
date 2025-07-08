@@ -116,9 +116,12 @@ impl UnionFind {
     }
 
     /// Set the taint value for a representative
-    pub fn set_taint(&mut self, representative: TypeVariable, taint: Taint) {
+    #[must_use]
+    pub fn set_taint(&mut self, representative: TypeVariable, taint: Taint) -> Option<Taint> {
         let mut mapping = self.taint_mapping.borrow_mut();
+        let old_taint = mapping.get(&representative).cloned();
         mapping.insert(representative, taint);
+        old_taint
     }
 
     /// Get the taint value for a representative, if it exists
