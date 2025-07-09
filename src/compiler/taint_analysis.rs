@@ -121,7 +121,7 @@ impl std::fmt::Display for Taint {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub enum TaintType {
     Primitive(Taint),
     NestedImmutable(Taint, Box<TaintType>),
@@ -254,6 +254,14 @@ impl TaintAnalysis {
 
     pub fn get_function_taint(&self, func_id: FunctionId) -> &FunctionTaint {
         self.functions.get(&func_id).unwrap()
+    }
+
+    pub fn set_function_taint(&mut self, func_id: FunctionId, taint: FunctionTaint) {
+        self.functions.insert(func_id, taint);
+    }
+
+    pub fn remove_function_taint(&mut self, func_id: FunctionId) {
+        self.functions.remove(&func_id);
     }
 }
 

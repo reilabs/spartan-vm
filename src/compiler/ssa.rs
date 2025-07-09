@@ -154,6 +154,17 @@ impl SSA {
         }
     }
 
+    pub fn insert_function(&mut self, function: Function) -> FunctionId {
+        let new_id = FunctionId(self.next_function_id);
+        self.next_function_id += 1;
+        self.functions.insert(new_id, function);
+        new_id
+    }
+
+    pub fn set_entry_point(&mut self, id: FunctionId) {
+        self.main_id = id;
+    }
+
     pub fn get_main_id(&self) -> FunctionId {
         self.main_id
     }
@@ -176,6 +187,14 @@ impl SSA {
 
     pub fn get_function_mut(&mut self, id: FunctionId) -> &mut Function {
         self.functions.get_mut(&id).expect("Function should exist")
+    }
+
+    pub fn take_function(&mut self, id: FunctionId) -> Function {
+        self.functions.remove(&id).expect("Function should exist")
+    }
+
+    pub fn put_function(&mut self, id: FunctionId, function: Function) {
+        self.functions.insert(id, function);
     }
 
     pub fn add_function(&mut self) -> FunctionId {
@@ -207,6 +226,10 @@ impl SSA {
     pub fn from_noir(noir_ssa: &noirc_evaluator::ssa::ssa_gen::Ssa) -> Self {
         let mut converter = SsaConverter::new();
         converter.convert_noir_ssa(noir_ssa)
+    }
+
+    pub fn get_function_ids(&self) -> impl Iterator<Item = FunctionId> {
+        self.functions.keys().copied()
     }
 }
 
@@ -330,14 +353,6 @@ impl Function {
         }
 
         Ok(())
-    }
-
-    pub fn clone_block(&mut self, id: BlockId) -> BlockId {
-        let block = self.blocks.get(&id).expect("Block should exist").clone();
-        let new_block = self.add_block();
-        let new_block_ref = self.get_block_mut(new_block);
-        *new_block_ref = block.clone();
-        new_block
     }
 
     pub fn get_returns(&self) -> &[Type] {
@@ -544,6 +559,10 @@ impl Function {
             .unwrap()
             .set_terminator(Terminator::Jmp(destination, arguments));
     }
+
+    pub fn get_blocks_mut(&mut self) -> impl Iterator<Item = (&BlockId, &mut Block)> {
+        self.blocks.iter_mut()
+    }
 }
 
 #[derive(Clone)]
@@ -617,6 +636,10 @@ impl Block {
 
     pub fn get_instructions(&self) -> impl Iterator<Item = &OpCode> {
         self.instructions.iter()
+    }
+
+    pub fn get_instructions_mut(&mut self) -> impl Iterator<Item = &mut OpCode> {
+        self.instructions.iter_mut()
     }
 
     pub fn get_terminator(&self) -> Option<&Terminator> {
