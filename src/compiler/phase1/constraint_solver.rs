@@ -1,7 +1,7 @@
-use crate::compiler::taint_analysis::{
-    ConstantTaint, FunctionTaint, Judgement, Taint, TaintAnalysis, TaintType, TypeVariable,
+use crate::compiler::phase1::taint_analysis::{
+    ConstantTaint, FunctionTaint, Judgement, Taint, TaintType, TypeVariable,
 };
-use crate::compiler::union_find::UnionFind;
+use crate::compiler::phase1::union_find::UnionFind;
 use petgraph::algo::tarjan_scc;
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashMap;

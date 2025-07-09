@@ -1,14 +1,11 @@
 //! Functionality for working with projects of Noir sources.
 
-use std::rc::Rc;
-
-use crate::compiler::monomorphization::Monomorphization;
-use crate::compiler::ssa::{BlockId, DefaultSsaAnnotator, SSA};
-use crate::compiler::taint_analysis::{ConstantTaint, Taint, TaintType};
+use crate::compiler::phase1::monomorphization::Monomorphization;
+use crate::compiler::phase1::ssa::{DefaultSsaAnnotator, SSA};
+use crate::compiler::phase1::taint_analysis::TaintAnalysis;
 use crate::{
     compiler::{
-        constraint_solver::ConstraintSolver, flow_analysis::FlowAnalysis, ssa::FunctionId,
-        taint_analysis::TaintAnalysis,
+        phase1::{flow_analysis::FlowAnalysis},
     },
     noir::error::compilation::{Error as CompileError, Result as CompileResult},
 };
@@ -18,7 +15,8 @@ use nargo::{
     workspace::Workspace,
 };
 use noirc_driver::{CompileOptions, check_crate};
-use noirc_evaluator::ssa::{SsaBuilder, SsaLogging, minimal_passes};
+use noirc_evaluator::ssa::ssa_gen::Ssa;
+use noirc_evaluator::ssa::{SsaBuilder, SsaLogging, SsaPass};
 use noirc_frontend::hir::ParsedFiles;
 use noirc_frontend::monomorphization::monomorphize;
 
@@ -73,7 +71,23 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         println!("SSA!");
         let ssa = SsaBuilder::from_program(program, SsaLogging::All, true, &None, None).unwrap();
-        let ssa = ssa.run_passes(&minimal_passes()).unwrap();
+
+        let passes = vec![
+            // We need to get rid of function pointer parameters, otherwise they cause panic in Brillig generation.
+            SsaPass::new(Ssa::defunctionalize, "Defunctionalization"),
+            // Even the initial SSA generation can result in optimizations that leave a function
+            // which was called in the AST not being called in the SSA. Such functions would cause
+            // panics later, when we are looking for global allocations.
+            SsaPass::new(Ssa::remove_unreachable_functions, "Removing Unreachable Functions"),
+            // We need to add an offset to constant array indices in Brillig.
+            // This can change which globals are used, because constant creation might result
+            // in the (re)use of otherwise unused global values.
+            SsaPass::new(Ssa::brillig_array_get_and_set, "Brillig Array Get and Set Optimizations"),
+            // We need a DIE pass to populate `used_globals`, otherwise it will panic later.
+            SsaPass::new(Ssa::dead_instruction_elimination, "Dead Instruction Elimination"),
+        ];
+
+        let ssa = ssa.run_passes(&&passes).unwrap();
 
         // Convert to custom SSA
         let mut custom_ssa = SSA::from_noir(&ssa.ssa);

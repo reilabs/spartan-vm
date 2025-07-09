@@ -1,4 +1,4 @@
-use crate::compiler::taint_analysis::{ConstantTaint, Judgement, Taint, TaintType, TypeVariable};
+use crate::compiler::phase1::taint_analysis::{ConstantTaint, Judgement, Taint, TaintType, TypeVariable};
 use std::cell::RefCell;
 use std::collections::HashMap;
 

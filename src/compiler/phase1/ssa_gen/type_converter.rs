@@ -1,4 +1,4 @@
-use crate::compiler::ssa::Type;
+use crate::compiler::phase1::ssa::Type;
 use std::sync::Arc;
 use noirc_evaluator::ssa::ir::types::{Type as NoirType, NumericType};
 

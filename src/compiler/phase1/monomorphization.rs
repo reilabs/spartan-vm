@@ -1,9 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::compiler::{
-    constraint_solver::ConstraintSolver,
-    ssa::{FunctionId, OpCode, SSA},
-    taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis, TaintType},
+    phase1::{constraint_solver::ConstraintSolver, ssa::{FunctionId, OpCode, SSA}, taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis, TaintType}},
 };
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
