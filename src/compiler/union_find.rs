@@ -1,4 +1,4 @@
-use crate::compiler::taint_analysis::{Judgement, Taint, TaintType, TypeVariable};
+use crate::compiler::taint_analysis::{ConstantTaint, Judgement, Taint, TaintType, TypeVariable};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -7,7 +7,7 @@ use std::collections::HashMap;
 pub struct UnionFind {
     parent: RefCell<HashMap<TypeVariable, TypeVariable>>,
     rank: RefCell<HashMap<TypeVariable, usize>>,
-    taint_mapping: RefCell<HashMap<TypeVariable, Taint>>,
+    taint_mapping: RefCell<HashMap<TypeVariable, ConstantTaint>>,
 }
 
 impl UnionFind {
@@ -78,8 +78,10 @@ impl UnionFind {
         let mut mapping = self.taint_mapping.borrow_mut();
         match (taint_x, taint_y) {
             (Some(taint_x), Some(taint_y)) => {
-                let merged_taint = taint_x.union(&taint_y);
-                mapping.insert(new_root, merged_taint);
+                if taint_x != taint_y {
+                    panic!("Taints are not the same: {:?} and {:?}", taint_x, taint_y);
+                }
+                mapping.insert(new_root, taint_x);
             }
             (Some(taint_x), None) => {
                 mapping.insert(new_root, taint_x);
@@ -108,17 +110,18 @@ impl UnionFind {
         result
     }
 
-    #[must_use]
-    pub fn set_taint(&mut self, representative: TypeVariable, taint: Taint) -> Option<Taint> {
+    pub fn set_taint(&mut self, representative: TypeVariable, taint: ConstantTaint) {
         let mut mapping = self.taint_mapping.borrow_mut();
         let old_taint = mapping.get(&representative).cloned();
+        if old_taint.is_some() && old_taint.unwrap() != taint {
+            panic!("Taints are not the same: {:?} and {:?}", old_taint, taint);
+        }
         mapping.insert(representative, taint);
-        old_taint
     }
 
     pub fn get_taint(&self, representative: TypeVariable) -> Option<Taint> {
         let mapping = self.taint_mapping.borrow();
-        mapping.get(&representative).cloned()
+        mapping.get(&representative).cloned().map(|t| Taint::Constant(t))
     }
 
     pub fn get_taint_for_variable(&self, variable: TypeVariable) -> Option<Taint> {
@@ -128,17 +131,15 @@ impl UnionFind {
 
     pub fn substitute_variables(&self, taint: &Taint) -> Taint {
         match taint {
+            Taint::Constant(constant) => Taint::Constant(*constant),
             Taint::Variable(var) => {
                 let representative = self.find(*var);
-                // Check if the representative has a concrete taint value
-                if let Some(concrete_taint) = self.get_taint(representative) {
-                    self.substitute_variables(&concrete_taint)
+                if let Some(representative_taint) = self.get_taint(representative) {
+                    self.substitute_variables(&representative_taint)
                 } else {
                     Taint::Variable(representative)
                 }
             }
-            Taint::Pure => Taint::Pure,
-            Taint::Witness => Taint::Witness,
             Taint::Union(left, right) => {
                 let left_substituted = self.substitute_variables(left);
                 let right_substituted = self.substitute_variables(right);

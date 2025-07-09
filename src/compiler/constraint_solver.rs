@@ -1,4 +1,6 @@
-use crate::compiler::taint_analysis::{FunctionTaint, Judgement, Taint, TaintType, TypeVariable};
+use crate::compiler::taint_analysis::{
+    ConstantTaint, FunctionTaint, Judgement, Taint, TaintAnalysis, TaintType, TypeVariable,
+};
 use crate::compiler::union_find::UnionFind;
 use petgraph::algo::tarjan_scc;
 use petgraph::graph::{DiGraph, NodeIndex};
@@ -123,17 +125,10 @@ impl ConstraintSolver {
                 Judgement::Eq(Taint::Variable(l), Taint::Variable(r)) => {
                     self.unification.union(*l, *r);
                 }
-                Judgement::Eq(Taint::Variable(l), t) => {
+                Judgement::Eq(Taint::Variable(l), Taint::Constant(t))
+                | Judgement::Eq(Taint::Constant(t), Taint::Variable(l)) => {
                     // TODO: Occurs check
-                    if let Some(old) = self.unification.set_taint(*l, t.clone()) {
-                        new_judgements.push(Judgement::Eq(old, t.clone()));
-                    }
-                }
-                Judgement::Eq(t, Taint::Variable(l)) => {
-                    // TODO: Occurs check
-                    if let Some(old) = self.unification.set_taint(*l, t.clone()) {
-                        new_judgements.push(Judgement::Eq(old, t.clone()));
-                    }
+                    self.unification.set_taint(*l, *t);
                 }
                 Judgement::Eq(t1, t2) => {
                     let t1_substituted = self.unification.substitute_variables(t1);
@@ -168,10 +163,14 @@ impl ConstraintSolver {
                 let r_simplified =
                     self.simplify_union_algebraically(self.unification.substitute_variables(&r));
                 match (l_simplified, r_simplified) {
-                    (Taint::Pure, r) => r,
-                    (l, Taint::Pure) => l,
-                    (Taint::Witness, _) => Taint::Witness,
-                    (_, Taint::Witness) => Taint::Witness,
+                    (Taint::Constant(ConstantTaint::Pure), r) => r,
+                    (l, Taint::Constant(ConstantTaint::Pure)) => l,
+                    (Taint::Constant(ConstantTaint::Witness), _) => {
+                        Taint::Constant(ConstantTaint::Witness)
+                    }
+                    (_, Taint::Constant(ConstantTaint::Witness)) => {
+                        Taint::Constant(ConstantTaint::Witness)
+                    }
                     (l, r) => Taint::Union(Box::new(l), Box::new(r)),
                 }
             }
@@ -218,14 +217,20 @@ impl ConstraintSolver {
         let mut new_judgements = Vec::new();
         for judgement in &self.judgements {
             match self.unification.substitute_judgement(judgement) {
-                Judgement::Le(Taint::Pure, _) => {}
-                Judgement::Le(Taint::Witness, r) => {
-                    new_judgements.push(Judgement::Eq(Taint::Witness, r.clone()));
+                Judgement::Le(Taint::Constant(ConstantTaint::Pure), _) => {}
+                Judgement::Le(Taint::Constant(ConstantTaint::Witness), r) => {
+                    new_judgements.push(Judgement::Eq(
+                        Taint::Constant(ConstantTaint::Witness),
+                        r.clone(),
+                    ));
                 }
-                Judgement::Le(l, Taint::Pure) => {
-                    new_judgements.push(Judgement::Eq(l.clone(), Taint::Pure));
+                Judgement::Le(l, Taint::Constant(ConstantTaint::Pure)) => {
+                    new_judgements.push(Judgement::Eq(
+                        l.clone(),
+                        Taint::Constant(ConstantTaint::Pure),
+                    ));
                 }
-                Judgement::Le(l, Taint::Witness) => {}
+                Judgement::Le(l, Taint::Constant(ConstantTaint::Witness)) => {}
                 _ => new_judgements.push(judgement.clone()),
             }
         }
@@ -388,23 +393,37 @@ impl ConstraintSolver {
     }
 
     fn run_defaulting(&mut self) {
-        let has_constants = self.judgements.iter().any(|j| self.unification.substitute_judgement(j).has_constants());
+        let has_constants = self
+            .judgements
+            .iter()
+            .any(|j| self.unification.substitute_judgement(j).has_constants());
         if !has_constants {
             let mut new_judgements = Vec::new();
             for judgement in &self.judgements {
                 match judgement {
                     Judgement::Le(l, r) => {
-                        new_judgements.push(Judgement::Eq(l.clone(), Taint::Pure));
-                        new_judgements.push(Judgement::Eq(r.clone(), Taint::Pure));
+                        new_judgements.push(Judgement::Eq(
+                            l.clone(),
+                            Taint::Constant(ConstantTaint::Pure),
+                        ));
+                        new_judgements.push(Judgement::Eq(
+                            r.clone(),
+                            Taint::Constant(ConstantTaint::Pure),
+                        ));
                     }
                     Judgement::Eq(l, r) => {
-                        new_judgements.push(Judgement::Eq(l.clone(), Taint::Pure));
-                        new_judgements.push(Judgement::Eq(r.clone(), Taint::Pure));
+                        new_judgements.push(Judgement::Eq(
+                            l.clone(),
+                            Taint::Constant(ConstantTaint::Pure),
+                        ));
+                        new_judgements.push(Judgement::Eq(
+                            r.clone(),
+                            Taint::Constant(ConstantTaint::Pure),
+                        ));
                     }
                 }
             }
             self.judgements = new_judgements;
         }
     }
-
 }

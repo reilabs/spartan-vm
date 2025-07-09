@@ -12,6 +12,21 @@ impl std::fmt::Display for TypeVariable {
     }
 }
 
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
+pub enum ConstantTaint {
+    Pure,
+    Witness,
+}
+
+impl std::fmt::Display for ConstantTaint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstantTaint::Pure => write!(f, "P"),
+            ConstantTaint::Witness => write!(f, "W"),
+        }
+    }
+}
+
 // Throughout this, we loosely interpret taints as records
 // with Witness any record (forall A. {A}) and `Pure` having
 // a single row, i.e. Pure = forall A. { pure := () | A }. This is handy
@@ -21,8 +36,7 @@ impl std::fmt::Display for TypeVariable {
 // plays nice with taints. So we have Pure < Witness.
 #[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub enum Taint {
-    Pure,
-    Witness,
+    Constant(ConstantTaint),
     Variable(TypeVariable),
     Union(Box<Taint>, Box<Taint>),
 }
@@ -30,8 +44,7 @@ pub enum Taint {
 impl Taint {
     pub fn to_string(&self) -> String {
         match self {
-            Taint::Pure => "P".to_string(),
-            Taint::Witness => "W".to_string(),
+            Taint::Constant(constant) => constant.to_string(),
             Taint::Variable(var) => format!("V{}", var.0),
             Taint::Union(left, right) => format!("{} ∪ {}", left.to_string(), right.to_string()),
         }
@@ -50,7 +63,7 @@ impl Taint {
                 left.gather_vars(result);
                 right.gather_vars(result);
             }
-            Taint::Pure | Taint::Witness => {}
+            Taint::Constant(_) => {}
         }
     }
 
@@ -65,13 +78,13 @@ impl Taint {
                 left.substitute(varmap);
                 right.substitute(varmap);
             }
-            Taint::Pure | Taint::Witness => {}
+            Taint::Constant(_) => {}
         }
     }
 
     pub fn has_constants(&self) -> bool {
         match self {
-            Taint::Pure | Taint::Witness => true,
+            Taint::Constant(_) => true,
             Taint::Variable(_) => false,
             Taint::Union(left, right) => left.has_constants() || right.has_constants(),
         }
@@ -79,19 +92,24 @@ impl Taint {
 
     pub fn simplify_and_default(&self) -> Taint {
         match self {
-            Taint::Pure => Taint::Pure,
-            Taint::Witness => Taint::Witness,
-            Taint::Variable(_) => Taint::Pure, // TODO is this correct?
+            Taint::Constant(constant) => Taint::Constant(*constant),
+            Taint::Variable(_) => Taint::Constant(ConstantTaint::Pure), // TODO is this correct?
             Taint::Union(left, right) => {
                 match (left.simplify_and_default(), right.simplify_and_default()) {
-                    (Taint::Pure, r) => r,
-                    (Taint::Witness, _) => Taint::Witness,
-                    (l, Taint::Pure) => l,
-                    (_, Taint::Witness) => Taint::Witness,
+                    (Taint::Constant(ConstantTaint::Pure), r) => r,
+                    (Taint::Constant(ConstantTaint::Witness), _) => Taint::Constant(ConstantTaint::Witness),
+                    (l, Taint::Constant(ConstantTaint::Pure)) => l,
+                    (_, Taint::Constant(ConstantTaint::Witness)) => Taint::Constant(ConstantTaint::Witness),
                     _ => panic!("This should be impossible here"),
                 }
             }
         }
+    }
+}
+
+impl std::fmt::Display for Taint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string())
     }
 }
 
@@ -493,7 +511,7 @@ impl TaintAnalysis {
                         function_taint.value_taints.insert(*r, result_taint);
                     }
                     OpCode::FieldConst(r, _) | OpCode::BConst(r, _) | OpCode::UConst(r, _) => {
-                        let taint = TaintType::Primitive(Taint::Pure);
+                        let taint = TaintType::Primitive(Taint::Constant(ConstantTaint::Pure));
                         function_taint.value_taints.insert(*r, taint);
                     }
                     OpCode::Alloc(r, t) => {
@@ -627,7 +645,7 @@ impl TaintAnalysis {
                             // we assert that the condition is pure
                             function_taint
                                 .judgements
-                                .push(Judgement::Eq(cond_taint.toplevel_taint(), Taint::Pure));
+                                .push(Judgement::Eq(cond_taint.toplevel_taint(), Taint::Constant(ConstantTaint::Pure)));
                         } else {
                             // we need to taint the inputs of the merge point with the condition taint
                             let merge = cfg.get_merge_point(func_id, block_id);

@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
-use crate::compiler::taint_analysis::{Taint, TaintType};
+use crate::compiler::taint_analysis::{ConstantTaint, Taint, TaintType};
 use crate::{
     compiler::{
         constraint_solver::ConstraintSolver, flow_analysis::FlowAnalysis, ssa::FunctionId,
@@ -114,7 +114,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let main_func = taint_analysis.get_function_taint(custom_ssa.get_main_id());
         constraint_solver.add_assumption(
             &TaintType::Primitive(main_func.cfg_taint.clone()),
-            &TaintType::Primitive(Taint::Pure),
+            &TaintType::Primitive(Taint::Constant(ConstantTaint::Pure)),
         );
         for param in main_func.parameters.iter() {
             constraint_solver.add_assumption(param, &mainify_taint(param));
@@ -138,14 +138,14 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let mut constraint_solver = ConstraintSolver::new(&big_function_taint);
         constraint_solver.add_assumption(
             &TaintType::Primitive(big_function_taint.cfg_taint.clone()),
-            &TaintType::Primitive(Taint::Pure),
+            &TaintType::Primitive(Taint::Constant(ConstantTaint::Pure)),
         );
         for param in big_function_taint.parameters.iter() {
             constraint_solver.add_assumption(param, &mainify_taint(param));
         }
         constraint_solver.add_assumption(
             &big_function_taint.returns_taint[0],
-            &TaintType::Primitive(Taint::Witness),
+            &TaintType::Primitive(Taint::Constant(ConstantTaint::Witness)),
         );
         constraint_solver.solve();
 
@@ -164,9 +164,9 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
 pub fn mainify_taint(taint: &TaintType) -> TaintType {
     match taint {
-        TaintType::Primitive(_) => TaintType::Primitive(Taint::Witness),
+        TaintType::Primitive(_) => TaintType::Primitive(Taint::Constant(ConstantTaint::Witness)),
         TaintType::NestedImmutable(_, inner) => {
-            TaintType::NestedImmutable(Taint::Pure, Box::new(mainify_taint(inner)))
+            TaintType::NestedImmutable(Taint::Constant(ConstantTaint::Pure), Box::new(mainify_taint(inner)))
         }
         _ => panic!("Cannot mainify taint: {:?}", taint),
     }
