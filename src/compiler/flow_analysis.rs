@@ -257,6 +257,32 @@ impl FlowAnalysis {
         *cfg.if_merge_points.get(&block_id).unwrap()
     }
 
+    pub fn get_if_body(&self, function_id: FunctionId, entry_id: BlockId) -> Vec<BlockId> {
+        // The body of an if contains all blocks that are dominated by the entry
+        // and post-dominated by the merge point.
+        let cfg = self.function_cfgs.get(&function_id).unwrap();
+        let post_dom = self.get_post_dominator_tree(function_id);
+        let dom = self.get_dominator_tree(function_id);
+        let mut result = Vec::new();
+        let merge_point = cfg.block_to_node[&cfg.if_merge_points.get(&entry_id).unwrap()];
+        let entry_node = cfg.block_to_node[&entry_id];
+        for node in cfg.cfg.node_indices() {
+            if node == entry_node || node == merge_point {
+                continue;
+            }
+            let Some(mut post_doms) = post_dom.dominators(node) else {
+                continue;
+            };
+            let Some(mut doms) = dom.dominators(node) else {
+                continue;
+            };
+            if doms.any(|dom| dom == entry_node) && post_doms.any(|post_dom| post_dom == merge_point) {
+                result.push(cfg.node_to_block[&node]);
+            }
+        }
+        result
+    }
+
     fn get_depth_in_post_dominator_tree(
         post_dom: &Dominators<NodeIndex<u32>>,
         node: NodeIndex<u32>,

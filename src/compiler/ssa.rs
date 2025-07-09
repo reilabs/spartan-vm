@@ -1,6 +1,6 @@
+use crate::compiler::ssa_gen::SsaConverter;
 use itertools::Itertools;
 use std::{collections::HashMap, rc::Rc};
-use crate::compiler::ssa_gen::SsaConverter;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ValueId(pub u64);
@@ -42,9 +42,6 @@ impl<'a> LocalFunctionAnnotator<'a> {
         self.annotator.annotate_value(self.function_id, value_id)
     }
 }
-
-
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -136,10 +133,7 @@ pub struct SSA {
 }
 
 impl SSA {
-    pub fn to_string(
-        &self,
-        value_annotator: &dyn SsaAnnotator,
-    ) -> String {
+    pub fn to_string(&self, value_annotator: &dyn SsaAnnotator) -> String {
         println!("Entry point: {}", self.main_id.0);
         self.functions
             .iter()
@@ -227,12 +221,14 @@ pub struct Function {
 }
 
 impl Function {
-    pub fn to_string(
-        &self,
-        id: FunctionId,
-        value_annotator: &dyn SsaAnnotator,
-    ) -> String {
-        let header = format!("fn_{}@block_{} -> {} {{", id.0, self.entry_block.0, self.returns.iter().map(|t| t.to_string()).join(", "));
+    pub fn to_string(&self, id: FunctionId, value_annotator: &dyn SsaAnnotator) -> String {
+        let header = format!(
+            "fn_{}@block_{} -> {} [{}] {{",
+            id.0,
+            self.entry_block.0,
+            self.returns.iter().map(|t| t.to_string()).join(", "),
+            value_annotator.annotate_function(id)
+        );
         let blocks = self
             .blocks
             .iter()
@@ -360,35 +356,55 @@ impl Function {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
         self.value_info.insert(value_id, typ.clone());
-        self.blocks.get_mut(&block_id).unwrap().parameters.push((value_id, typ));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .parameters
+            .push((value_id, typ));
         value_id
     }
     pub fn push_bool_const(&mut self, block_id: BlockId, value: bool) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
         self.value_info.insert(value_id, Type::Bool);
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::BConst(value_id, value));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::BConst(value_id, value));
         value_id
     }
     pub fn push_u32_const(&mut self, block_id: BlockId, value: u32) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
         self.value_info.insert(value_id, Type::U32);
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::UConst(value_id, value));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::UConst(value_id, value));
         value_id
     }
     pub fn push_field_const(&mut self, block_id: BlockId, value: ark_bn254::Fr) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
         self.value_info.insert(value_id, Type::Field);
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::FieldConst(value_id, value));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::FieldConst(value_id, value));
         value_id
     }
     pub fn push_eq(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
         self.value_info.insert(value_id, Type::Bool);
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Eq(value_id, lhs, rhs));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Eq(value_id, lhs, rhs));
         value_id
     }
     pub fn push_add(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
@@ -397,25 +413,42 @@ impl Function {
         if let Some(lhs_type) = self.value_info.get(&lhs) {
             self.value_info.insert(value_id, lhs_type.clone());
         }
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Add(value_id, lhs, rhs));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Add(value_id, lhs, rhs));
         value_id
     }
     pub fn push_lt(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
         self.value_info.insert(value_id, Type::Bool);
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Lt(value_id, lhs, rhs));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Lt(value_id, lhs, rhs));
         value_id
     }
     pub fn push_alloc(&mut self, block_id: BlockId, typ: Type) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
-        self.value_info.insert(value_id, Type::Ref(Box::new(typ.clone())));
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Alloc(value_id, typ));
+        self.value_info
+            .insert(value_id, Type::Ref(Box::new(typ.clone())));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Alloc(value_id, typ));
         value_id
     }
     pub fn push_store(&mut self, block_id: BlockId, ptr: ValueId, value: ValueId) {
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Store(ptr, value));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Store(ptr, value));
     }
     pub fn push_load(&mut self, block_id: BlockId, ptr: ValueId) -> ValueId {
         let value_id = ValueId(self.next_value);
@@ -425,13 +458,27 @@ impl Function {
                 self.value_info.insert(value_id, *ref_type.clone());
             }
         }
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Load(value_id, ptr));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Load(value_id, ptr));
         value_id
     }
     pub fn push_assert_eq(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) {
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::AssertEq(lhs, rhs));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::AssertEq(lhs, rhs));
     }
-    pub fn push_call(&mut self, block_id: BlockId, fn_id: FunctionId, args: Vec<ValueId>, return_size: usize) -> Vec<ValueId> {
+    pub fn push_call(
+        &mut self,
+        block_id: BlockId,
+        fn_id: FunctionId,
+        args: Vec<ValueId>,
+        return_size: usize,
+    ) -> Vec<ValueId> {
         let mut return_values = Vec::new();
         for _ in 0..return_size {
             let value_id = ValueId(self.next_value);
@@ -439,7 +486,11 @@ impl Function {
             self.value_info.insert(value_id, Type::Field); // TODO: use actual return type
             return_values.push(value_id);
         }
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::Call(return_values.clone(), fn_id, args));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Call(return_values.clone(), fn_id, args));
         return_values
     }
     pub fn push_array_get(&mut self, block_id: BlockId, array: ValueId, index: ValueId) -> ValueId {
@@ -450,20 +501,48 @@ impl Function {
                 self.value_info.insert(value_id, *element_type.clone());
             }
         }
-        self.blocks.get_mut(&block_id).unwrap().instructions.push(OpCode::ArrayGet(value_id, array, index));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::ArrayGet(value_id, array, index));
         value_id
     }
 
-    pub fn terminate_block_with_jmp_if(&mut self, block_id: BlockId, condition: ValueId, then_destination: BlockId, else_destination: BlockId) {
-        self.blocks.get_mut(&block_id).unwrap().set_terminator(Terminator::JmpIf(condition, then_destination, else_destination));
+    pub fn terminate_block_with_jmp_if(
+        &mut self,
+        block_id: BlockId,
+        condition: ValueId,
+        then_destination: BlockId,
+        else_destination: BlockId,
+    ) {
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .set_terminator(Terminator::JmpIf(
+                condition,
+                then_destination,
+                else_destination,
+            ));
     }
 
     pub fn terminate_block_with_return(&mut self, block_id: BlockId, return_values: Vec<ValueId>) {
-        self.blocks.get_mut(&block_id).unwrap().set_terminator(Terminator::Return(return_values));
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .set_terminator(Terminator::Return(return_values));
     }
 
-    pub fn terminate_block_with_jmp(&mut self, block_id: BlockId, destination: BlockId, arguments: Vec<ValueId>) {
-        self.blocks.get_mut(&block_id).unwrap().set_terminator(Terminator::Jmp(destination, arguments));
+    pub fn terminate_block_with_jmp(
+        &mut self,
+        block_id: BlockId,
+        destination: BlockId,
+        arguments: Vec<ValueId>,
+    ) {
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .set_terminator(Terminator::Jmp(destination, arguments));
     }
 }
 
@@ -493,24 +572,23 @@ impl Block {
                 )
             })
             .join(", ");
-        let local_annotator = LocalFunctionAnnotator::new(func_id, value_annotator.clone());
+        let local_annotator = LocalFunctionAnnotator::new(func_id, value_annotator);
         let instructions = self
             .instructions
             .iter()
-            .map(|i| {
-                format!(
-                    "    {}",
-                    i.to_string(&local_annotator)
-                )
-            })
+            .map(|i| format!("    {}", i.to_string(&local_annotator)))
             .join("\n");
         let terminator = match &self.terminator {
             Some(t) => format!("    {}", t.to_string()),
             None => "".to_string(),
         };
         format!(
-            "  block_{}({}) {{\n{}\n{}\n  }}",
-            id.0, params, instructions, terminator
+            "  block_{}({}) [{}] {{\n{}\n{}\n  }}",
+            id.0,
+            params,
+            value_annotator.annotate_block(func_id, id),
+            instructions,
+            terminator
         )
     }
 
@@ -614,7 +692,12 @@ impl OpCode {
             ),
             OpCode::Store(ptr, value) => format!("*v{} = v{}", ptr.0, value.0),
             OpCode::Load(result, ptr) => {
-                format!("v{}[{}] = *v{}", result.0, value_annotator.annotate_value(*result), ptr.0)
+                format!(
+                    "v{}[{}] = *v{}",
+                    result.0,
+                    value_annotator.annotate_value(*result),
+                    ptr.0
+                )
             }
             OpCode::AssertEq(lhs, rhs) => format!("assert v{} == v{}", lhs.0, rhs.0),
             OpCode::Call(result, fn_id, args) => {
@@ -931,18 +1014,8 @@ impl Terminator {
                 Self::typecheck_jump_target(*bid, args, block_input_types, value_types)?;
             }
             Terminator::JmpIf(cond, true_block, false_block) => {
-                Self::typecheck_jump_target(
-                    *true_block,
-                    &[],
-                    block_input_types,
-                    value_types,
-                )?;
-                Self::typecheck_jump_target(
-                    *false_block,
-                    &[],
-                    block_input_types,
-                    value_types,
-                )?;
+                Self::typecheck_jump_target(*true_block, &[], block_input_types, value_types)?;
+                Self::typecheck_jump_target(*false_block, &[], block_input_types, value_types)?;
             }
             Terminator::Return(values) => {
                 let value_types = values

@@ -1,5 +1,9 @@
+use itertools::Itertools;
+
 use crate::compiler::flow_analysis::FlowAnalysis;
-use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SsaAnnotator, Terminator, Type, ValueId, SSA};
+use crate::compiler::ssa::{
+    BlockId, FunctionId, OpCode, SSA, SsaAnnotator, Terminator, Type, ValueId,
+};
 use crate::compiler::union_find::UnionFind;
 use std::collections::{HashMap, HashSet};
 
@@ -97,9 +101,13 @@ impl Taint {
             Taint::Union(left, right) => {
                 match (left.simplify_and_default(), right.simplify_and_default()) {
                     (Taint::Constant(ConstantTaint::Pure), r) => r,
-                    (Taint::Constant(ConstantTaint::Witness), _) => Taint::Constant(ConstantTaint::Witness),
+                    (Taint::Constant(ConstantTaint::Witness), _) => {
+                        Taint::Constant(ConstantTaint::Witness)
+                    }
                     (l, Taint::Constant(ConstantTaint::Pure)) => l,
-                    (_, Taint::Constant(ConstantTaint::Witness)) => Taint::Constant(ConstantTaint::Witness),
+                    (_, Taint::Constant(ConstantTaint::Witness)) => {
+                        Taint::Constant(ConstantTaint::Witness)
+                    }
                     _ => panic!("This should be impossible here"),
                 }
             }
@@ -255,6 +263,7 @@ pub struct FunctionTaint {
     pub cfg_taint: Taint,
     pub parameters: Vec<TaintType>,
     pub judgements: Vec<Judgement>,
+    pub block_cfg_taints: HashMap<BlockId, Taint>,
     pub value_taints: HashMap<ValueId, TaintType>,
 }
 
@@ -280,6 +289,7 @@ impl FunctionTaint {
         self.substitute_param_vars(&varmap);
         self.substitute_judgements(&varmap);
         self.substitute_cfg_taint(&varmap);
+        self.substitute_block_cfg_taints(&varmap);
     }
 
     fn gather_return_vars(&self, all_vars: &mut HashSet<TypeVariable>) {
@@ -326,6 +336,12 @@ impl FunctionTaint {
         self.cfg_taint.substitute(varmap);
     }
 
+    fn substitute_block_cfg_taints(&mut self, varmap: &HashMap<TypeVariable, TypeVariable>) {
+        for (_, taint) in &mut self.block_cfg_taints {
+            taint.substitute(varmap);
+        }
+    }
+
     pub fn get_judgements(&self) -> &Vec<Judgement> {
         &self.judgements
     }
@@ -367,6 +383,18 @@ impl FunctionTaint {
                 )
             })
             .collect();
+        new_taint.block_cfg_taints = new_taint
+            .block_cfg_taints
+            .iter()
+            .map(|(block_id, taint)| {
+                (
+                    *block_id,
+                    unification
+                        .substitute_variables(&taint)
+                        .simplify_and_default(),
+                )
+            })
+            .collect();
         new_taint
     }
 }
@@ -377,6 +405,18 @@ impl SsaAnnotator for FunctionTaint {
             return "".to_string();
         };
         taint.to_string()
+    }
+
+    fn annotate_block(&self, function_id: FunctionId, block_id: BlockId) -> String {
+        let Some(taint) = self.block_cfg_taints.get(&block_id) else {
+            return "".to_string();
+        };
+        format!("cfg_taint: {}", taint.to_string())
+    }
+
+    fn annotate_function(&self, function_id: FunctionId) -> String {
+        let return_taints = self.returns_taint.iter().map(|t| t.to_string()).join(", ");
+        format!("returns: [{}], cfg_taint: {}", return_taints, self.cfg_taint.to_string())
     }
 }
 
@@ -445,20 +485,19 @@ impl TaintAnalysis {
 
     fn analyze_function(&mut self, ssa: &SSA, cfg: &FlowAnalysis, func_id: FunctionId) {
         let func = ssa.get_function(func_id);
-        let mut block_queue = cfg.get_blocks_bfs(func_id);
+        let block_queue = cfg.get_blocks_bfs(func_id);
         let cfg_ty_var = self.fresh_ty_var();
         let mut function_taint = FunctionTaint {
             returns_taint: vec![],
             cfg_taint: Taint::Variable(cfg_ty_var),
             parameters: vec![],
             judgements: vec![],
+            block_cfg_taints: HashMap::new(),
             value_taints: HashMap::new(),
         };
-        let mut local_cfg_taints: HashMap<BlockId, Vec<ScopedCfgTaint>> = HashMap::new();
 
         // initialize block params
         for (_, block) in func.get_blocks() {
-            let param_values: Vec<_> = block.get_parameters().map(|(v, _)| *v).collect();
             for (value, tp) in block.get_parameters() {
                 let taint = self.construct_free_taint_for_type(tp);
                 function_taint.value_taints.insert(*value, taint);
@@ -478,27 +517,23 @@ impl TaintAnalysis {
             function_taint.returns_taint.push(taint);
         }
 
+        // initialize block cfg taints
+        for (block_id, _) in func.get_blocks() {
+            let cfg_taint = Taint::Variable(self.fresh_ty_var());
+            function_taint
+                .block_cfg_taints
+                .insert(*block_id, cfg_taint.clone());
+            // Every block runs under the global function CFG taint, so its local must be
+            // a supertype.
+            function_taint
+                .judgements
+                .push(Judgement::Le(function_taint.cfg_taint.clone(), cfg_taint));
+        }
+
         for block_id in block_queue {
             let block = func.get_block(block_id);
 
-            let block_cfg_taint = local_cfg_taints
-                .get(&block_id)
-                .cloned()
-                .unwrap_or(vec![])
-                .into_iter()
-                .filter(|t| Some(block_id) != t.valid_until)
-                .collect::<Vec<_>>();
-
-            let mut cfg_taint = Taint::Variable(cfg_ty_var);
-
-            for taint in &block_cfg_taint {
-                cfg_taint = cfg_taint.union(&taint.taint.clone());
-            }
-
-            println!(
-                "Function {:?} block {:?} cfg taint: {:?}",
-                func_id, block_id, cfg_taint
-            );
+            let cfg_taint = function_taint.block_cfg_taints.get(&block_id).unwrap();
 
             for instruction in block.get_instructions() {
                 match instruction {
@@ -634,18 +669,15 @@ impl TaintAnalysis {
                             // every passed param must be a subtype of declared params
                             self.deep_le(param, target_param, &mut function_taint.judgements);
                         }
-
-                        // the cfg taint is propagated to the target block
-                        let target_cfg_taint = local_cfg_taints.entry(*target).or_insert(vec![]);
-                        target_cfg_taint.extend(block_cfg_taint.iter().map(|t| t.clone()));
                     }
                     Terminator::JmpIf(cond, t1, t2) => {
                         let cond_taint = function_taint.value_taints.get(cond).unwrap();
                         if cfg.is_loop_entry(func_id, block_id) {
                             // we assert that the condition is pure
-                            function_taint
-                                .judgements
-                                .push(Judgement::Eq(cond_taint.toplevel_taint(), Taint::Constant(ConstantTaint::Pure)));
+                            function_taint.judgements.push(Judgement::Eq(
+                                cond_taint.toplevel_taint(),
+                                Taint::Constant(ConstantTaint::Pure),
+                            ));
                         } else {
                             // we need to taint the inputs of the merge point with the condition taint
                             let merge = cfg.get_merge_point(func_id, block_id);
@@ -661,22 +693,21 @@ impl TaintAnalysis {
                                     cond_taint.toplevel_taint(),
                                 ));
                             }
-                            // also both branches get cfg taint of the condition until the merge point
-                            let cond_cfg_taint = ScopedCfgTaint {
-                                taint: cond_taint.toplevel_taint(),
-                                valid_until: Some(merge),
-                            };
-                            let t1_cfg_taint = local_cfg_taints.entry(*t1).or_insert(vec![]);
-                            t1_cfg_taint.push(cond_cfg_taint.clone());
-                            let t2_cfg_taint = local_cfg_taints.entry(*t2).or_insert(vec![]);
-                            t2_cfg_taint.push(cond_cfg_taint.clone());
-                        }
+                            
+                            let body_blocks = cfg.get_if_body(func_id, block_id);
+                            for block in body_blocks {
+                                let local_taint = function_taint.block_cfg_taints.get(&block).unwrap();
+                                function_taint.judgements.push(Judgement::Le(
+                                    cond_taint.toplevel_taint(),
+                                    local_taint.clone(),
+                                ));
 
-                        // either way, both targets derive our current cfg taint
-                        let t1_cfg_taint = local_cfg_taints.entry(*t1).or_insert(vec![]);
-                        t1_cfg_taint.extend(block_cfg_taint.iter().map(|t| t.clone()));
-                        let t2_cfg_taint = local_cfg_taints.entry(*t2).or_insert(vec![]);
-                        t2_cfg_taint.extend(block_cfg_taint.iter().map(|t| t.clone()))
+                                function_taint.judgements.push(Judgement::Le(
+                                    cfg_taint.clone(),
+                                    local_taint.clone(),
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -756,10 +787,24 @@ impl TaintAnalysis {
 
 impl SsaAnnotator for TaintAnalysis {
     fn annotate_value(&self, function_id: FunctionId, value_id: ValueId) -> String {
-        let Some(taint) = self.get_taint_type(function_id, value_id) else {
+        let Some(function_taint) = self.functions.get(&function_id) else {
             return "".to_string();
         };
-        taint.to_string()
+        function_taint.annotate_value(function_id, value_id)
+    }
+
+    fn annotate_block(&self, function_id: FunctionId, block_id: BlockId) -> String {
+        let Some(function_taint) = self.functions.get(&function_id) else {
+            return "".to_string();
+        };
+        function_taint.annotate_block(function_id, block_id)
+    }
+
+    fn annotate_function(&self, function_id: FunctionId) -> String {
+        let Some(function_taint) = self.functions.get(&function_id) else {
+            return "".to_string();
+        };
+        function_taint.annotate_function(function_id)
     }
 }
 

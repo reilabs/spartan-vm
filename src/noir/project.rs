@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
+use crate::compiler::ssa::{BlockId, DefaultSsaAnnotator, SSA};
 use crate::compiler::taint_analysis::{ConstantTaint, Taint, TaintType};
 use crate::{
     compiler::{
@@ -99,6 +99,8 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             println!("  Loop entrys: {:?}", cfg.loop_entrys);
             println!("  If merge points: {:?}", cfg.if_merge_points);
         }
+
+        println!("test_if_body: {:?}", flow_analysis.get_if_body(FunctionId(1), BlockId(2)));
 
         let mut taint_analysis = TaintAnalysis::new();
         taint_analysis.run(&custom_ssa, &flow_analysis).unwrap();
