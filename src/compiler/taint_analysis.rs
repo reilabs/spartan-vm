@@ -1,5 +1,5 @@
 use crate::compiler::flow_analysis::FlowAnalysis;
-use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SSA, Terminator, Type, ValueId};
+use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SsaAnnotator, Terminator, Type, ValueId, SSA};
 use crate::compiler::union_find::UnionFind;
 use std::collections::{HashMap, HashSet};
 
@@ -204,7 +204,7 @@ impl TaintType {
         }
     }
 }
-
+#[derive(Clone)]
 pub struct TaintAnalysis {
     functions: HashMap<FunctionId, FunctionTaint>,
     last_ty_var: usize,
@@ -217,13 +217,6 @@ impl TaintAnalysis {
             .map(|(id, func)| format!("fn_{}: {}", id.0, func.to_string()))
             .collect::<Vec<_>>()
             .join("\n")
-    }
-
-    pub fn annotate_value(&self, func_id: FunctionId, value_id: ValueId) -> String {
-        let Some(taint) = self.get_taint_type(func_id, value_id) else {
-            return "".to_string();
-        };
-        taint.to_string()
     }
 
     fn get_taint_type(&self, func_id: FunctionId, value_id: ValueId) -> Option<&TaintType> {
@@ -319,13 +312,6 @@ impl FunctionTaint {
         &self.judgements
     }
 
-    pub fn annotate_value(&self, value_id: ValueId) -> String {
-        let Some(taint) = self.value_taints.get(&value_id) else {
-            return "".to_string();
-        };
-        taint.to_string()
-    }
-
     pub fn update_from_unification(&self, unification: &UnionFind) -> Self {
         let mut new_taint = self.clone();
 
@@ -364,6 +350,15 @@ impl FunctionTaint {
             })
             .collect();
         new_taint
+    }
+}
+
+impl SsaAnnotator for FunctionTaint {
+    fn annotate_value(&self, function_id: FunctionId, value_id: ValueId) -> String {
+        let Some(taint) = self.value_taints.get(&value_id) else {
+            return "".to_string();
+        };
+        taint.to_string()
     }
 }
 
@@ -738,6 +733,15 @@ impl TaintAnalysis {
                 Box::new(self.construct_free_taint_for_type(i)),
             ),
         }
+    }
+}
+
+impl SsaAnnotator for TaintAnalysis {
+    fn annotate_value(&self, function_id: FunctionId, value_id: ValueId) -> String {
+        let Some(taint) = self.get_taint_type(function_id, value_id) else {
+            return "".to_string();
+        };
+        taint.to_string()
     }
 }
 

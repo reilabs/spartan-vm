@@ -1,6 +1,8 @@
 //! Functionality for working with projects of Noir sources.
 
-use crate::compiler::ssa::SSA;
+use std::rc::Rc;
+
+use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
 use crate::compiler::taint_analysis::{Taint, TaintType};
 use crate::{
     compiler::{
@@ -77,7 +79,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         custom_ssa.typecheck();
         println!(
             "Converted SSA:\n{}",
-            custom_ssa.to_string(|_, _| "".to_string())
+            custom_ssa.to_string(&DefaultSsaAnnotator)
         );
 
         let mut flow_analysis = FlowAnalysis::new();
@@ -103,7 +105,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         println!(
             "After taint analysis SSA:\n{}",
-            custom_ssa.to_string(|func, val| taint_analysis.annotate_value(func, val))
+            custom_ssa.to_string(&taint_analysis)
         );
 
         let mut constraint_solver =
@@ -126,8 +128,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             "Monomorphized SSA:\n{}",
             custom_ssa
                 .get_main()
-                .to_string(custom_ssa.get_main_id(), |_, val| cloned_main
-                    .annotate_value(val))
+                .to_string(custom_ssa.get_main_id(), &cloned_main)
         );
         // println!("Taint analysis:\n{}", taint_analysis.to_string());
 
@@ -154,8 +155,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             "Monomorphized SSA:\n{}",
             custom_ssa
                 .get_function(big_function_id)
-                .to_string(big_function_id, |_, val| big_function_taint
-                    .annotate_value(val))
+                .to_string(big_function_id, &big_function_taint)
         );
 
         Ok(())

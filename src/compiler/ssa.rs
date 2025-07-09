@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 use crate::compiler::ssa_gen::SsaConverter;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -8,6 +8,43 @@ pub struct ValueId(pub u64);
 pub struct BlockId(pub u64);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct FunctionId(pub u64);
+
+pub trait SsaAnnotator {
+    fn annotate_value(&self, function_id: FunctionId, value_id: ValueId) -> String {
+        "".to_string()
+    }
+    fn annotate_function(&self, function_id: FunctionId) -> String {
+        "".to_string()
+    }
+    fn annotate_block(&self, function_id: FunctionId, block_id: BlockId) -> String {
+        "".to_string()
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct DefaultSsaAnnotator;
+impl SsaAnnotator for DefaultSsaAnnotator {}
+
+struct LocalFunctionAnnotator<'a> {
+    function_id: FunctionId,
+    annotator: &'a dyn SsaAnnotator,
+}
+
+impl<'a> LocalFunctionAnnotator<'a> {
+    pub fn new(function_id: FunctionId, annotator: &'a dyn SsaAnnotator) -> Self {
+        Self {
+            function_id,
+            annotator,
+        }
+    }
+
+    pub fn annotate_value(&self, value_id: ValueId) -> String {
+        self.annotator.annotate_value(self.function_id, value_id)
+    }
+}
+
+
+
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -101,13 +138,13 @@ pub struct SSA {
 impl SSA {
     pub fn to_string(
         &self,
-        value_annotator: impl Fn(FunctionId, ValueId) -> String,
+        value_annotator: &dyn SsaAnnotator,
     ) -> String {
         println!("Entry point: {}", self.main_id.0);
         self.functions
             .iter()
             .sorted_by_key(|(fn_id, _)| fn_id.0)
-            .map(|(fn_id, func)| func.to_string(*fn_id, &value_annotator))
+            .map(|(fn_id, func)| func.to_string(*fn_id, value_annotator))
             .join("\n\n")
     }
 
@@ -193,14 +230,14 @@ impl Function {
     pub fn to_string(
         &self,
         id: FunctionId,
-        value_annotator: impl Fn(FunctionId, ValueId) -> String,
+        value_annotator: &dyn SsaAnnotator,
     ) -> String {
         let header = format!("fn_{}@block_{} -> {} {{", id.0, self.entry_block.0, self.returns.iter().map(|t| t.to_string()).join(", "));
         let blocks = self
             .blocks
             .iter()
             .sorted_by_key(|(bid, _)| bid.0)
-            .map(|(bid, block)| block.to_string(id, *bid, &value_annotator))
+            .map(|(bid, block)| block.to_string(id, *bid, value_annotator))
             .join("\n");
         let footer = "}".to_string();
         format!("{}\n{}\n{}", header, blocks, footer)
@@ -442,7 +479,7 @@ impl Block {
         &self,
         func_id: FunctionId,
         id: BlockId,
-        value_annotator: impl Fn(FunctionId, ValueId) -> String,
+        value_annotator: &dyn SsaAnnotator,
     ) -> String {
         let params = self
             .parameters
@@ -452,17 +489,18 @@ impl Block {
                     "v{} : {} [{}]",
                     v.0.0,
                     v.1.to_string(),
-                    value_annotator(func_id, v.0)
+                    value_annotator.annotate_value(func_id, v.0)
                 )
             })
             .join(", ");
+        let local_annotator = LocalFunctionAnnotator::new(func_id, value_annotator.clone());
         let instructions = self
             .instructions
             .iter()
             .map(|i| {
                 format!(
                     "    {}",
-                    i.to_string(|vid| value_annotator(func_id, vid))
+                    i.to_string(&local_annotator)
                 )
             })
             .join("\n");
@@ -525,65 +563,65 @@ pub enum OpCode {
 }
 
 impl OpCode {
-    pub fn to_string(&self, value_annotator: impl Fn(ValueId) -> String) -> String {
+    pub fn to_string(&self, value_annotator: &LocalFunctionAnnotator) -> String {
         match self {
             OpCode::FieldConst(result, value) => {
                 format!(
                     "v{}[{}] = constant({}:Field)",
                     result.0,
-                    value_annotator(*result),
+                    value_annotator.annotate_value(*result),
                     value
                 )
             }
             OpCode::UConst(result, value) => format!(
                 "v{}[{}] = constant({}:u32)",
                 result.0,
-                value_annotator(*result),
+                value_annotator.annotate_value(*result),
                 value
             ),
             OpCode::BConst(result, value) => format!(
                 "v{}[{}] = constant({}:bool)",
                 result.0,
-                value_annotator(*result),
+                value_annotator.annotate_value(*result),
                 value
             ),
             OpCode::Eq(result, lhs, rhs) => format!(
                 "v{}[{}] = v{} == v{}",
                 result.0,
-                value_annotator(*result),
+                value_annotator.annotate_value(*result),
                 lhs.0,
                 rhs.0
             ),
             OpCode::Add(result, lhs, rhs) => format!(
                 "v{}[{}] = v{} + v{}",
                 result.0,
-                value_annotator(*result),
+                value_annotator.annotate_value(*result),
                 lhs.0,
                 rhs.0
             ),
             OpCode::Lt(result, lhs, rhs) => format!(
                 "v{}[{}] = v{} < v{}",
                 result.0,
-                value_annotator(*result),
+                value_annotator.annotate_value(*result),
                 lhs.0,
                 rhs.0
             ),
             OpCode::Alloc(result, typ) => format!(
                 "v{}[{}] = alloc({})",
                 result.0,
-                value_annotator(*result),
+                value_annotator.annotate_value(*result),
                 typ.to_string()
             ),
             OpCode::Store(ptr, value) => format!("*v{} = v{}", ptr.0, value.0),
             OpCode::Load(result, ptr) => {
-                format!("v{}[{}] = *v{}", result.0, value_annotator(*result), ptr.0)
+                format!("v{}[{}] = *v{}", result.0, value_annotator.annotate_value(*result), ptr.0)
             }
             OpCode::AssertEq(lhs, rhs) => format!("assert v{} == v{}", lhs.0, rhs.0),
             OpCode::Call(result, fn_id, args) => {
                 let args_str = args.iter().map(|v| format!("v{}", v.0)).join(", ");
                 let result_str = result
                     .iter()
-                    .map(|v| format!("v{}[{}]", v.0, value_annotator(*v)))
+                    .map(|v| format!("v{}[{}]", v.0, value_annotator.annotate_value(*v)))
                     .join(", ");
                 format!("{} = call {}({})", result_str, fn_id.0, args_str)
             }
@@ -591,7 +629,7 @@ impl OpCode {
                 format!(
                     "v{}[{}] = v{}[v{}]",
                     result.0,
-                    value_annotator(*result),
+                    value_annotator.annotate_value(*result),
                     array.0,
                     index.0
                 )
