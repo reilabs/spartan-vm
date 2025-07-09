@@ -298,7 +298,6 @@ impl FlowAnalysis {
             .filter_map(|node| cfg.node_to_block.get(&node).cloned())
     }
 
-    /// Generate a Graphviz dot representation of the flow analysis
     pub fn to_graphviz(&self) -> String {
         let mut dot = String::new();
         dot.push_str("digraph FlowAnalysis {\n");
@@ -306,7 +305,6 @@ impl FlowAnalysis {
         dot.push_str("  compound=true;\n");
         dot.push_str("  node [shape=box];\n\n");
 
-        // Add invisible entry and return nodes outside the subgraphs
         for (func_id, _) in &self.function_cfgs {
             dot.push_str(&format!(
                 "  entry_{} [label=\"\", shape=point, style=invis];\n",
@@ -320,28 +318,24 @@ impl FlowAnalysis {
 
         dot.push_str("\n");
 
-        // Force entry nodes to be at the top rank
         dot.push_str("  { rank=source;\n");
         for (func_id, _) in &self.function_cfgs {
             dot.push_str(&format!("    entry_{};\n", func_id.0));
         }
         dot.push_str("  }\n\n");
 
-        // Force return nodes to be at the bottom rank
         dot.push_str("  { rank=sink;\n");
         for (func_id, _) in &self.function_cfgs {
             dot.push_str(&format!("    return_{};\n", func_id.0));
         }
         dot.push_str("  }\n\n");
 
-        // Call graph subgraph
         dot.push_str("  subgraph cluster_call_graph {\n");
         dot.push_str("    label=\"Call Graph\";\n");
         dot.push_str("    style=filled;\n");
         dot.push_str("    color=lightgrey;\n");
         dot.push_str("    node [style=filled,color=white];\n");
 
-        // Add function nodes to call graph
         for (func_id, node_index) in &self.func_to_node {
             dot.push_str(&format!(
                 "    func_{} [label=\"fn_{}\"];\n",
@@ -349,7 +343,6 @@ impl FlowAnalysis {
             ));
         }
 
-        // Add call edges
         for edge in self.call_graph.edge_indices() {
             let (source, target) = self.call_graph.edge_endpoints(edge).unwrap();
             let source_func = self.node_to_func[&source];
@@ -362,7 +355,6 @@ impl FlowAnalysis {
 
         dot.push_str("  }\n\n");
 
-        // Function CFG subgraphs
         for (func_id, cfg) in &self.function_cfgs {
             dot.push_str(&format!("  subgraph cluster_cfg_{} {{\n", func_id.0));
             dot.push_str(&format!("    label=\"CFG fn_{}\";\n", func_id.0));
@@ -370,7 +362,6 @@ impl FlowAnalysis {
             dot.push_str("    color=lightblue;\n");
             dot.push_str("    node [style=filled,color=white];\n");
 
-            // Add block nodes
             for (block_id, node_index) in &cfg.block_to_node {
                 dot.push_str(&format!(
                     "    block_{}_{} [label=\"block_{}\"];\n",
@@ -378,7 +369,6 @@ impl FlowAnalysis {
                 ));
             }
 
-            // Add only internal control flow edges (Jmp and JmpIf)
             for edge in cfg.cfg.edge_indices() {
                 let (source, target) = cfg.cfg.edge_endpoints(edge).unwrap();
                 let edge_weight = &cfg.cfg[edge];
@@ -435,11 +425,9 @@ impl FlowAnalysis {
         dot
     }
 
-    /// Generate a PNG image from the flow analysis Graphviz representation
     pub fn save_as_png(&self, filename: &str) -> Result<(), String> {
         let dot_content = self.to_graphviz();
 
-        // Create a temporary dot file
         let temp_dot_file = format!("{}.dot", filename);
         let mut file = fs::File::create(&temp_dot_file)
             .map_err(|e| format!("Failed to create temporary dot file: {}", e))?;
@@ -447,7 +435,6 @@ impl FlowAnalysis {
         file.write_all(dot_content.as_bytes())
             .map_err(|e| format!("Failed to write dot content: {}", e))?;
 
-        // Use dot command to generate PNG
         let output = Command::new("dot")
             .args(&["-Tpng", &temp_dot_file, "-o", &format!("{}.png", filename)])
             .output()
@@ -458,7 +445,6 @@ impl FlowAnalysis {
             return Err(format!("dot command failed: {}", stderr));
         }
 
-        // Clean up temporary dot file
         fs::remove_file(&temp_dot_file)
             .map_err(|e| format!("Failed to remove temporary dot file: {}", e))?;
 

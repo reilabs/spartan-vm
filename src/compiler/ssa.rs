@@ -173,7 +173,6 @@ impl SSA {
         self.functions.iter()
     }
 
-    /// Create a custom SSA from a Noir SSA
     pub fn from_noir(noir_ssa: &noirc_evaluator::ssa::ssa_gen::Ssa) -> Self {
         let mut converter = SsaConverter::new();
         converter.convert_noir_ssa(noir_ssa)
@@ -285,14 +284,12 @@ impl Function {
             })
             .collect::<HashMap<_, _>>();
 
-        // Typecheck all instructions in all blocks using the function's value_info
         for block in self.blocks.values() {
             for instruction in block.get_instructions() {
                 instruction.typecheck(&mut self.value_info, function_types)?;
             }
         }
 
-        // Typecheck all terminators
         for block in self.blocks.values() {
             if let Some(terminator) = block.get_terminator() {
                 terminator.typecheck(&block_input_types, &self.value_info, &self.returns)?;

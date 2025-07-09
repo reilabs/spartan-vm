@@ -10,7 +10,6 @@ use noirc_evaluator::ssa::ir::{
     value::{Value, ValueId as NoirValueId},
 };
 
-/// Converts Noir functions to custom functions
 pub struct FunctionConverter {
     type_converter: TypeConverter,
     value_mapper: HashMap<NoirValueId, ValueId>,
@@ -26,29 +25,14 @@ impl FunctionConverter {
         }
     }
 
-    /// Convert a Noir function to a custom function
     pub fn convert_function(
         &mut self,
         noir_function: &NoirFunction,
         function_mapper: &HashMap<NoirFunctionId, FunctionId>,
     ) -> Function {
-        // Create an empty function
         let mut custom_function = Function::empty();
-        
-        // Get the entry block ID
         let entry_block_id = custom_function.get_entry_id();
         
-        // // Convert function parameters
-        // // The parameters are stored in the entry block's parameters
-        // for param_value_id in noir_function.parameters() {
-        //     let param_value = &noir_function.dfg.values[*param_value_id];
-        //     let param_type = param_value.get_type();
-        //     let converted_type = self.type_converter.convert_type(&param_type);
-        //     let param_id = custom_function.add_parameter(entry_block_id, converted_type);
-        //     self.value_mapper.map_value(*param_value_id, param_id);
-        // }
-        
-        // Convert function return types
         for return_val in noir_function.returns().iter() {
             let return_type = &noir_function.dfg.values[*return_val].get_type();
             let converted_return_type = self.type_converter.convert_type(return_type);
@@ -109,15 +93,12 @@ impl FunctionConverter {
                         self.value_mapper.insert(result_id, rr_id);
                     }
                     NoirInstruction::Call { func, arguments } => {
-                        // Handle call instruction where function value is a known constant
                         let function_value = &noir_function.dfg.values[*func];
 
-                        // Check if the function value is a known constant (function reference)
                         if let Value::Function(func) = function_value {
                             let result_ids =
                                 noir_function.dfg.instruction_results(*noir_instruction_id);
 
-                            // Convert arguments
                             let mut converted_args = Vec::new();
                             for arg_id in arguments {
                                 let arg_value = &noir_function.dfg.values[*arg_id];
@@ -130,11 +111,8 @@ impl FunctionConverter {
                                 converted_args.push(converted_arg);
                             }
 
-                            // For now, we'll use a placeholder function ID
-                            // TODO: Map the function name to a proper FunctionId
                             let function_id = function_mapper.get(func).unwrap();
 
-                            // Create the call instruction
                             let return_values = custom_function.push_call(
                                 custom_block_id,
                                 *function_id,
@@ -142,7 +120,6 @@ impl FunctionConverter {
                                 result_ids.len(),
                             );
 
-                            // Map the result values
                             for (result_id, return_value) in
                                 result_ids.iter().zip(return_values.iter())
                             {
@@ -156,7 +133,6 @@ impl FunctionConverter {
                         }
                     }
                     NoirInstruction::Constrain(l, r, _) => {
-                        // Convert Constrain instruction to AssertEq (equality constraint)
                         let left_value = &noir_function.dfg.values[*l];
                         let right_value = &noir_function.dfg.values[*r];
                         let left_converted = self.convert_value(
@@ -172,7 +148,6 @@ impl FunctionConverter {
                             right_value,
                         );
 
-                        // Add an assert_eq instruction to enforce the constraint
                         custom_function.push_assert_eq(
                             custom_block_id,
                             left_converted,
@@ -180,14 +155,11 @@ impl FunctionConverter {
                         );
                     }
                     NoirInstruction::Allocate => {
-                        // Convert Allocate instruction to Alloc
                         let result_id =
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
                         let result_value = &noir_function.dfg.values[result_id];
                         let result_type = result_value.get_type();
 
-                        // For Allocate, the result type should be a reference type
-                        // We need to extract the inner type from the reference
                         let converted_type = match &*result_type {
                             noirc_evaluator::ssa::ir::types::Type::Reference(inner) => {
                                 self.type_converter.convert_type(&inner)
@@ -198,15 +170,12 @@ impl FunctionConverter {
                             ),
                         };
 
-                        // Create the alloc instruction
                         let alloc_result =
                             custom_function.push_alloc(custom_block_id, converted_type);
 
-                        // Map the result
                         self.value_mapper.insert(result_id, alloc_result);
                     }
                     NoirInstruction::Store { address, value } => {
-                        // Convert Store instruction to Store
                         let address_value = &noir_function.dfg.values[*address];
                         let value_value = &noir_function.dfg.values[*value];
                         let address_converted = self.convert_value(
@@ -222,7 +191,6 @@ impl FunctionConverter {
                             value_value,
                         );
 
-                        // Create the store instruction
                         custom_function.push_store(
                             custom_block_id,
                             address_converted,
@@ -230,7 +198,6 @@ impl FunctionConverter {
                         );
                     }
                     NoirInstruction::ArrayGet { array, index, .. } => {
-                        // Convert ArrayGet instruction to ArrayGet
                         let array_value = &noir_function.dfg.values[*array];
                         let index_value = &noir_function.dfg.values[*index];
                         let array_converted = self.convert_value(
@@ -246,22 +213,18 @@ impl FunctionConverter {
                             index_value,
                         );
 
-                        // Get the result ID
                         let result_id =
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
 
-                        // Create the array get instruction
                         let array_get_result = custom_function.push_array_get(
                             custom_block_id,
                             array_converted,
                             index_converted,
                         );
 
-                        // Map the result
                         self.value_mapper.insert(result_id, array_get_result);
                     }
                     NoirInstruction::Load { address } => {
-                        // Convert Load instruction to Load
                         let address_value = &noir_function.dfg.values[*address];
                         let address_converted = self.convert_value(
                             &mut custom_function,
@@ -270,15 +233,12 @@ impl FunctionConverter {
                             address_value,
                         );
 
-                        // Get the result ID
                         let result_id =
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
 
-                        // Create the load instruction
                         let load_result =
                             custom_function.push_load(custom_block_id, address_converted);
 
-                        // Map the result
                         self.value_mapper.insert(result_id, load_result);
                     }
                     _ => panic!("Unsupported instruction: {:?}", noir_instruction),
@@ -350,10 +310,7 @@ impl FunctionConverter {
                 _ => panic!("Unsupported terminator: {:?}", block.terminator()),
             }
         }
-        
-        // TODO: Convert function body (blocks, instructions, terminators)
-        // For now, we leave the body empty as requested
-        
+
         custom_function
     }
 

@@ -30,7 +30,6 @@ impl UnionFind {
             return x;
         }
 
-        // Find the root iteratively (no recursion)
         let mut current = x;
         let mut path = Vec::new();
 
@@ -39,7 +38,6 @@ impl UnionFind {
             current = parent[&current];
         }
 
-        // Path compression: update all nodes on the path to point directly to root
         for node in path {
             parent.insert(node, current);
         }
@@ -56,7 +54,6 @@ impl UnionFind {
             return;
         }
 
-        // Union by rank first
         let mut parent = self.parent.borrow_mut();
         let mut rank = self.rank.borrow_mut();
         let rank_x = rank[&root_x];
@@ -75,11 +72,9 @@ impl UnionFind {
             new_root = root_x;
         }
 
-        // Now handle taint merging
         let taint_x = self.taint_mapping.borrow().get(&root_x).cloned();
         let taint_y = self.taint_mapping.borrow().get(&root_y).cloned();
 
-        // Merge taints if both representatives had taint values
         let mut mapping = self.taint_mapping.borrow_mut();
         match (taint_x, taint_y) {
             (Some(taint_x), Some(taint_y)) => {
@@ -98,12 +93,10 @@ impl UnionFind {
         }
     }
 
-    /// Check if two variables are in the same equivalence class
     pub fn same_class(&self, x: TypeVariable, y: TypeVariable) -> bool {
         self.find(x) == self.find(y)
     }
 
-    /// Get all variables in the same equivalence class as x
     pub fn get_class(&self, x: TypeVariable) -> Vec<TypeVariable> {
         let parent = self.parent.borrow();
         let mut result = Vec::new();
@@ -115,7 +108,6 @@ impl UnionFind {
         result
     }
 
-    /// Set the taint value for a representative
     #[must_use]
     pub fn set_taint(&mut self, representative: TypeVariable, taint: Taint) -> Option<Taint> {
         let mut mapping = self.taint_mapping.borrow_mut();
@@ -124,19 +116,16 @@ impl UnionFind {
         old_taint
     }
 
-    /// Get the taint value for a representative, if it exists
     pub fn get_taint(&self, representative: TypeVariable) -> Option<Taint> {
         let mapping = self.taint_mapping.borrow();
         mapping.get(&representative).cloned()
     }
 
-    /// Get the taint value for any variable by finding its representative first
     pub fn get_taint_for_variable(&self, variable: TypeVariable) -> Option<Taint> {
         let representative = self.find(variable);
         self.get_taint(representative)
     }
 
-    /// Recursively substitute variables with their representatives in a taint
     pub fn substitute_variables(&self, taint: &Taint) -> Taint {
         match taint {
             Taint::Variable(var) => {

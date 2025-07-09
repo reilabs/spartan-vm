@@ -2,7 +2,6 @@ use crate::compiler::ssa::Type;
 use std::sync::Arc;
 use noirc_evaluator::ssa::ir::types::{Type as NoirType, NumericType};
 
-/// Converts Noir types to custom SSA types
 pub struct TypeConverter;
 
 impl TypeConverter {
@@ -10,7 +9,6 @@ impl TypeConverter {
         TypeConverter
     }
 
-    /// Convert a Noir type to a custom type
     pub fn convert_type(&self, noir_type: &NoirType) -> Type {
         match noir_type {
             NoirType::Numeric(numeric) => match numeric {

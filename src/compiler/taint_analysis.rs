@@ -1,11 +1,7 @@
 use crate::compiler::flow_analysis::FlowAnalysis;
-use crate::compiler::ssa::{
-    Block, BlockId, Function, FunctionId, OpCode, SSA, Terminator, Type, ValueId,
-};
-use crate::compiler::taint_analysis::Taint::Pure;
-use crate::compiler::taint_analysis::TaintType::{NestedImmutable, NestedMutable, Primitive};
+use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SSA, Terminator, Type, ValueId};
 use crate::compiler::union_find::UnionFind;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
 pub struct TypeVariable(pub usize);

@@ -6,13 +6,12 @@ use nargo::{
     package::{Dependency, Package},
     workspace::Workspace,
 };
-use nargo_toml::{Config, PackageSelection::All};
+use nargo_toml::{PackageSelection::All};
 use noirc_frontend::hir::ParsedFiles;
 
 use crate::{
     error::Error,
-    noir,
-    noir::WithWarnings,
+    noir::{self, WithWarnings},
 };
 
 const NONE_DEPENDENCY_VERSION: &str = "0.0.0";
@@ -98,29 +97,6 @@ impl Project {
         package: &Package,
     ) -> Result<(), Error> {
         let compile_result = noir_project.compile_package(package)?;
-        // let warnings = compile_result.warnings.clone();
-        // let lean_emitter = compile_result.take();
-        // let generated_source = lean_emitter.emit()?;
-
-        // let mut lean_files = generated_source
-        //     .decl_contents
-        //     .iter()
-        //     .map(|(id, content)| -> Result<LeanFile, Error> {
-        //         Ok(LeanFile::from_user_noir_file(
-        //             noir_project.file_manager().path(*id).ok_or(
-        //                 noir::error::file::Error::Other(format!("Unknown file ID: {id:?}")),
-        //             )?,
-        //             content.clone(),
-        //         )
-        //         .map_err(file_generator::error::Error::from)?)
-        //     })
-        //     .collect::<Result<Vec<_>, _>>()?;
-
-        // lean_files.push(LeanFile::from_generated_types(
-        //     generated_source.type_content,
-        // ));
-
-        // Ok(WithWarnings::new(lean_files, warnings))
         Ok(())
     }
 }

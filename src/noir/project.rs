@@ -4,15 +4,10 @@ use crate::compiler::ssa::SSA;
 use crate::compiler::taint_analysis::{Taint, TaintType};
 use crate::{
     compiler::{
-        constraint_solver::ConstraintSolver,
-        flow_analysis::FlowAnalysis,
-        ssa::{BlockId, FunctionId},
+        constraint_solver::ConstraintSolver, flow_analysis::FlowAnalysis, ssa::FunctionId,
         taint_analysis::TaintAnalysis,
     },
-    noir::{
-        WithWarnings,
-        error::compilation::{Error as CompileError, Result as CompileResult},
-    },
+    noir::error::compilation::{Error as CompileError, Result as CompileResult},
 };
 use fm::FileManager;
 use nargo::{
@@ -20,7 +15,7 @@ use nargo::{
     workspace::Workspace,
 };
 use noirc_driver::{CompileOptions, check_crate};
-use noirc_evaluator::ssa::{SsaBuilder, SsaEvaluatorOptions, SsaLogging, minimal_passes};
+use noirc_evaluator::ssa::{SsaBuilder, SsaLogging, minimal_passes};
 use noirc_frontend::hir::ParsedFiles;
 use noirc_frontend::monomorphization::monomorphize;
 
@@ -51,16 +46,6 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         self.nargo_file_manager
     }
 
-    /// Takes the project definition and performs compilation of that project to
-    /// the Noir intermediate representation for further analysis and the
-    /// emission of Lean code.
-    ///
-    /// If the compilation process generates non-fatal warnings, these are
-    /// attached to the return value.
-    ///
-    /// # Errors
-    ///
-    /// - [`CompileError`] if the compilation process fails.
     pub fn compile_package(&self, package: &Package) -> CompileResult<()> {
         let (mut context, crate_id) =
             prepare_package(self.nargo_file_manager, self.nargo_parsed_files, package);
@@ -68,7 +53,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         // context.activate_lsp_mode(); //
 
         // Perform compilation to check the code within it.
-        let ((), warnings) = check_crate(
+        let ((), _) = check_crate(
             &mut context,
             crate_id,
             &CompileOptions {
@@ -82,20 +67,6 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let main = context.get_main_function(context.root_crate_id()).unwrap();
 
         let program = monomorphize(main, &mut context.def_interner, false).unwrap();
-
-        // let options = SsaEvaluatorOptions {
-        //     ssa_logging: SsaLogging::None,
-        //     brillig_options: Default::default(),
-        //     print_codegen_timings: false,
-        //     expression_width: Default::default(),
-        //     emit_ssa: None,
-        //     skip_underconstrained_check: false,
-        //     skip_brillig_constraints_check: false,
-        //     enable_brillig_constraints_check_lookback: false,
-        //     inliner_aggressiveness: 0,
-        //     max_bytecode_increase_percent: None,
-        //     skip_passes: vec![],
-        // };
 
         println!("SSA!");
         let ssa = SsaBuilder::from_program(program, SsaLogging::All, true, &None, None).unwrap();
@@ -177,7 +148,8 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         );
         constraint_solver.solve();
 
-        let big_function_taint = big_function_taint.update_from_unification(&constraint_solver.unification);
+        let big_function_taint =
+            big_function_taint.update_from_unification(&constraint_solver.unification);
         println!(
             "Monomorphized SSA:\n{}",
             custom_ssa

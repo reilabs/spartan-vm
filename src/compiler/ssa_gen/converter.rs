@@ -5,7 +5,6 @@ use crate::compiler::ssa::{FunctionId, SSA};
 use noirc_evaluator::ssa::ssa_gen::Ssa as NoirSsa;
 use noirc_evaluator::ssa::ir::function::FunctionId as NoirFunctionId;
 
-/// Main converter that converts Noir SSA to custom SSA
 pub struct SsaConverter {
     function_converter: FunctionConverter,
     function_mapper: HashMap<NoirFunctionId, FunctionId>,
@@ -19,7 +18,6 @@ impl SsaConverter {
         }
     }
 
-    /// Convert a Noir SSA to a custom SSA
     pub fn convert_noir_ssa(&mut self, noir_ssa: &NoirSsa) -> SSA {
         let mut custom_ssa = SSA::new();
 
