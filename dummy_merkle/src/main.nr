@@ -1,6 +1,16 @@
+use poseidon::poseidon::bn254;
 
 pub trait BinaryHasher<F> {
     fn hash(a: F, b: F) -> F;
+}
+
+struct Poseidon;
+
+impl BinaryHasher<Field> for Poseidon {
+    fn hash(a: Field, b: Field) -> Field {
+        bn254::hash_2([a, b])
+    }
+
 }
 
 struct DummyHasher;

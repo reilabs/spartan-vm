@@ -223,6 +223,10 @@ impl SSA {
         self.functions.iter()
     }
 
+    pub fn iter_functions_mut(&mut self) -> impl Iterator<Item = (&FunctionId, &mut Function)> {
+        self.functions.iter_mut()
+    }
+
     pub fn from_noir(noir_ssa: &noirc_evaluator::ssa::ssa_gen::Ssa) -> Self {
         let mut converter = SsaConverter::new();
         converter.convert_noir_ssa(noir_ssa)
@@ -277,6 +281,17 @@ impl Function {
         }
     }
 
+    pub fn unsafe_empty() -> Self {
+        Function {
+            entry_block: BlockId(0),
+            blocks: HashMap::new(),
+            next_block: 0,
+            returns: Vec::new(),
+            value_info: HashMap::new(),
+            next_value: 0,
+        }
+    }
+
     pub fn get_entry_mut(&mut self) -> &mut Block {
         self.blocks
             .get_mut(&self.entry_block)
@@ -299,6 +314,14 @@ impl Function {
 
     pub fn get_block_mut(&mut self, id: BlockId) -> &mut Block {
         self.blocks.get_mut(&id).expect("Block should exist")
+    }
+
+    pub fn take_block(&mut self, id: BlockId) -> Block {
+        self.blocks.remove(&id).expect("Block should exist")
+    }
+
+    pub fn put_block(&mut self, id: BlockId, block: Block) {
+        self.blocks.insert(id, block);
     }
 
     pub fn add_block(&mut self) -> BlockId {
@@ -435,6 +458,17 @@ impl Function {
             .push(OpCode::Add(value_id, lhs, rhs));
         value_id
     }
+    pub fn push_mul(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.value_info.insert(value_id, Type::Field);
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Mul(value_id, lhs, rhs));
+        value_id
+    }
     pub fn push_lt(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
@@ -563,6 +597,12 @@ impl Function {
     pub fn get_blocks_mut(&mut self) -> impl Iterator<Item = (&BlockId, &mut Block)> {
         self.blocks.iter_mut()
     }
+
+    pub fn fresh_value(&mut self) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        value_id
+    }
 }
 
 #[derive(Clone)]
@@ -619,6 +659,14 @@ impl Block {
         }
     }
 
+    pub fn take_instructions(&mut self) -> Vec<OpCode> {
+        std::mem::take(&mut self.instructions)
+    }
+
+    pub fn put_instructions(&mut self, instructions: Vec<OpCode>) {
+        self.instructions = instructions;
+    }
+
     fn push_instruction(&mut self, instruction: OpCode) {
         self.instructions.push(instruction);
     }
@@ -645,6 +693,7 @@ impl Block {
     pub fn get_terminator(&self) -> Option<&Terminator> {
         self.terminator.as_ref()
     }
+    
 }
 
 #[derive(Debug, Clone)]
@@ -654,6 +703,7 @@ pub enum OpCode {
     UConst(ValueId, u32),                         // _1 = constant(_2)
     Eq(ValueId, ValueId, ValueId),                // _1 = _2 == _3
     Add(ValueId, ValueId, ValueId),               // _1 = _2 + _3
+    Mul(ValueId, ValueId, ValueId),               // _1 = _2 * _3
     Lt(ValueId, ValueId, ValueId),                // _1 = _2 < _3
     Alloc(ValueId, Type),                         // _1 = alloc(Type)
     Store(ValueId, ValueId),                      // *_1 = _2
@@ -661,6 +711,14 @@ pub enum OpCode {
     AssertEq(ValueId, ValueId),                   // assert _1 == _2
     Call(Vec<ValueId>, FunctionId, Vec<ValueId>), // _1, ... = call function(_2, _3, ...)
     ArrayGet(ValueId, ValueId, ValueId),          // _1 = _2[_3]
+
+    // Phase 2
+    WriteWitness(ValueId, ValueId), // _1 = as_witness(_2)
+    IncA(ValueId, ValueId, ValueId), // a += _2(pure) * _3(witness); _1 = a
+    IncB(ValueId, ValueId, ValueId), // b += _2(pure) * _3(witness); _1 = b
+    IncC(ValueId, ValueId, ValueId), // c += _2(pure) * _3(witness); _1 = c
+    SealConstraint,
+    Constrain(ValueId, ValueId, ValueId), // assert(_1 * _2 - _3 == 0)
 }
 
 impl OpCode {
@@ -700,7 +758,14 @@ impl OpCode {
                 lhs.0,
                 rhs.0
             ),
-            OpCode::Lt(result, lhs, rhs) => format!(
+            OpCode::Mul(result, lhs, rhs) => format!(
+                "v{}[{}] = v{} * v{}",
+                result.0,
+                value_annotator.annotate_value(*result),
+                lhs.0,
+                rhs.0
+            ),
+                OpCode::Lt(result, lhs, rhs) => format!(
                 "v{}[{}] = v{} < v{}",
                 result.0,
                 value_annotator.annotate_value(*result),
@@ -739,6 +804,24 @@ impl OpCode {
                     array.0,
                     index.0
                 )
+            }
+            OpCode::WriteWitness(result, value) => {
+                format!("v{}[{}] = witness(v{})", result.0, value_annotator.annotate_value(*result), value.0)
+            }
+            OpCode::IncA(result, coeff, witness) => {
+                format!("v{}[{}] = inc_a(v{}, v{})", result.0, value_annotator.annotate_value(*result), coeff.0, witness.0)
+            }
+            OpCode::IncB(result, coeff, witness) => {
+                format!("v{}[{}] = inc_b(v{}, v{})", result.0, value_annotator.annotate_value(*result), coeff.0, witness.0)
+            }
+            OpCode::IncC(result, coeff, witness) => {
+                format!("v{}[{}] = inc_c(v{}, v{})", result.0, value_annotator.annotate_value(*result), coeff.0, witness.0)
+            }
+            OpCode::SealConstraint => {
+                "seal_constraint".to_string()
+            }
+            OpCode::Constrain(a, b, c) => {
+                format!("constrain_r1c(v{} * v{} - v{} == 0)", a.0, b.0, c.0)
             }
         }
     }
@@ -802,6 +885,31 @@ impl OpCode {
                 if !lhs_type.is_compatible(rhs_type) || !lhs_type.is_numeric() {
                     return Err(format!(
                         "Type mismatch in addition: {:?} ({}) + {:?} ({})",
+                        lhs,
+                        lhs_type.to_string(),
+                        rhs,
+                        rhs_type.to_string()
+                    ));
+                }
+                type_assignments.insert(*result, lhs_type.clone());
+                Ok(())
+            }
+            Self::Mul(result, lhs, rhs) => {
+                let lhs_type = type_assignments.get(lhs).ok_or_else(|| {
+                    format!(
+                        "Left-hand side value {:?} not found in type assignments",
+                        lhs
+                    )
+                })?;
+                let rhs_type = type_assignments.get(rhs).ok_or_else(|| {
+                    format!(
+                        "Right-hand side value {:?} not found in type assignments",
+                        rhs
+                    )
+                })?;
+                if !lhs_type.is_compatible(rhs_type) || !lhs_type.is_numeric() {
+                    return Err(format!(
+                        "Type mismatch in multiplication: {:?} ({}) * {:?} ({})",
                         lhs,
                         lhs_type.to_string(),
                         rhs,
@@ -958,6 +1066,16 @@ impl OpCode {
 
                 let element_type = array_type.get_array_element();
                 type_assignments.insert(*result, element_type);
+                Ok(())
+            }
+            Self::WriteWitness(result, value) => {
+                let witness_type = type_assignments.get(value).ok_or_else(|| {
+                    format!("Witness value {:?} not found in type assignments", value)
+                })?;
+                type_assignments.insert(*result, witness_type.clone());
+                Ok(())
+            }
+            Self::IncA { .. } | Self::IncB { .. } | Self::IncC { .. } | Self::SealConstraint | Self::Constrain { .. } => {
                 Ok(())
             }
         }

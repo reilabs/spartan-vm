@@ -10,6 +10,8 @@ use noirc_evaluator::ssa::ir::{
     value::{Value, ValueId as NoirValueId},
 };
 
+use std::str::FromStr;
+
 pub struct FunctionConverter {
     type_converter: TypeConverter,
     value_mapper: HashMap<NoirValueId, ValueId>,
@@ -87,6 +89,9 @@ impl FunctionConverter {
                             }
                             BinaryOp::Lt => {
                                 custom_function.push_lt(custom_block_id, left_value, right_value)
+                            }
+                            BinaryOp::Mul { unchecked } => {
+                                custom_function.push_mul(custom_block_id, left_value, right_value)
                             }
                             _ => panic!("Unsupported binary operation: {:?}", binary.operator),
                         };
@@ -332,6 +337,12 @@ impl FunctionConverter {
                     let u32_value = constant.to_string().parse::<u32>().unwrap();
                     let bool_value = u32_value != 0;
                     let custom_value_id = custom_function.push_bool_const(block_id, bool_value);
+                    custom_value_id
+                }
+                NumericType::NativeField => {
+                    let field_value = constant.to_string();
+                    let field_value = ark_bn254::Fr::from_str(&field_value).unwrap();
+                    let custom_value_id = custom_function.push_field_const(block_id, field_value);
                     custom_value_id
                 }
                 _ => {

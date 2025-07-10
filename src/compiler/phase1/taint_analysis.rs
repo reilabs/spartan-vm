@@ -113,6 +113,13 @@ impl Taint {
             }
         }
     }
+
+    pub fn expect_constant(&self) -> ConstantTaint {
+        match self {
+            Taint::Constant(constant) => *constant,
+            _ => panic!("Expected constant taint, got {:?}", self),
+        }
+    }
 }
 
 impl std::fmt::Display for Taint {
@@ -405,6 +412,11 @@ impl FunctionTaint {
             .collect();
         new_taint
     }
+
+    pub fn get_value_taint(&self, value_id: ValueId) -> &TaintType {
+        self.value_taints.get(&value_id).unwrap()
+    }
+    
 }
 
 impl SsaAnnotator for FunctionTaint {
@@ -547,7 +559,8 @@ impl TaintAnalysis {
                 match instruction {
                     OpCode::Add(r, lhs, rhs)
                     | OpCode::Lt(r, lhs, rhs)
-                    | OpCode::Eq(r, lhs, rhs) => {
+                    | OpCode::Eq(r, lhs, rhs)
+                    | OpCode::Mul(r, lhs, rhs) => {
                         let lhs_taint = function_taint.value_taints.get(lhs).unwrap();
                         let rhs_taint = function_taint.value_taints.get(rhs).unwrap();
                         let result_taint = lhs_taint.union(rhs_taint);
@@ -638,6 +651,10 @@ impl TaintAnalysis {
                             cfg_taint.clone(),
                             func_taint.cfg_taint.clone(),
                         ));
+                    }
+
+                    OpCode::WriteWitness {..} | OpCode::IncA {..} | OpCode::IncB {..} | OpCode::IncC {..} | OpCode::SealConstraint | OpCode::Constrain {..} => {
+                        panic!("Should not be present at this stage {:?}", instruction);
                     }
                 }
             }

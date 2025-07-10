@@ -1,5 +1,6 @@
 //! Functionality for working with projects of Noir sources.
 
+use crate::compiler::phase1::explicit_witness::ExplicitWitness;
 use crate::compiler::phase1::monomorphization::Monomorphization;
 use crate::compiler::phase1::ssa::{DefaultSsaAnnotator, SSA};
 use crate::compiler::phase1::taint_analysis::TaintAnalysis;
@@ -131,6 +132,20 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         println!(
             "After monomorphization SSA:\n{}",
             custom_ssa.to_string(&taint_analysis)
+        );
+
+        drop(flow_analysis); // Explicit drop to signify it's invalid now
+
+        let mut flow_analysis = FlowAnalysis::new();
+        flow_analysis.run(&custom_ssa);
+        flow_analysis.save_as_png("flow_analysis_after_monomorphization.png").unwrap();
+
+        let mut explicit_witness = ExplicitWitness::new();
+        explicit_witness.run(&mut custom_ssa, &taint_analysis, &flow_analysis);
+
+        println!(
+            "After explicit witness SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
         );
 
         Ok(())

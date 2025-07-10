@@ -5,3 +5,4 @@ pub mod union_find;
 pub mod ssa_gen;
 pub mod flow_analysis;
 pub mod monomorphization;
+pub mod explicit_witness;

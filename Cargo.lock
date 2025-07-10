@@ -2788,6 +2788,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ark-bn254",
+ "ark-ff",
  "clap",
  "convert_case",
  "derivative",
