@@ -1,10 +1,10 @@
 use itertools::Itertools;
 
-use crate::compiler::phase1::flow_analysis::FlowAnalysis;
-use crate::compiler::phase1::ssa::{
+use crate::compiler::flow_analysis::FlowAnalysis;
+use crate::compiler::ssa::{
     BlockId, FunctionId, OpCode, SSA, SsaAnnotator, Terminator, Type, ValueId,
 };
-use crate::compiler::phase1::union_find::UnionFind;
+use crate::compiler::union_find::UnionFind;
 use std::collections::{HashMap, HashSet};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]

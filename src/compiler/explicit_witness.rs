@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::compiler::phase1::{
+use crate::compiler::{
     flow_analysis::FlowAnalysis,
     ssa::{BlockId, Function, FunctionId, OpCode, SSA, Type, ValueId},
     taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis},

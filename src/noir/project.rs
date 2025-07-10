@@ -1,13 +1,12 @@
 //! Functionality for working with projects of Noir sources.
 
-use crate::compiler::phase1::explicit_witness::ExplicitWitness;
-use crate::compiler::phase1::monomorphization::Monomorphization;
-use crate::compiler::phase1::ssa::{DefaultSsaAnnotator, SSA};
-use crate::compiler::phase1::taint_analysis::TaintAnalysis;
+use crate::compiler::explicit_witness::ExplicitWitness;
+use crate::compiler::monomorphization::Monomorphization;
+use crate::compiler::r1cs_gen::R1CGen;
+use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
+use crate::compiler::taint_analysis::TaintAnalysis;
+use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::{
-    compiler::{
-        phase1::{flow_analysis::FlowAnalysis},
-    },
     noir::error::compilation::{Error as CompileError, Result as CompileResult},
 };
 use fm::FileManager;
@@ -147,6 +146,11 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             "After explicit witness SSA:\n{}",
             custom_ssa.to_string(&DefaultSsaAnnotator)
         );
+
+        let mut r1cs_gen = R1CGen::new();
+        r1cs_gen.run(&custom_ssa);
+        let r1cs = r1cs_gen.get_r1cs();
+        println!("R1CS:\n{}", r1cs.iter().map(|r1c| r1c.to_string()).collect::<Vec<_>>().join("\n"));
 
         Ok(())
     }

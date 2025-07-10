@@ -1,4 +1,4 @@
-use crate::compiler::phase1::ssa_gen::SsaConverter;
+use crate::compiler::ssa_gen::SsaConverter;
 use itertools::Itertools;
 use std::{collections::HashMap, rc::Rc};
 

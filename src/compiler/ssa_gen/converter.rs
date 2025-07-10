@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::FunctionConverter;
-use crate::compiler::phase1::ssa::{FunctionId, SSA};
+use crate::compiler::ssa::{FunctionId, SSA};
 use noirc_evaluator::ssa::ssa_gen::Ssa as NoirSsa;
 use noirc_evaluator::ssa::ir::function::FunctionId as NoirFunctionId;
 

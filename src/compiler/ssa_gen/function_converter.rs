@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::TypeConverter;
-use crate::compiler::phase1::ssa::{BlockId, Function, FunctionId, Terminator, ValueId};
+use crate::compiler::ssa::{BlockId, Function, FunctionId, Terminator, ValueId};
 use noirc_evaluator::ssa::ir::{
     basic_block::BasicBlockId,
     function::{Function as NoirFunction, FunctionId as NoirFunctionId},

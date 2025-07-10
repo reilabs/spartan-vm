@@ -1,2 +1,9 @@
-pub mod phase1;
-pub mod phase2;
+pub mod ssa;
+pub mod taint_analysis;
+pub mod constraint_solver;
+pub mod union_find;
+pub mod ssa_gen;
+pub mod flow_analysis;
+pub mod monomorphization;
+pub mod explicit_witness;
+pub mod r1cs_gen;
