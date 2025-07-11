@@ -97,11 +97,10 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             custom_ssa.to_string(&DefaultSsaAnnotator)
         );
 
-        let mut flow_analysis = FlowAnalysis::new();
-        flow_analysis.run(&custom_ssa);
-        flow_analysis.save_as_png("flow_analysis.png").unwrap();
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        // flow_analysis.save_as_png("flow_analysis.png").unwrap();
 
-        let call_loops = flow_analysis.detect_call_loops();
+        let call_loops = flow_analysis.get_call_graph().detect_loops();
         if !call_loops.is_empty() {
             panic!(
                 "Call loops detected: {:?}. We don't support recursion yet.",
@@ -135,9 +134,8 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         drop(flow_analysis); // Explicit drop to signify it's invalid now
 
-        let mut flow_analysis = FlowAnalysis::new();
-        flow_analysis.run(&custom_ssa);
-        flow_analysis.save_as_png("flow_analysis_after_monomorphization.png").unwrap();
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        // flow_analysis.save_as_png("flow_analysis_after_monomorphization.png").unwrap();
 
         let mut explicit_witness = ExplicitWitness::new();
         explicit_witness.run(&mut custom_ssa, &taint_analysis, &flow_analysis);

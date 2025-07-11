@@ -238,6 +238,9 @@ impl R1CGen {
                             c: c,
                         });
                     }
+                    OpCode::WriteWitness(result, _) => {
+                        scope.insert(*result, Value::WitnessVar(self.next_witness()));
+                    }
 
                     _ => panic!("unexpected instruction {:?}", instruction),
                 }

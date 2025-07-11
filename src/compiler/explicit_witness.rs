@@ -35,6 +35,8 @@ impl ExplicitWitness {
         function_taint: &FunctionTaint,
         flow_analysis: &FlowAnalysis,
     ) {
+        let cfg = flow_analysis.get_function_cfg(function_id);
+
         let cfg_taint_param = if matches!(
             function_taint.cfg_taint,
             Taint::Constant(ConstantTaint::Witness)
@@ -44,8 +46,13 @@ impl ExplicitWitness {
             None
         };
 
-        for block_id in flow_analysis.get_blocks_bfs(function_id) {
+        assert_eq!(cfg_taint_param.is_none(), true);
+
+        for block_id in cfg.get_blocks_bfs() {
             let mut block = function.take_block(block_id);
+            let block_taint = function_taint.get_block_taint(block_id).expect_constant();
+            assert_eq!(block_taint, ConstantTaint::Pure);
+
             let old_instructions = block.take_instructions();
             let mut new_instructions = Vec::new();
 

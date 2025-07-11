@@ -416,7 +416,10 @@ impl FunctionTaint {
     pub fn get_value_taint(&self, value_id: ValueId) -> &TaintType {
         self.value_taints.get(&value_id).unwrap()
     }
-    
+
+    pub fn get_block_taint(&self, block_id: BlockId) -> &Taint {
+        self.block_cfg_taints.get(&block_id).unwrap()
+    }
 }
 
 impl SsaAnnotator for FunctionTaint {
@@ -496,7 +499,7 @@ impl TaintAnalysis {
     }
 
     pub fn run(&mut self, ssa: &SSA, cfg: &FlowAnalysis) -> Result<(), String> {
-        let fns_post_order = cfg.get_functions_post_order(ssa.get_main_id());
+        let fns_post_order = cfg.get_call_graph().get_post_order(ssa.get_main_id());
         for fn_id in fns_post_order {
             self.analyze_function(ssa, cfg, fn_id);
         }
@@ -505,7 +508,8 @@ impl TaintAnalysis {
 
     fn analyze_function(&mut self, ssa: &SSA, cfg: &FlowAnalysis, func_id: FunctionId) {
         let func = ssa.get_function(func_id);
-        let block_queue = cfg.get_blocks_bfs(func_id);
+        let cfg = cfg.get_function_cfg(func_id);
+        let block_queue = cfg.get_blocks_bfs();
         let cfg_ty_var = self.fresh_ty_var();
         let mut function_taint = FunctionTaint {
             returns_taint: vec![],
@@ -697,7 +701,7 @@ impl TaintAnalysis {
                     }
                     Terminator::JmpIf(cond, t1, t2) => {
                         let cond_taint = function_taint.value_taints.get(cond).unwrap();
-                        if cfg.is_loop_entry(func_id, block_id) {
+                        if cfg.is_loop_entry(block_id) {
                             // we assert that the condition is pure
                             function_taint.judgements.push(Judgement::Eq(
                                 cond_taint.toplevel_taint(),
@@ -705,7 +709,7 @@ impl TaintAnalysis {
                             ));
                         } else {
                             // we need to taint the inputs of the merge point with the condition taint
-                            let merge = cfg.get_merge_point(func_id, block_id);
+                            let merge = cfg.get_merge_point(block_id);
                             let merge_inputs = func
                                 .get_block(merge)
                                 .get_parameters()
@@ -719,7 +723,7 @@ impl TaintAnalysis {
                                 ));
                             }
                             
-                            let body_blocks = cfg.get_if_body(func_id, block_id);
+                            let body_blocks = cfg.get_if_body(block_id);
                             for block in body_blocks {
                                 let local_taint = function_taint.block_cfg_taints.get(&block).unwrap();
                                 function_taint.judgements.push(Judgement::Le(
