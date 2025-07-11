@@ -216,6 +216,9 @@ impl CFG {
         let merge = self.get_merge_point_node(entry);
         let mut result = Vec::new();
         for node in self.cfg.cfg.node_indices() {
+            if node == entry || node == merge {
+                continue;
+            }
             if self.cfg.dominates(entry, node) && self.reverse_cfg.dominates(merge, node) {
                 result.push(*self.node_to_block.get(&node).unwrap());
             }

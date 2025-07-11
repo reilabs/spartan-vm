@@ -134,6 +134,7 @@ impl ExplicitWitness {
                             .expect_constant();
                         // writes to dynamic ptr not supported
                         assert_eq!(ptr_taint, ConstantTaint::Pure);
+                        assert_eq!(block_taint, None); // TODO: support conditional writes
                         new_instructions.push(instruction);
                     }
                     OpCode::Load(_, ptr) => {
