@@ -11,7 +11,7 @@
 // These occur in our Noir dependencies and cannot be avoided.
 #![allow(clippy::multiple_crate_versions)]
 
-use std::{fs, path::PathBuf, process::ExitCode};
+use std::{fs, path::PathBuf, process::ExitCode, str::FromStr};
 
 use clap::Parser;
 use spartan_vm::{Error, Project};
@@ -24,6 +24,9 @@ pub struct ProgramOptions {
     /// The root of the Noir project to extract.
     #[arg(long, value_name = "PATH", default_value = DEFAULT_NOIR_PROJECT_PATH, value_parser = parse_path)]
     pub root: PathBuf,
+
+    #[arg(long, value_name = "PUBLIC WITNESS", default_value = "", num_args = 0..)]
+    pub public_witness: Vec<String>,
 }
 
 /// The main function for the CLI utility, responsible for parsing program
@@ -46,7 +49,10 @@ fn main() -> ExitCode {
 pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     let project = Project::new(args.root.clone())?;
 
-    let result = project.extract()?;
+    let public_witness: Vec<_> = args.public_witness.iter().map(|s| ark_bn254::Fr::from_str(s).unwrap()).collect();
+    println!("Public witness: {:?}", public_witness);
+
+    let result = project.extract(public_witness)?;
     Ok(ExitCode::SUCCESS)
 }
 

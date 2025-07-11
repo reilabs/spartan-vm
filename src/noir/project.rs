@@ -6,6 +6,7 @@ use crate::compiler::r1cs_gen::R1CGen;
 use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
 use crate::compiler::taint_analysis::TaintAnalysis;
 use crate::compiler::flow_analysis::FlowAnalysis;
+use crate::compiler::witness_generation::WitnessGen;
 use crate::{
     noir::error::compilation::{Error as CompileError, Result as CompileResult},
 };
@@ -47,7 +48,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         self.nargo_file_manager
     }
 
-    pub fn compile_package(&self, package: &Package) -> CompileResult<()> {
+    pub fn compile_package(&self, package: &Package, public_witness: Vec<ark_bn254::Fr>) -> CompileResult<()> {
         let (mut context, crate_id) =
             prepare_package(self.nargo_file_manager, self.nargo_parsed_files, package);
         // Enables reference tracking in the internal context.
@@ -147,8 +148,18 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let mut r1cs_gen = R1CGen::new();
         r1cs_gen.run(&custom_ssa);
-        let r1cs = r1cs_gen.get_r1cs();
-        println!("R1CS:\n{}", r1cs.iter().map(|r1c| r1c.to_string()).collect::<Vec<_>>().join("\n"));
+        let r1cs = r1cs_gen.clone().get_r1cs();
+        println!("R1CS (constraints = {}) (witness_size = {}):\n{}", r1cs.len(), r1cs_gen.get_witness_size(), r1cs.iter().map(|r1c| r1c.to_string()).collect::<Vec<_>>().join("\n"));
+
+        let mut witness_gen = WitnessGen::new(public_witness);
+        witness_gen.run(&custom_ssa);
+        let witness = witness_gen.get_witness();
+        println!("Witness:\n{}", witness.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(", "));
+        println!("A:\n{}", witness_gen.get_a().iter().map(|w| w.to_string()).collect::<Vec<_>>().join(", "));
+        println!("B:\n{}", witness_gen.get_b().iter().map(|w| w.to_string()).collect::<Vec<_>>().join(", "));
+        println!("C:\n{}", witness_gen.get_c().iter().map(|w| w.to_string()).collect::<Vec<_>>().join(", "));
+
+        r1cs_gen.verify(&witness);
 
         Ok(())
     }

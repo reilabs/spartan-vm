@@ -280,7 +280,7 @@ impl ExplicitWitness {
                                 // res = lhs * cond + rhs * (cond - 1)
                                 // but this is 2 non-constant muls.
                                 // Instead, we notice that:
-                                // res = (lhs + rhs) * cond - rhs
+                                // res = (lhs - rhs) * cond + rhs
                                 // this way we only need to witnessize the first term and return the
                                 // linear combination.
 
@@ -290,12 +290,12 @@ impl ExplicitWitness {
                                 for ((res, _), (lhs, rhs)) in merge_params.iter().zip(
                                     args_passed_from_lhs.iter().zip(args_passed_from_rhs.iter()),
                                 ) {
-                                    let lhs_rhs = function.push_add(merger_block, *lhs, *rhs);
+                                    let neg_rhs = function.push_mul(merger_block, *rhs, const_neg_1);
+                                    let lhs_rhs = function.push_add(merger_block, *lhs, neg_rhs);
                                     let mul_cond = function.push_mul(merger_block, lhs_rhs, cond);
                                     let mul_cond_wit = function.push_witness_write(merger_block, mul_cond);
                                     function.push_constrain(merger_block, lhs_rhs, cond, mul_cond_wit);
-                                    let rhs_neg = function.push_mul(merger_block, *rhs, const_neg_1);
-                                    function.get_block_mut(merger_block).push_instruction(OpCode::Add(*res, mul_cond_wit, rhs_neg));
+                                    function.get_block_mut(merger_block).push_instruction(OpCode::Add(*res, mul_cond_wit, *rhs));
                                 }
 
                             }

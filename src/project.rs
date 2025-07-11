@@ -60,11 +60,11 @@ impl Project {
     ///
     /// Will return `Error` if something goes wrong witch compiling, extracting
     /// or generating files.
-    pub fn extract(&self) -> Result<(), Error> {
+    pub fn extract(&self, public_witness: Vec<ark_bn254::Fr>) -> Result<(), Error> {
         let noir_project = noir::Project::new(&self.nargo_file_manager, &self.nargo_parsed_files);
 
         for package in &self.nargo_workspace.members {
-            let with_warnings = self.extract_package(&noir_project, package)?;
+            let with_warnings = self.extract_package(&noir_project, package, public_witness.clone())?;
 
         }
         Ok(())
@@ -74,6 +74,7 @@ impl Project {
         &self,
         noir_project: &noir::Project,
         package: &Package,
+        public_witness: Vec<ark_bn254::Fr>,
     ) -> Result<WithWarnings<()>, Error> {
         let package_name = &package.name.to_string();
         let package_version =
@@ -81,7 +82,7 @@ impl Project {
 
         let mut warnings = vec![];
 
-        let res = Self::compile_package(noir_project, package)?;
+        let res = Self::compile_package(noir_project, package, public_witness)?;
         // warnings.extend(res.warnings);
         // let extracted_code = res.data;
         // let additional_dependencies = Self::get_dependencies_with_lampe(package)?;
@@ -95,8 +96,9 @@ impl Project {
     fn compile_package(
         noir_project: &noir::Project,
         package: &Package,
+        public_witness: Vec<ark_bn254::Fr>
     ) -> Result<(), Error> {
-        let compile_result = noir_project.compile_package(package)?;
+        let compile_result = noir_project.compile_package(package, public_witness)?;
         Ok(())
     }
 }

@@ -43,7 +43,7 @@ where
     curr_h
 }
 
-fn main(root: pub Field, proof: pub [Field; 32], item: pub Field, idx: [bool; 32]) {
+fn main(root: pub Field, proof: pub [Field; 4], item: pub Field, idx: [bool; 4]) {
     let calculated_root = mtree_recover::<DummyHasher, _>(idx, proof, item);
     assert_eq(root, calculated_root);
     // assert(root != item)

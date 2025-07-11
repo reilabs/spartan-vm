@@ -7,3 +7,4 @@ pub mod flow_analysis;
 pub mod monomorphization;
 pub mod explicit_witness;
 pub mod r1cs_gen;
+pub mod witness_generation;

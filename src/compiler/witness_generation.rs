@@ -2,14 +2,12 @@ use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
 
 use crate::compiler::ssa::{BlockId, Function, FunctionId, OpCode, SSA, Terminator, Type, ValueId};
 use ark_ff::{AdditiveGroup, Field, PrimeField};
+use graphviz_rust::attributes::width;
 use itertools::Itertools;
 
 #[derive(Clone, Debug)]
 pub enum Value {
-    Const(ark_bn254::Fr),
-    WitnessVar(usize),
-    Add(Box<Value>, Box<Value>),
-    Mul(Box<Value>, Box<Value>),
+    Fp(ark_bn254::Fr),
     Array(Vec<Value>),
     Ptr(Rc<RefCell<Value>>),
     Invalid,
@@ -17,31 +15,25 @@ pub enum Value {
 
 impl Value {
     pub fn add(&self, other: &Value) -> Value {
-        match (self, other) {
-            (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs + rhs),
-            (lhs, rhs) => Value::Add(Box::new(lhs.clone()), Box::new(rhs.clone())),
-        }
+        Self::Fp(self.expect_fp() + other.expect_fp())
     }
 
-    pub fn expect_constant(&self) -> ark_bn254::Fr {
+    pub fn expect_fp(&self) -> ark_bn254::Fr {
         match self {
-            Value::Const(c) => *c,
-            _ => panic!("expected constant"),
+            Value::Fp(c) => *c,
+            _ => panic!("expected fp"),
         }
     }
 
     pub fn expect_u32(&self) -> u32 {
         match self {
-            Value::Const(c) => c.into_bigint().to_string().parse().unwrap(),
+            Value::Fp(c) => c.into_bigint().to_string().parse().unwrap(),
             _ => panic!("expected u32"),
         }
     }
 
     pub fn mul(&self, other: &Value) -> Value {
-        match (self, other) {
-            (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs * rhs),
-            (lhs, rhs) => Value::Mul(Box::new(lhs.clone()), Box::new(rhs.clone())),
-        }
+        Self::Fp(self.expect_fp() * other.expect_fp())
     }
 
     pub fn expect_ptr(&self) -> Rc<RefCell<Value>> {
@@ -52,12 +44,12 @@ impl Value {
     }
 
     pub fn lt(&self, other: &Value) -> Value {
-        let self_const = self.expect_constant();
-        let other_const = other.expect_constant();
+        let self_const = self.expect_fp();
+        let other_const = other.expect_fp();
         if self_const < other_const {
-            Value::Const(ark_bn254::Fr::ONE)
+            Value::Fp(ark_bn254::Fr::ONE)
         } else {
-            Value::Const(ark_bn254::Fr::ZERO)
+            Value::Fp(ark_bn254::Fr::ZERO)
         }
     }
 
@@ -67,122 +59,51 @@ impl Value {
             _ => panic!("expected array"),
         }
     }
-
-    pub fn expect_linear_combination(&self) -> Vec<(usize, ark_bn254::Fr)> {
-        let first = match self {
-            Value::Const(c) => vec![(0, *c)],
-            Value::Mul(l, r) => match (&**l, &**r) {
-                (Value::Const(c), other) | (other, Value::Const(c)) => {
-                    let mut r = other.expect_linear_combination();
-                    for (i, cx) in r.iter_mut() {
-                        *cx *= *c;
-                    }
-                    r
-                }
-                _ => panic!("expected linear combination, got arb mul"),
-            },
-            Value::Add(l, r) => {
-                let mut l = l.expect_linear_combination();
-                let r = r.expect_linear_combination();
-                l.extend(r);
-                l
-            }
-            Value::WitnessVar(i) => vec![(*i, ark_bn254::Fr::ONE)],
-            _ => panic!("expected linear combination"),
-        };
-        first
-            .into_iter()
-            .sorted_by_key(|(i, _)| *i)
-            .chunk_by(|(i, _)| *i)
-            .into_iter()
-            .map(|(var, coeffs)| (var, coeffs.map(|(_, c)| c).sum()))
-            .filter(|(_, c)| *c != ark_bn254::Fr::ZERO)
-            .collect()
-    }
 }
 
-#[derive(Clone)]
-pub struct R1C {
-    pub a: Vec<(usize, ark_bn254::Fr)>,
-    pub b: Vec<(usize, ark_bn254::Fr)>,
-    pub c: Vec<(usize, ark_bn254::Fr)>,
+pub struct WitnessGen {
+    a: Vec<ark_bn254::Fr>,
+    b: Vec<ark_bn254::Fr>,
+    c: Vec<ark_bn254::Fr>,
+    witness: Vec<ark_bn254::Fr>,
 }
 
-fn field_to_string(c: ark_bn254::Fr) -> String {
-    if c == -ark_bn254::Fr::ONE {
-        "-1".to_string()
-    } else {
-        c.to_string()
-    }
-}
-
-impl Display for R1C {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let a_str = self
-            .a
-            .iter()
-            .map(|(i, c)| format!("{} * v{}", field_to_string(*c), i))
-            .collect::<Vec<_>>()
-            .join(" + ");
-        let b_str = self
-            .b
-            .iter()
-            .map(|(i, c)| format!("{} * v{}", field_to_string(*c), i))
-            .collect::<Vec<_>>()
-            .join(" + ");
-        let c_str = self
-            .c
-            .iter()
-            .map(|(i, c)| format!("{} * v{}", field_to_string(*c), i))
-            .collect::<Vec<_>>()
-            .join(" + ");
-
-        write!(f, "({}) * ({}) - ({}) = 0", a_str, b_str, c_str)
-    }
-}
-
-#[derive(Clone)]
-pub struct R1CGen {
-    result: Vec<R1C>,
-    next_witness: usize,
-}
-
-impl R1CGen {
-    pub fn new() -> Self {
+impl WitnessGen {
+    pub fn new(public_witness: Vec<ark_bn254::Fr>) -> Self {
         Self {
-            result: vec![],
-            next_witness: 1, // 0 is reserved for constant one
+            a: vec![],
+            b: vec![],
+            c: vec![],
+            witness: public_witness,
         }
-    }
-
-    pub fn verify(&self, witness: &[ark_bn254::Fr]) -> bool {
-        for r1c in &self.result {
-            let a = r1c.a.iter().map(|(i, c)| c * &witness[*i]).sum::<ark_bn254::Fr>();
-            let b = r1c.b.iter().map(|(i, c)| c * &witness[*i]).sum::<ark_bn254::Fr>();
-            let c = r1c.c.iter().map(|(i, c)| c * &witness[*i]).sum::<ark_bn254::Fr>();
-            let success_emoji = if a * b == c { "✅" } else { "❌" };
-            println!("VERIFIER {}: a: {}, b: {}, c: {}", success_emoji, a, b, c);
-        }
-        return true;
     }
 
     pub fn run(&mut self, ssa: &SSA) {
         let entry_point = ssa.get_main_id();
         let params = ssa.get_function(entry_point).get_param_types();
         let mut main_params = vec![];
+        let witness = self.witness.clone();
+        let mut witness_iter = witness.iter().skip(1).copied();
         for value_type in params {
-            main_params.push(self.initialize_main_input(&value_type));
+            main_params.push(self.initialize_main_input(&value_type, &mut witness_iter));
         }
 
         self.run_function(ssa, entry_point, main_params);
     }
 
-    pub fn get_r1cs(self) -> Vec<R1C> {
-        self.result
+    pub fn get_witness(&self) -> Vec<ark_bn254::Fr> {
+        self.witness.clone()
     }
 
-    pub fn get_witness_size(&self) -> usize {
-        self.next_witness
+    pub fn get_a(&self) -> Vec<ark_bn254::Fr> {
+        self.a.clone()
+    }
+    pub fn get_b(&self) -> Vec<ark_bn254::Fr> {
+        self.b.clone()
+    }
+
+    pub fn get_c(&self) -> Vec<ark_bn254::Fr> {
+        self.c.clone()
     }
 
     pub fn run_function(
@@ -203,15 +124,15 @@ impl R1CGen {
             for instruction in block.get_instructions() {
                 match instruction {
                     OpCode::FieldConst(result, value) => {
-                        scope.insert(*result, Value::Const(*value));
+                        scope.insert(*result, Value::Fp(*value));
                     }
 
                     OpCode::BConst(result, value) => {
-                        scope.insert(*result, Value::Const(ark_bn254::Fr::from(*value as u64)));
+                        scope.insert(*result, Value::Fp(ark_bn254::Fr::from(*value as u64)));
                     }
 
                     OpCode::UConst(result, value) => {
-                        scope.insert(*result, Value::Const(ark_bn254::Fr::from(*value as u64)));
+                        scope.insert(*result, Value::Fp(ark_bn254::Fr::from(*value as u64)));
                     }
 
                     OpCode::Add(result, lhs, rhs) => {
@@ -261,13 +182,17 @@ impl R1CGen {
                     }
 
                     OpCode::Constrain(a, b, c) => {
-                        let a = scope.get(a).unwrap().expect_linear_combination();
-                        let b = scope.get(b).unwrap().expect_linear_combination();
-                        let c = scope.get(c).unwrap().expect_linear_combination();
-                        self.result.push(R1C { a: a, b: b, c: c });
+                        let a = scope.get(a).unwrap();
+                        let b = scope.get(b).unwrap();
+                        let c = scope.get(c).unwrap();
+                        self.a.push(a.expect_fp());
+                        self.b.push(b.expect_fp());
+                        self.c.push(c.expect_fp());
                     }
-                    OpCode::WriteWitness(result, _) => {
-                        scope.insert(*result, Value::WitnessVar(self.next_witness()));
+                    OpCode::WriteWitness(result, v) => {
+                        let v = scope.get(v).unwrap().clone();
+                        scope.insert(*result, v.clone());
+                        self.witness.push(v.expect_fp());
                     }
 
                     OpCode::Call(ret, tgt, args) => {
@@ -303,7 +228,7 @@ impl R1CGen {
                 }
                 Some(Terminator::JmpIf(cond, if_true, if_false)) => {
                     let cond = scope.get(cond).unwrap();
-                    let cond = cond.expect_constant();
+                    let cond = cond.expect_fp();
                     if cond == ark_bn254::Fr::ZERO {
                         block_id = *if_false;
                     } else {
@@ -330,21 +255,19 @@ impl R1CGen {
         }
     }
 
-    fn next_witness(&mut self) -> usize {
-        let result = self.next_witness;
-        self.next_witness += 1;
-        result
-    }
-
-    fn initialize_main_input(&mut self, tp: &Type) -> Value {
+    fn initialize_main_input(
+        &mut self,
+        tp: &Type,
+        witness_iter: &mut impl Iterator<Item = ark_bn254::Fr>,
+    ) -> Value {
         match tp {
-            Type::Bool => Value::WitnessVar(self.next_witness()),
-            Type::U32 => Value::WitnessVar(self.next_witness()),
-            Type::Field => Value::WitnessVar(self.next_witness()),
+            Type::Bool => Value::Fp(witness_iter.next().unwrap()),
+            Type::U32 => Value::Fp(witness_iter.next().unwrap()),
+            Type::Field => Value::Fp(witness_iter.next().unwrap()),
             Type::Array(tp, size) => {
                 let mut result = vec![];
                 for _ in 0..*size {
-                    result.push(self.initialize_main_input(tp));
+                    result.push(self.initialize_main_input(tp, witness_iter));
                 }
                 Value::Array(result)
             }
