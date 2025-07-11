@@ -2,6 +2,7 @@ use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
 
 use crate::compiler::ssa::{BlockId, Function, FunctionId, OpCode, SSA, Terminator, Type, ValueId};
 use ark_ff::{AdditiveGroup, Field, PrimeField};
+use itertools::Itertools;
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -68,20 +69,18 @@ impl Value {
     }
 
     pub fn expect_linear_combination(&self) -> Vec<(usize, ark_bn254::Fr)> {
-        match self {
+        let first = match self {
             Value::Const(c) => vec![(0, *c)],
-            Value::Mul(l, r ) => {
-                match (&**l, &**r) {
-                    (Value::Const(c), other) | (other, Value::Const(c)) => {
-                        let mut r = other.expect_linear_combination();
-                        for (i, cx) in r.iter_mut() {
-                            *cx *= *c;
-                        }
-                        r
+            Value::Mul(l, r) => match (&**l, &**r) {
+                (Value::Const(c), other) | (other, Value::Const(c)) => {
+                    let mut r = other.expect_linear_combination();
+                    for (i, cx) in r.iter_mut() {
+                        *cx *= *c;
                     }
-                    _ => panic!("expected linear combination, got arb mul"),
+                    r
                 }
-            }
+                _ => panic!("expected linear combination, got arb mul"),
+            },
             Value::Add(l, r) => {
                 let mut l = l.expect_linear_combination();
                 let r = r.expect_linear_combination();
@@ -90,7 +89,15 @@ impl Value {
             }
             Value::WitnessVar(i) => vec![(*i, ark_bn254::Fr::ONE)],
             _ => panic!("expected linear combination"),
-        }
+        };
+        first
+            .into_iter()
+            .sorted_by_key(|(i, _)| *i)
+            .chunk_by(|(i, _)| *i)
+            .into_iter()
+            .map(|(var, coeffs)| (var, coeffs.map(|(_, c)| c).sum()))
+            .filter(|(_, c)| *c != ark_bn254::Fr::ZERO)
+            .collect()
     }
 }
 
@@ -100,24 +107,32 @@ pub struct R1C {
     pub c: Vec<(usize, ark_bn254::Fr)>,
 }
 
+fn field_to_string(c: ark_bn254::Fr) -> String {
+    if c == -ark_bn254::Fr::ONE {
+        "-1".to_string()
+    } else {
+        c.to_string()
+    }
+}
+
 impl Display for R1C {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let a_str = self
             .a
             .iter()
-            .map(|(i, c)| format!("{} * v{}", c, i))
+            .map(|(i, c)| format!("{} * v{}", field_to_string(*c), i))
             .collect::<Vec<_>>()
             .join(" + ");
         let b_str = self
             .b
             .iter()
-            .map(|(i, c)| format!("{} * v{}", c, i))
+            .map(|(i, c)| format!("{} * v{}", field_to_string(*c), i))
             .collect::<Vec<_>>()
             .join(" + ");
         let c_str = self
             .c
             .iter()
-            .map(|(i, c)| format!("{} * v{}", c, i))
+            .map(|(i, c)| format!("{} * v{}", field_to_string(*c), i))
             .collect::<Vec<_>>()
             .join(" + ");
 
@@ -223,7 +238,7 @@ impl R1CGen {
                         let value = array[index as usize].clone();
                         scope.insert(*result, value);
                     }
-                
+
                     OpCode::AssertEq(_, _) => {
                         // No-op
                     }
@@ -232,14 +247,21 @@ impl R1CGen {
                         let a = scope.get(a).unwrap().expect_linear_combination();
                         let b = scope.get(b).unwrap().expect_linear_combination();
                         let c = scope.get(c).unwrap().expect_linear_combination();
-                        self.result.push(R1C {
-                            a: a,
-                            b: b,
-                            c: c,
-                        });
+                        self.result.push(R1C { a: a, b: b, c: c });
                     }
                     OpCode::WriteWitness(result, _) => {
                         scope.insert(*result, Value::WitnessVar(self.next_witness()));
+                    }
+
+                    OpCode::Call(ret, tgt, args) => {
+                        let args = args
+                            .iter()
+                            .map(|arg| scope.get(arg).unwrap().clone())
+                            .collect();
+                        let results = self.run_function(ssa, *tgt, args);
+                        for (ret, result) in ret.iter().zip(results.into_iter()) {
+                            scope.insert(*ret, result);
+                        }
                     }
 
                     _ => panic!("unexpected instruction {:?}", instruction),

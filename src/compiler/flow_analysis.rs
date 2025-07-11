@@ -222,6 +222,18 @@ impl CFG {
         }
         result
     }
+
+    pub fn get_jumps_into_merge_from_branch(&self, branch: BlockId, merge: BlockId) -> Vec<BlockId> {
+        let branch_id = *self.block_to_node.get(&branch).unwrap();
+        let merge_id = *self.block_to_node.get(&merge).unwrap();
+        let mut result = Vec::new();
+        for predecessor in self.predecessors(merge_id) {
+            if self.cfg.dominates(branch_id, predecessor) {
+                result.push(*self.node_to_block.get(&predecessor).unwrap());
+            }
+        }
+        result
+    }
 }
 
 #[derive(Debug, Clone)]

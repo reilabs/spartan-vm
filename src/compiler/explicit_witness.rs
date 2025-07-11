@@ -2,12 +2,13 @@ use std::collections::HashMap;
 
 use crate::compiler::{
     flow_analysis::FlowAnalysis,
-    ssa::{BlockId, Function, FunctionId, OpCode, SSA, Type, ValueId},
+    ssa::{BlockId, Function, FunctionId, OpCode, SSA, Terminator, Type, ValueId},
     taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis},
 };
 
 use ark_bn254::Fr;
 use ark_ff::Field;
+use noirc_frontend::hir::type_check;
 
 pub struct ExplicitWitness {}
 
@@ -46,12 +47,14 @@ impl ExplicitWitness {
             None
         };
 
-        assert_eq!(cfg_taint_param.is_none(), true);
+        let mut block_taint_vars = HashMap::new();
+        for (block_id, _) in function.get_blocks() {
+            block_taint_vars.insert(*block_id, cfg_taint_param.clone());
+        }
 
         for block_id in cfg.get_blocks_bfs() {
             let mut block = function.take_block(block_id);
-            let block_taint = function_taint.get_block_taint(block_id).expect_constant();
-            assert_eq!(block_taint, ConstantTaint::Pure);
+            let block_taint = block_taint_vars.get(&block_id).unwrap().clone();
 
             let old_instructions = block.take_instructions();
             let mut new_instructions = Vec::new();
@@ -163,11 +166,144 @@ impl ExplicitWitness {
                         new_instructions.push(instruction);
                     }
 
+                    OpCode::Call(ret, tgt, mut args) => {
+                        match block_taint {
+                            Some(arg) => {
+                                args.push(arg);
+                            }
+                            None => {}
+                        }
+                        new_instructions.push(OpCode::Call(ret, tgt, args));
+                    }
+
                     _ => {
                         panic!("Unhandled instruction {:?}", instruction);
                     }
                 }
             }
+
+            match block.get_terminator().cloned() {
+                Some(Terminator::JmpIf(cond, if_true, if_false)) => {
+                    let cond_taint = function_taint
+                        .get_value_taint(cond)
+                        .toplevel_taint()
+                        .expect_constant();
+                    match cond_taint {
+                        ConstantTaint::Pure => {}
+                        ConstantTaint::Witness => {
+                            block.set_terminator(Terminator::Jmp(if_true, vec![]));
+                            let child_block_taint = match block_taint {
+                                Some(tnt) => {
+                                    let result_val = function.fresh_value();
+                                    new_instructions.push(OpCode::Mul(result_val, tnt, cond));
+                                    let result = function.fresh_value();
+                                    new_instructions.push(OpCode::WriteWitness(result, result_val));
+                                    new_instructions.push(OpCode::Constrain(tnt, cond, result));
+                                    result
+                                }
+                                None => cond,
+                            };
+                            let body = cfg.get_if_body(block_id);
+                            for block_id in body {
+                                block_taint_vars.insert(block_id, Some(child_block_taint));
+                            }
+
+                            let merge = cfg.get_merge_point(block_id);
+
+                            if merge == function.get_entry_id() {
+                                panic!(
+                                    "TODO: jump back into entry not supported yet. Is it even possible?"
+                                )
+                            }
+
+                            let jumps = cfg.get_jumps_into_merge_from_branch(if_true, merge);
+                            if jumps.len() != 1 {
+                                panic!("TODO: handle multiple jumps into merge");
+                            }
+                            let out_true_block = jumps[0];
+
+                            // We remove the parameters from the merge block – they will be un-phi-fied
+                            let merge_params = function.get_block_mut(merge).take_parameters();
+
+                            for (_, typ) in &merge_params {
+                                match typ {
+                                    Type::Array(_, _) => {
+                                        panic!("TODO: Witness array not supported yet")
+                                    }
+                                    Type::Ref(_) => {
+                                        panic!("TODO: Witness ref not supported yet")
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            let args_passed_from_lhs = match function
+                                .get_block_mut(out_true_block)
+                                .take_terminator()
+                            {
+                                Some(Terminator::Jmp(_, args)) => args,
+                                _ => panic!(
+                                    "Impossible – out jump must be a JMP, otherwise the join point wouldn't be a join point"
+                                ),
+                            };
+
+                            // Jump straight to the false block
+                            function
+                                .get_block_mut(out_true_block)
+                                .set_terminator(Terminator::Jmp(if_false, vec![]));
+
+                            let jumps = cfg.get_jumps_into_merge_from_branch(if_false, merge);
+                            if jumps.len() != 1 {
+                                panic!("TODO: handle multiple jumps into merge");
+                            }
+                            let out_false_block = jumps[0];
+                            let args_passed_from_rhs = match function
+                                .get_block_mut(out_false_block)
+                                .take_terminator()
+                            {
+                                Some(Terminator::Jmp(_, args)) => args,
+                                _ => panic!(
+                                    "Impossible – out jump must be a JMP, otherwise the join point wouldn't be a join point"
+                                ),
+                            };
+
+                            let mut merger_block = function.add_block();
+                            function
+                                .get_block_mut(out_false_block)
+                                .set_terminator(Terminator::Jmp(merger_block, vec![]));
+                            function
+                                .get_block_mut(merger_block)
+                                .set_terminator(Terminator::Jmp(merge, vec![]));
+
+                            if args_passed_from_lhs.len() > 0 {
+                                // The naive solution is to witnesize the result and assert
+                                // res = lhs * cond + rhs * (cond - 1)
+                                // but this is 2 non-constant muls.
+                                // Instead, we notice that:
+                                // res = (lhs + rhs) * cond - rhs
+                                // this way we only need to witnessize the first term and return the
+                                // linear combination.
+
+                                let const_neg_1 =
+                                    function.push_field_const(merger_block, -ark_bn254::Fr::ONE);
+
+                                for ((res, _), (lhs, rhs)) in merge_params.iter().zip(
+                                    args_passed_from_lhs.iter().zip(args_passed_from_rhs.iter()),
+                                ) {
+                                    let lhs_rhs = function.push_add(merger_block, *lhs, *rhs);
+                                    let mul_cond = function.push_mul(merger_block, lhs_rhs, cond);
+                                    let mul_cond_wit = function.push_witness_write(merger_block, mul_cond);
+                                    function.push_constrain(merger_block, lhs_rhs, cond, mul_cond_wit);
+                                    let rhs_neg = function.push_mul(merger_block, *rhs, const_neg_1);
+                                    function.get_block_mut(merger_block).push_instruction(OpCode::Add(*res, mul_cond_wit, rhs_neg));
+                                }
+
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            };
 
             block.put_instructions(new_instructions);
             // TODO: Control flow!

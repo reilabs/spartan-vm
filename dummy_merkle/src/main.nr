@@ -22,7 +22,7 @@ struct x {
 
 impl BinaryHasher<Field> for DummyHasher {
     fn hash(a: Field, b: Field) -> Field {
-        a + b // Simple addition as a placeholder for hashing
+        (a + 2) * b // Simple addition as a placeholder for hashing
     }
 }
 

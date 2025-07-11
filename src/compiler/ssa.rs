@@ -558,6 +558,25 @@ impl Function {
         value_id
     }
 
+    pub fn push_constrain(&mut self, block_id: BlockId, a: ValueId, b: ValueId, c: ValueId) {
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Constrain(a, b, c));
+    }
+
+    pub fn push_witness_write(&mut self, block_id: BlockId, value: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::WriteWitness(value_id, value));
+        value_id
+    }
+
     pub fn terminate_block_with_jmp_if(
         &mut self,
         block_id: BlockId,
@@ -667,7 +686,7 @@ impl Block {
         self.instructions = instructions;
     }
 
-    fn push_instruction(&mut self, instruction: OpCode) {
+    pub fn push_instruction(&mut self, instruction: OpCode) {
         self.instructions.push(instruction);
     }
 
@@ -678,6 +697,11 @@ impl Block {
     pub fn get_parameters(&self) -> impl Iterator<Item = &(ValueId, Type)> {
         self.parameters.iter()
     }
+
+    pub fn take_parameters(&mut self) -> Vec<(ValueId, Type)> {
+        std::mem::take(&mut self.parameters)
+    }
+
     pub fn get_parameter_values(&self) -> impl Iterator<Item = &ValueId> {
         self.parameters.iter().map(|(id, _)| id)
     }
@@ -693,7 +717,10 @@ impl Block {
     pub fn get_terminator(&self) -> Option<&Terminator> {
         self.terminator.as_ref()
     }
-    
+
+    pub fn take_terminator(&mut self) -> Option<Terminator> {
+        std::mem::take(&mut self.terminator)
+    }
 }
 
 #[derive(Debug, Clone)]
