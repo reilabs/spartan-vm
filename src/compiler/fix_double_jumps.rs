@@ -30,6 +30,12 @@ impl ValueReplacements {
         }
     }
 
+    pub fn replace_inputs(&self, instruction: &mut OpCode) {
+        for input in instruction.get_inputs_mut() {
+            *input = self.get_replacement(*input);
+        }
+    }
+
     pub fn replace_terminator(&self, terminator: &mut Terminator) {
         match terminator {
             Terminator::Jmp(_, params) => {

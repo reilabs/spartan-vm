@@ -2,6 +2,7 @@
 
 use std::any::Any;
 
+use crate::compiler::common_subexpression_elimination::CSE;
 use crate::compiler::explicit_witness::ExplicitWitness;
 use crate::compiler::fix_double_jumps::FixDoubleJumps;
 use crate::compiler::flow_analysis::{self, FlowAnalysis};
@@ -183,6 +184,14 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         println!(
             "After mem2reg SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+
+        let cse = CSE::new();
+        cse.run(&mut custom_ssa, &flow_analysis);
+
+        println!(
+            "After CSE SSA:\n{}",
             custom_ssa.to_string(&DefaultSsaAnnotator)
         );
 

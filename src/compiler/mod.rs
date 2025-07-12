@@ -10,3 +10,4 @@ pub mod ssa_gen;
 pub mod taint_analysis;
 pub mod union_find;
 pub mod witness_generation;
+pub mod common_subexpression_elimination;

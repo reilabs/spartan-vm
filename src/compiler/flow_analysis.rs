@@ -306,6 +306,12 @@ impl CFG {
             None
         }
     }
+
+    pub fn dominates(&self, a: BlockId, b: BlockId) -> bool {
+        let a_node = *self.block_to_node.get(&a).unwrap();
+        let b_node = *self.block_to_node.get(&b).unwrap();
+        self.cfg.dominates(a_node, b_node)
+    }
 }
 
 #[derive(Debug, Clone)]

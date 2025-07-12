@@ -1,6 +1,6 @@
 use crate::compiler::ssa_gen::SsaConverter;
-use itertools::Itertools;
 use core::panic;
+use itertools::Itertools;
 use std::{collections::HashMap, rc::Rc};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -101,7 +101,10 @@ impl Type {
             (Type::Field, _) | (_, Type::Field) => Type::Field,
             (Type::U32, _) | (_, Type::U32) => Type::U32,
             (Type::Bool, _) | (_, Type::Bool) => Type::Bool,
-            _ => panic!("Cannot perform arithmetic on types {:?} and {:?}", self, other),
+            _ => panic!(
+                "Cannot perform arithmetic on types {:?} and {:?}",
+                self, other
+            ),
         }
     }
 
@@ -735,6 +738,10 @@ impl Block {
         self.terminator.as_ref()
     }
 
+    pub fn get_terminator_mut(&mut self) -> &mut Terminator {
+        self.terminator.as_mut().unwrap()
+    }
+
     pub fn take_terminator(&mut self) -> Option<Terminator> {
         std::mem::take(&mut self.terminator)
     }
@@ -1170,6 +1177,25 @@ impl OpCode {
                 ret_vec.extend(args_vec);
                 ret_vec.into_iter()
             }
+        }
+    }
+
+    pub fn get_inputs_mut(&mut self) -> impl Iterator<Item = &mut ValueId> {
+        match self {
+            Self::FieldConst(_, _)
+            | Self::BConst(_, _)
+            | Self::UConst(_, _)
+            | Self::Alloc(_, _) => vec![].into_iter(),
+            Self::Eq(_, b, c)
+            | Self::Add(_, b, c)
+            | Self::Mul(_, b, c)
+            | Self::Lt(_, b, c)
+            | Self::ArrayGet(_, b, c)
+            | Self::AssertEq(b, c)
+            | Self::Store(b, c) => vec![b, c].into_iter(),
+            Self::Load(_, c) | Self::WriteWitness(_, c) => vec![c].into_iter(),
+            Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
+            Self::Call(_, _, a) => a.iter_mut().collect::<Vec<_>>().into_iter(),
         }
     }
 }
