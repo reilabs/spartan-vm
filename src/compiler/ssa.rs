@@ -1,5 +1,6 @@
 use crate::compiler::ssa_gen::SsaConverter;
 use itertools::Itertools;
+use core::panic;
 use std::{collections::HashMap, rc::Rc};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -84,15 +85,24 @@ impl Type {
     }
 
     pub fn is_compatible(&self, other: &Type) -> bool {
-        self == other
+        self == other || (self.is_numeric() && other.is_numeric())
     }
 
     pub fn is_numeric(&self) -> bool {
-        matches!(self, Type::U32 | Type::Field)
+        matches!(self, Type::U32 | Type::Field | Type::Bool)
     }
 
     pub fn is_ref_of(&self, other: &Type) -> bool {
         matches!(self, Type::Ref(inner) if inner.as_ref() == other)
+    }
+
+    pub fn get_arithmetic_result_type(&self, other: &Type) -> Type {
+        match (self, other) {
+            (Type::Field, _) | (_, Type::Field) => Type::Field,
+            (Type::U32, _) | (_, Type::U32) => Type::U32,
+            (Type::Bool, _) | (_, Type::Bool) => Type::Bool,
+            _ => panic!("Cannot perform arithmetic on types {:?} and {:?}", self, other),
+        }
     }
 
     pub fn is_array(&self) -> bool {
@@ -123,6 +133,13 @@ impl Type {
 
     pub fn is_ref(&self) -> bool {
         matches!(self, Type::Ref(_))
+    }
+
+    pub fn get_pointed(&self) -> Type {
+        match self {
+            Type::Ref(inner) => *inner.clone(),
+            _ => panic!("Type is not a reference"),
+        }
     }
 }
 
@@ -741,10 +758,10 @@ pub enum OpCode {
 
     // Phase 2
     WriteWitness(ValueId, ValueId), // _1 = as_witness(_2)
-    IncA(ValueId, ValueId, ValueId), // a += _2(pure) * _3(witness); _1 = a
-    IncB(ValueId, ValueId, ValueId), // b += _2(pure) * _3(witness); _1 = b
-    IncC(ValueId, ValueId, ValueId), // c += _2(pure) * _3(witness); _1 = c
-    SealConstraint,
+    // IncA(ValueId, ValueId, ValueId), // a += _2(pure) * _3(witness); _1 = a
+    // IncB(ValueId, ValueId, ValueId), // b += _2(pure) * _3(witness); _1 = b
+    // IncC(ValueId, ValueId, ValueId), // c += _2(pure) * _3(witness); _1 = c
+    // SealConstraint,
     Constrain(ValueId, ValueId, ValueId), // assert(_1 * _2 - _3 == 0)
 }
 
@@ -792,7 +809,7 @@ impl OpCode {
                 lhs.0,
                 rhs.0
             ),
-                OpCode::Lt(result, lhs, rhs) => format!(
+            OpCode::Lt(result, lhs, rhs) => format!(
                 "v{}[{}] = v{} < v{}",
                 result.0,
                 value_annotator.annotate_value(*result),
@@ -833,20 +850,41 @@ impl OpCode {
                 )
             }
             OpCode::WriteWitness(result, value) => {
-                format!("v{}[{}] = witness(v{})", result.0, value_annotator.annotate_value(*result), value.0)
+                format!(
+                    "v{}[{}] = witness(v{})",
+                    result.0,
+                    value_annotator.annotate_value(*result),
+                    value.0
+                )
             }
-            OpCode::IncA(result, coeff, witness) => {
-                format!("v{}[{}] = inc_a(v{}, v{})", result.0, value_annotator.annotate_value(*result), coeff.0, witness.0)
-            }
-            OpCode::IncB(result, coeff, witness) => {
-                format!("v{}[{}] = inc_b(v{}, v{})", result.0, value_annotator.annotate_value(*result), coeff.0, witness.0)
-            }
-            OpCode::IncC(result, coeff, witness) => {
-                format!("v{}[{}] = inc_c(v{}, v{})", result.0, value_annotator.annotate_value(*result), coeff.0, witness.0)
-            }
-            OpCode::SealConstraint => {
-                "seal_constraint".to_string()
-            }
+            // OpCode::IncA(result, coeff, witness) => {
+            //     format!(
+            //         "v{}[{}] = inc_a(v{}, v{})",
+            //         result.0,
+            //         value_annotator.annotate_value(*result),
+            //         coeff.0,
+            //         witness.0
+            //     )
+            // }
+            // OpCode::IncB(result, coeff, witness) => {
+            //     format!(
+            //         "v{}[{}] = inc_b(v{}, v{})",
+            //         result.0,
+            //         value_annotator.annotate_value(*result),
+            //         coeff.0,
+            //         witness.0
+            //     )
+            // }
+            // OpCode::IncC(result, coeff, witness) => {
+            //     format!(
+            //         "v{}[{}] = inc_c(v{}, v{})",
+            //         result.0,
+            //         value_annotator.annotate_value(*result),
+            //         coeff.0,
+            //         witness.0
+            //     )
+            // }
+            // OpCode::SealConstraint => "seal_constraint".to_string(),
             OpCode::Constrain(a, b, c) => {
                 format!("constrain_r1c(v{} * v{} - v{} == 0)", a.0, b.0, c.0)
             }
@@ -884,7 +922,7 @@ impl OpCode {
                         rhs
                     )
                 })?;
-                if lhs_type != rhs_type {
+                if lhs_type != rhs_type && !lhs_type.is_numeric() && !rhs_type.is_numeric() {
                     return Err(format!(
                         "Type mismatch in equality: {:?} ({}) != {:?} ({})",
                         lhs,
@@ -909,7 +947,7 @@ impl OpCode {
                         rhs
                     )
                 })?;
-                if !lhs_type.is_compatible(rhs_type) || !lhs_type.is_numeric() {
+                if !lhs_type.is_numeric() || !rhs_type.is_numeric() {
                     return Err(format!(
                         "Type mismatch in addition: {:?} ({}) + {:?} ({})",
                         lhs,
@@ -918,7 +956,7 @@ impl OpCode {
                         rhs_type.to_string()
                     ));
                 }
-                type_assignments.insert(*result, lhs_type.clone());
+                type_assignments.insert(*result, lhs_type.get_arithmetic_result_type(rhs_type));
                 Ok(())
             }
             Self::Mul(result, lhs, rhs) => {
@@ -934,7 +972,7 @@ impl OpCode {
                         rhs
                     )
                 })?;
-                if !lhs_type.is_compatible(rhs_type) || !lhs_type.is_numeric() {
+                if !lhs_type.is_numeric() || !rhs_type.is_numeric() {
                     return Err(format!(
                         "Type mismatch in multiplication: {:?} ({}) * {:?} ({})",
                         lhs,
@@ -943,7 +981,7 @@ impl OpCode {
                         rhs_type.to_string()
                     ));
                 }
-                type_assignments.insert(*result, lhs_type.clone());
+                type_assignments.insert(*result, lhs_type.get_arithmetic_result_type(rhs_type));
                 Ok(())
             }
             Self::Lt(result, lhs, rhs) => {
@@ -959,7 +997,7 @@ impl OpCode {
                         rhs
                     )
                 })?;
-                if !lhs_type.is_compatible(rhs_type) || !lhs_type.is_numeric() {
+                if !lhs_type.is_numeric() || !rhs_type.is_numeric() {
                     return Err(format!(
                         "Type mismatch in less than: {:?} ({}) < {:?} ({})",
                         lhs,
@@ -1102,8 +1140,35 @@ impl OpCode {
                 type_assignments.insert(*result, witness_type.clone());
                 Ok(())
             }
-            Self::IncA { .. } | Self::IncB { .. } | Self::IncC { .. } | Self::SealConstraint | Self::Constrain { .. } => {
-                Ok(())
+            // Self::IncA { .. }
+            // | Self::IncB { .. }
+            // | Self::IncC { .. }
+            // | Self::SealConstraint
+            Self::Constrain { .. } => Ok(()),
+        }
+    }
+
+    pub fn get_operands_mut(&mut self) -> impl Iterator<Item = &mut ValueId> {
+        match self {
+            Self::FieldConst(r, _)
+            | Self::BConst(r, _)
+            | Self::UConst(r, _)
+            | Self::Alloc(r, _) => vec![r].into_iter(),
+            Self::Eq(a, b, c)
+            | Self::Add(a, b, c)
+            | Self::Mul(a, b, c)
+            | Self::Lt(a, b, c)
+            | Self::ArrayGet(a, b, c)
+            | Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
+            Self::Store(a, b)
+            | Self::Load(a, b)
+            | Self::AssertEq(a, b)
+            | Self::WriteWitness(a, b) => vec![a, b].into_iter(),
+            Self::Call(r, _, a) => {
+                let mut ret_vec = r.iter_mut().collect::<Vec<_>>();
+                let args_vec = a.iter_mut().collect::<Vec<_>>();
+                ret_vec.extend(args_vec);
+                ret_vec.into_iter()
             }
         }
     }

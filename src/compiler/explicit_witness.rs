@@ -307,7 +307,6 @@ impl ExplicitWitness {
             };
 
             block.put_instructions(new_instructions);
-            // TODO: Control flow!
             function.put_block(block_id, block);
         }
     }

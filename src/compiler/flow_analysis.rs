@@ -86,6 +86,22 @@ impl CFGData {
         self.node_dominator_pre_order[&a] <= self.node_dominator_pre_order[&b]
             && self.node_dominator_post_order[&a] >= self.node_dominator_post_order[&b]
     }
+
+    pub fn get_dominance_frontier(&self, node: NodeIndex<u32>) -> HashSet<NodeIndex<u32>> {
+        let mut result = HashSet::new();
+        for candidate in self.cfg.node_indices() {
+            if self.dominates(node, candidate) {
+                continue;
+            }
+            for predecessor in self.cfg.edges_directed(candidate, Direction::Incoming) {
+                if self.dominates(node, predecessor.source()) {
+                    result.insert(candidate);
+                    break;
+                }
+            }
+        }
+        result
+    }
 }
 
 struct CFGBuilder {
@@ -226,7 +242,11 @@ impl CFG {
         result
     }
 
-    pub fn get_jumps_into_merge_from_branch(&self, branch: BlockId, merge: BlockId) -> Vec<BlockId> {
+    pub fn get_jumps_into_merge_from_branch(
+        &self,
+        branch: BlockId,
+        merge: BlockId,
+    ) -> Vec<BlockId> {
         let branch_id = *self.block_to_node.get(&branch).unwrap();
         let merge_id = *self.block_to_node.get(&merge).unwrap();
         let mut result = Vec::new();
@@ -236,6 +256,55 @@ impl CFG {
             }
         }
         result
+    }
+
+    // Finds unconditional jumps into blocks that only have one incoming edge.
+    // Returns a list of (source, target) pairs.
+    pub fn find_redundant_jumps(&self) -> Vec<(BlockId, BlockId)> {
+        let mut result = Vec::new();
+        for node in self.cfg.cfg.node_indices() {
+            let in_edges = self
+                .cfg
+                .cfg
+                .edges_directed(node, Direction::Incoming)
+                .collect::<Vec<_>>();
+            if in_edges.len() != 1 {
+                continue;
+            }
+            let in_edge = in_edges[0];
+            if in_edge.weight() != &JumpType::Jmp {
+                continue;
+            }
+            let source = *self.node_to_block.get(&in_edge.source()).unwrap();
+            let target = *self.node_to_block.get(&node).unwrap();
+            result.push((source, target));
+        }
+        result
+    }
+
+    pub fn get_dominance_frontier(&self, block_id: BlockId) -> HashSet<BlockId> {
+        let node = *self.block_to_node.get(&block_id).unwrap();
+        let r = self.cfg.get_dominance_frontier(node);
+        r.into_iter()
+            .filter_map(|node| self.node_to_block.get(&node).cloned())
+            .collect()
+    }
+
+    pub fn get_domination_pre_order(&self) -> impl Iterator<Item = BlockId> {
+        self.cfg
+            .dominator_pre_order
+            .iter()
+            .filter_map(|node| self.node_to_block.get(node).copied())
+    }
+
+    pub fn get_immediate_dominator(&self, block_id: BlockId) -> Option<BlockId> {
+        let node = *self.block_to_node.get(&block_id).unwrap();
+        let dom = self.cfg.dominators.immediate_dominator(node);
+        if let Some(dom) = dom {
+            self.node_to_block.get(&dom).copied()
+        } else {
+            None
+        }
     }
 }
 

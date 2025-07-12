@@ -1,7 +1,11 @@
 //! Functionality for working with projects of Noir sources.
 
+use std::any::Any;
+
 use crate::compiler::explicit_witness::ExplicitWitness;
-use crate::compiler::flow_analysis::FlowAnalysis;
+use crate::compiler::fix_double_jumps::FixDoubleJumps;
+use crate::compiler::flow_analysis::{self, FlowAnalysis};
+use crate::compiler::mem2reg::Mem2Reg;
 use crate::compiler::monomorphization::Monomorphization;
 use crate::compiler::r1cs_gen::R1CGen;
 use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
@@ -156,6 +160,29 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         println!(
             "After explicit witness SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+
+        drop(flow_analysis);
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        let mut fix_double_jumps = FixDoubleJumps::new();
+        fix_double_jumps.run(&mut custom_ssa, &flow_analysis);
+
+        custom_ssa.typecheck();
+
+        println!(
+            "After fix double jumps SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+
+        drop(flow_analysis);
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+
+        let mut mem2reg = Mem2Reg::new();
+        mem2reg.run(&mut custom_ssa, &flow_analysis);
+
+        println!(
+            "After mem2reg SSA:\n{}",
             custom_ssa.to_string(&DefaultSsaAnnotator)
         );
 

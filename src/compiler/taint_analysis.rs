@@ -439,7 +439,11 @@ impl SsaAnnotator for FunctionTaint {
 
     fn annotate_function(&self, function_id: FunctionId) -> String {
         let return_taints = self.returns_taint.iter().map(|t| t.to_string()).join(", ");
-        format!("returns: [{}], cfg_taint: {}", return_taints, self.cfg_taint.to_string())
+        format!(
+            "returns: [{}], cfg_taint: {}",
+            return_taints,
+            self.cfg_taint.to_string()
+        )
     }
 }
 
@@ -657,7 +661,7 @@ impl TaintAnalysis {
                         ));
                     }
 
-                    OpCode::WriteWitness {..} | OpCode::IncA {..} | OpCode::IncB {..} | OpCode::IncC {..} | OpCode::SealConstraint | OpCode::Constrain {..} => {
+                    OpCode::WriteWitness { .. } | OpCode::Constrain { .. } => {
                         panic!("Should not be present at this stage {:?}", instruction);
                     }
                 }
@@ -722,19 +726,19 @@ impl TaintAnalysis {
                                     cond_taint.toplevel_taint(),
                                 ));
                             }
-                            
+
                             let body_blocks = cfg.get_if_body(block_id);
                             for block in body_blocks {
-                                let local_taint = function_taint.block_cfg_taints.get(&block).unwrap();
+                                let local_taint =
+                                    function_taint.block_cfg_taints.get(&block).unwrap();
                                 function_taint.judgements.push(Judgement::Le(
                                     cond_taint.toplevel_taint(),
                                     local_taint.clone(),
                                 ));
 
-                                function_taint.judgements.push(Judgement::Le(
-                                    cfg_taint.clone(),
-                                    local_taint.clone(),
-                                ));
+                                function_taint
+                                    .judgements
+                                    .push(Judgement::Le(cfg_taint.clone(), local_taint.clone()));
                             }
                         }
                     }
