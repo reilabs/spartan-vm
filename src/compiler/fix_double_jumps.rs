@@ -91,7 +91,7 @@ impl FixDoubleJumps {
                     _ => panic!("ICE: CFG says there is a jump here"),
                 };
 
-                for ((param, _), arg) in source_block.get_parameters().zip(jump_args) {
+                for ((param, _), arg) in target_block.get_parameters().zip(jump_args) {
                     value_replacements.insert(*param, arg);
                 }
 

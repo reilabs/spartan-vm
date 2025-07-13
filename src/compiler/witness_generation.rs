@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
 
-use crate::compiler::ssa::{BlockId, Function, FunctionId, OpCode, SSA, Terminator, Type, ValueId};
+use crate::compiler::ssa::{BlockId, Const, Function, FunctionId, OpCode, Terminator, Type, ValueId, SSA};
 use ark_ff::{AdditiveGroup, Field, PrimeField};
 use graphviz_rust::attributes::width;
 use itertools::Itertools;
@@ -126,6 +126,13 @@ impl WitnessGen {
         let entry_block_id = function.get_entry_id();
         let mut scope = HashMap::<ValueId, Value>::new();
         self.update_scope_with_args(&mut scope, params, &function, entry_block_id);
+        for (value_id, const_) in function.iter_consts() {
+            match const_ {
+                Const::Bool(value) => scope.insert(*value_id, Value::Fp(ark_bn254::Fr::from(*value as u64))),
+                Const::U32(value) => scope.insert(*value_id, Value::Fp(ark_bn254::Fr::from(*value as u64))),
+                Const::Field(value) => scope.insert(*value_id, Value::Fp(*value)),
+            };
+        }
 
         let mut block_id = entry_block_id;
 
@@ -133,18 +140,6 @@ impl WitnessGen {
             let block = function.get_block(block_id);
             for instruction in block.get_instructions() {
                 match instruction {
-                    OpCode::FieldConst(result, value) => {
-                        scope.insert(*result, Value::Fp(*value));
-                    }
-
-                    OpCode::BConst(result, value) => {
-                        scope.insert(*result, Value::Fp(ark_bn254::Fr::from(*value as u64)));
-                    }
-
-                    OpCode::UConst(result, value) => {
-                        scope.insert(*result, Value::Fp(ark_bn254::Fr::from(*value as u64)));
-                    }
-
                     OpCode::Add(result, lhs, rhs) => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();

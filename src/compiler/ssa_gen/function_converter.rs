@@ -73,13 +73,11 @@ impl FunctionConverter {
                         let right_value = &noir_function.dfg.values[right_id];
                         let left_value = self.convert_value(
                             &mut custom_function,
-                            custom_block_id,
                             left_id,
                             left_value,
                         );
                         let right_value = self.convert_value(
                             &mut custom_function,
-                            custom_block_id,
                             right_id,
                             right_value,
                         );
@@ -112,7 +110,6 @@ impl FunctionConverter {
                                 let arg_value = &noir_function.dfg.values[*arg_id];
                                 let converted_arg = self.convert_value(
                                     &mut custom_function,
-                                    custom_block_id,
                                     *arg_id,
                                     arg_value,
                                 );
@@ -145,13 +142,11 @@ impl FunctionConverter {
                         let right_value = &noir_function.dfg.values[*r];
                         let left_converted = self.convert_value(
                             &mut custom_function,
-                            custom_block_id,
                             *l,
                             left_value,
                         );
                         let right_converted = self.convert_value(
                             &mut custom_function,
-                            custom_block_id,
                             *r,
                             right_value,
                         );
@@ -188,13 +183,11 @@ impl FunctionConverter {
                         let value_value = &noir_function.dfg.values[*value];
                         let address_converted = self.convert_value(
                             &mut custom_function,
-                            custom_block_id,
                             *address,
                             address_value,
                         );
                         let value_converted = self.convert_value(
                             &mut custom_function,
-                            custom_block_id,
                             *value,
                             value_value,
                         );
@@ -210,13 +203,11 @@ impl FunctionConverter {
                         let index_value = &noir_function.dfg.values[*index];
                         let array_converted = self.convert_value(
                             &mut custom_function,
-                            custom_block_id,
                             *array,
                             array_value,
                         );
                         let index_converted = self.convert_value(
                             &mut custom_function,
-                            custom_block_id,
                             *index,
                             index_value,
                         );
@@ -236,7 +227,6 @@ impl FunctionConverter {
                         let address_value = &noir_function.dfg.values[*address];
                         let address_converted = self.convert_value(
                             &mut custom_function,
-                            custom_block_id,
                             *address,
                             address_value,
                         );
@@ -262,7 +252,6 @@ impl FunctionConverter {
                 }) => {
                     let condition_converted = self.convert_value(
                         &mut custom_function,
-                        custom_block_id,
                         *condition,
                         &noir_function.dfg.values[*condition],
                     );
@@ -288,7 +277,6 @@ impl FunctionConverter {
                         .map(|id| {
                             self.convert_value(
                                 &mut custom_function,
-                                custom_block_id,
                                 *id,
                                 &noir_function.dfg.values[*id],
                             )
@@ -306,7 +294,6 @@ impl FunctionConverter {
                         .map(|id| {
                             self.convert_value(
                                 &mut custom_function,
-                                custom_block_id,
                                 *id,
                                 &noir_function.dfg.values[*id],
                             )
@@ -325,7 +312,6 @@ impl FunctionConverter {
     fn convert_value(
         &mut self,
         custom_function: &mut Function,
-        block_id: BlockId,
         noir_value_id: NoirValueId,
         noir_value: &Value,
     ) -> ValueId {
@@ -333,19 +319,22 @@ impl FunctionConverter {
             Value::NumericConstant { constant, typ } => match typ {
                 NumericType::Unsigned { bit_size: 32 } => {
                     let custom_value_id = custom_function
-                        .push_u32_const(block_id, constant.to_string().parse::<u32>().unwrap());
+                        .push_u32_const(constant.to_string().parse::<u32>().unwrap());
+                    self.value_mapper.insert(noir_value_id, custom_value_id);
                     custom_value_id
                 }
                 NumericType::Unsigned { bit_size: 1 } => {
                     let u32_value = constant.to_string().parse::<u32>().unwrap();
                     let bool_value = u32_value != 0;
-                    let custom_value_id = custom_function.push_bool_const(block_id, bool_value);
+                    let custom_value_id = custom_function.push_bool_const(bool_value);
+                    self.value_mapper.insert(noir_value_id, custom_value_id);
                     custom_value_id
                 }
                 NumericType::NativeField => {
                     let field_value = constant.to_string();
                     let field_value = ark_bn254::Fr::from_str(&field_value).unwrap();
-                    let custom_value_id = custom_function.push_field_const(block_id, field_value);
+                    let custom_value_id = custom_function.push_field_const(field_value);
+                    self.value_mapper.insert(noir_value_id, custom_value_id);
                     custom_value_id
                 }
                 _ => {

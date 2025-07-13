@@ -558,6 +558,10 @@ impl TaintAnalysis {
                 .push(Judgement::Le(function_taint.cfg_taint.clone(), cfg_taint));
         }
 
+        for (value_id, _) in func.iter_consts() {
+            function_taint.value_taints.insert(*value_id, TaintType::Primitive(Taint::Constant(ConstantTaint::Pure)));
+        }
+
         for block_id in block_queue {
             let block = func.get_block(block_id);
 
@@ -573,10 +577,6 @@ impl TaintAnalysis {
                         let rhs_taint = function_taint.value_taints.get(rhs).unwrap();
                         let result_taint = lhs_taint.union(rhs_taint);
                         function_taint.value_taints.insert(*r, result_taint);
-                    }
-                    OpCode::FieldConst(r, _) | OpCode::BConst(r, _) | OpCode::UConst(r, _) => {
-                        let taint = TaintType::Primitive(Taint::Constant(ConstantTaint::Pure));
-                        function_taint.value_taints.insert(*r, taint);
                     }
                     OpCode::Alloc(r, t) => {
                         let free = self.construct_free_taint_for_type(t);

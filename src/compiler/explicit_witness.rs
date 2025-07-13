@@ -106,8 +106,7 @@ impl ExplicitWitness {
                                 new_instructions.push(instruction);
                             }
                             _ => {
-                                let one = function.fresh_value();
-                                new_instructions.push(OpCode::FieldConst(one, ark_bn254::Fr::ONE));
+                                let one = function.push_field_const(ark_bn254::Fr::ONE);
                                 new_instructions.push(OpCode::Constrain(lhs, one, rhs));
                             }
                         }
@@ -175,10 +174,7 @@ impl ExplicitWitness {
                         assert_eq!(idx_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
-                    OpCode::Alloc(_, _)
-                    | OpCode::FieldConst(_, _)
-                    | OpCode::BConst(_, _)
-                    | OpCode::UConst(_, _) => {
+                    OpCode::Alloc(_, _) => {
                         new_instructions.push(instruction);
                     }
 
@@ -301,19 +297,27 @@ impl ExplicitWitness {
                                 // linear combination.
 
                                 let const_neg_1 =
-                                    function.push_field_const(merger_block, -ark_bn254::Fr::ONE);
+                                    function.push_field_const(-ark_bn254::Fr::ONE);
 
                                 for ((res, _), (lhs, rhs)) in merge_params.iter().zip(
                                     args_passed_from_lhs.iter().zip(args_passed_from_rhs.iter()),
                                 ) {
-                                    let neg_rhs = function.push_mul(merger_block, *rhs, const_neg_1);
+                                    let neg_rhs =
+                                        function.push_mul(merger_block, *rhs, const_neg_1);
                                     let lhs_rhs = function.push_add(merger_block, *lhs, neg_rhs);
                                     let mul_cond = function.push_mul(merger_block, lhs_rhs, cond);
-                                    let mul_cond_wit = function.push_witness_write(merger_block, mul_cond);
-                                    function.push_constrain(merger_block, lhs_rhs, cond, mul_cond_wit);
-                                    function.get_block_mut(merger_block).push_instruction(OpCode::Add(*res, mul_cond_wit, *rhs));
+                                    let mul_cond_wit =
+                                        function.push_witness_write(merger_block, mul_cond);
+                                    function.push_constrain(
+                                        merger_block,
+                                        lhs_rhs,
+                                        cond,
+                                        mul_cond_wit,
+                                    );
+                                    function
+                                        .get_block_mut(merger_block)
+                                        .push_instruction(OpCode::Add(*res, mul_cond_wit, *rhs));
                                 }
-
                             }
                         }
                     }

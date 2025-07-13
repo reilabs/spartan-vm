@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::{Debug, Display}};
 
 use crate::compiler::{
-    fix_double_jumps::ValueReplacements, flow_analysis::{FlowAnalysis, CFG}, ssa::{BlockId, Function, OpCode, ValueId, SSA}
+    fix_double_jumps::ValueReplacements, flow_analysis::{FlowAnalysis, CFG}, ssa::{BlockId, Const, Function, OpCode, ValueId, SSA}
 };
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -169,6 +169,14 @@ impl CSE {
         let mut result: HashMap<Expr, Vec<(BlockId, usize, ValueId)>> = HashMap::new();
         let mut exprs = HashMap::<ValueId, Expr>::new();
 
+        for (value_id, const_) in ssa.iter_consts() {
+            match const_ {
+                Const::Bool(value) => exprs.insert(*value_id, Expr::bconst(*value)),
+                Const::U32(value) => exprs.insert(*value_id, Expr::uconst(*value)),
+                Const::Field(value) => exprs.insert(*value_id, Expr::fconst(*value)),
+            };
+        }
+
         fn get_expr(exprs: &HashMap<ValueId, Expr>, value_id: &ValueId) -> Expr {
             exprs
                 .get(&value_id)
@@ -196,33 +204,6 @@ impl CSE {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.mul(&rhs_expr);
-                        exprs.insert(*r, result_expr.clone());
-                        result.entry(result_expr).or_default().push((
-                            block_id,
-                            instruction_idx,
-                            *r,
-                        ));
-                    }
-                    OpCode::FieldConst(r, value) => {
-                        let result_expr = Expr::fconst(*value);
-                        exprs.insert(*r, result_expr.clone());
-                        result.entry(result_expr).or_default().push((
-                            block_id,
-                            instruction_idx,
-                            *r,
-                        ));
-                    }
-                    OpCode::BConst(r, value) => {
-                        let result_expr = Expr::bconst(*value);
-                        exprs.insert(*r, result_expr.clone());
-                        result.entry(result_expr).or_default().push((
-                            block_id,
-                            instruction_idx,
-                            *r,
-                        ));
-                    }
-                    OpCode::UConst(r, value) => {
-                        let result_expr = Expr::uconst(*value);
                         exprs.insert(*r, result_expr.clone());
                         result.entry(result_expr).or_default().push((
                             block_id,

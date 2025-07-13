@@ -33,7 +33,7 @@ impl ConditionPropagation {
                 let replaces = replaces.iter().filter(|(cond_block, _, _)| cfg.dominates(*cond_block, block_id));
                 
                 for (_, vid, value) in replaces {
-                    let const_id = function.push_front_bool_const(block_id, *value);
+                    let const_id = function.push_bool_const(*value);
                     replacements.insert(*vid, const_id);
                 }
 

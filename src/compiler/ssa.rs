@@ -257,6 +257,13 @@ impl SSA {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum Const {
+    Bool(bool),
+    U32(u32),
+    Field(ark_bn254::Fr),
+}
+
 #[derive(Clone)]
 pub struct Function {
     entry_block: BlockId,
@@ -265,6 +272,8 @@ pub struct Function {
     next_block: u64,
     value_info: HashMap<ValueId, Type>,
     next_value: u64,
+    consts: HashMap<ValueId, Const>,
+    consts_to_val: HashMap<Const, ValueId>,
 }
 
 impl Function {
@@ -276,6 +285,11 @@ impl Function {
             self.returns.iter().map(|t| t.to_string()).join(", "),
             value_annotator.annotate_function(id)
         );
+        let consts = self
+            .consts
+            .iter()
+            .map(|(id, const_)| format!("  v{} = {:?}", id.0, const_))
+            .join("\n");
         let blocks = self
             .blocks
             .iter()
@@ -283,7 +297,7 @@ impl Function {
             .map(|(bid, block)| block.to_string(id, *bid, value_annotator))
             .join("\n");
         let footer = "}".to_string();
-        format!("{}\n{}\n{}", header, blocks, footer)
+        format!("{}\n{}\n{}\n{}", header, consts, blocks, footer)
     }
 
     pub fn empty() -> Self {
@@ -298,6 +312,8 @@ impl Function {
             returns: Vec::new(),
             value_info: HashMap::new(),
             next_value: 0,
+            consts: HashMap::new(),
+            consts_to_val: HashMap::new(),
         }
     }
 
@@ -309,6 +325,8 @@ impl Function {
             returns: Vec::new(),
             value_info: HashMap::new(),
             next_value: 0,
+            consts: HashMap::new(),
+            consts_to_val: HashMap::new(),
         }
     }
 
@@ -383,6 +401,14 @@ impl Function {
             })
             .collect::<HashMap<_, _>>();
 
+        for (value_id, const_) in self.consts.iter() {
+            match const_ {
+                Const::Bool(_) => self.value_info.insert(*value_id, Type::Bool),
+                Const::U32(_) => self.value_info.insert(*value_id, Type::U32),
+                Const::Field(_) => self.value_info.insert(*value_id, Type::Field),
+            };
+        }
+
         for block in self.blocks.values() {
             for instruction in block.get_instructions() {
                 instruction.typecheck(&mut self.value_info, function_types)?;
@@ -421,51 +447,27 @@ impl Function {
             .push((value_id, typ));
         value_id
     }
-    pub fn push_bool_const(&mut self, block_id: BlockId, value: bool) -> ValueId {
-        let value_id = ValueId(self.next_value);
+
+    fn push_const(&mut self, value: Const) -> ValueId {
+        if let Some(existing_id) = self.consts_to_val.get(&value) {
+            return *existing_id;
+        }
+        let value_id: ValueId = ValueId(self.next_value);
         self.next_value += 1;
-        self.value_info.insert(value_id, Type::Bool);
-        self.blocks
-            .get_mut(&block_id)
-            .unwrap()
-            .instructions
-            .push(OpCode::BConst(value_id, value));
+        self.consts.insert(value_id, value.clone());
+        self.consts_to_val.insert(value.clone(), value_id);
         value_id
     }
 
-    pub fn push_front_bool_const(&mut self, block_id: BlockId, value: bool) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.value_info.insert(value_id, Type::Bool);
-        self.blocks
-            .get_mut(&block_id)
-            .unwrap()
-            .instructions
-            .insert(0, OpCode::BConst(value_id, value));
-        value_id
+    pub fn push_bool_const(&mut self, value: bool) -> ValueId {
+        self.push_const(Const::Bool(value))
     }
 
-    pub fn push_u32_const(&mut self, block_id: BlockId, value: u32) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.value_info.insert(value_id, Type::U32);
-        self.blocks
-            .get_mut(&block_id)
-            .unwrap()
-            .instructions
-            .push(OpCode::UConst(value_id, value));
-        value_id
+    pub fn push_u32_const(&mut self, value: u32) -> ValueId {
+        self.push_const(Const::U32(value))
     }
-    pub fn push_field_const(&mut self, block_id: BlockId, value: ark_bn254::Fr) -> ValueId {
-        let value_id = ValueId(self.next_value);
-        self.next_value += 1;
-        self.value_info.insert(value_id, Type::Field);
-        self.blocks
-            .get_mut(&block_id)
-            .unwrap()
-            .instructions
-            .push(OpCode::FieldConst(value_id, value));
-        value_id
+    pub fn push_field_const(&mut self, value: ark_bn254::Fr) -> ValueId {
+        self.push_const(Const::Field(value))
     }
     pub fn push_eq(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
         let value_id = ValueId(self.next_value);
@@ -655,6 +657,15 @@ impl Function {
         self.next_value += 1;
         value_id
     }
+
+    pub fn iter_consts(&self) -> impl Iterator<Item = (&ValueId, &Const)> {
+        self.consts.iter()
+    }
+
+    pub fn remove_const(&mut self, value_id: ValueId) {
+        let v = self.consts.remove(&value_id);
+        self.consts_to_val.remove(&v.unwrap());
+    }
 }
 
 #[derive(Clone)]
@@ -774,9 +785,6 @@ impl Block {
 
 #[derive(Debug, Clone)]
 pub enum OpCode {
-    FieldConst(ValueId, ark_bn254::Fr),           // _1 = constant(_2)
-    BConst(ValueId, bool),                        // _1 = constant(_2)
-    UConst(ValueId, u32),                         // _1 = constant(_2)
     Eq(ValueId, ValueId, ValueId),                // _1 = _2 == _3
     Add(ValueId, ValueId, ValueId),               // _1 = _2 + _3
     Mul(ValueId, ValueId, ValueId),               // _1 = _2 * _3
@@ -800,26 +808,6 @@ pub enum OpCode {
 impl OpCode {
     pub fn to_string(&self, value_annotator: &LocalFunctionAnnotator) -> String {
         match self {
-            OpCode::FieldConst(result, value) => {
-                format!(
-                    "v{}[{}] = constant({}:Field)",
-                    result.0,
-                    value_annotator.annotate_value(*result),
-                    value
-                )
-            }
-            OpCode::UConst(result, value) => format!(
-                "v{}[{}] = constant({}:u32)",
-                result.0,
-                value_annotator.annotate_value(*result),
-                value
-            ),
-            OpCode::BConst(result, value) => format!(
-                "v{}[{}] = constant({}:bool)",
-                result.0,
-                value_annotator.annotate_value(*result),
-                value
-            ),
             OpCode::Eq(result, lhs, rhs) => format!(
                 "v{}[{}] = v{} == v{}",
                 result.0,
@@ -929,18 +917,6 @@ impl OpCode {
         function_types: &HashMap<FunctionId, (Vec<Type>, Vec<Type>)>,
     ) -> Result<(), String> {
         match self {
-            Self::FieldConst(result, _) => {
-                type_assignments.insert(*result, Type::field());
-                Ok(())
-            }
-            Self::BConst(result, _) => {
-                type_assignments.insert(*result, Type::bool());
-                Ok(())
-            }
-            Self::UConst(result, _) => {
-                type_assignments.insert(*result, Type::u32());
-                Ok(())
-            }
             Self::Eq(result, lhs, rhs) => {
                 let lhs_type = type_assignments.get(lhs).ok_or_else(|| {
                     format!(
@@ -1182,10 +1158,7 @@ impl OpCode {
 
     pub fn get_operands_mut(&mut self) -> impl Iterator<Item = &mut ValueId> {
         match self {
-            Self::FieldConst(r, _)
-            | Self::BConst(r, _)
-            | Self::UConst(r, _)
-            | Self::Alloc(r, _) => vec![r].into_iter(),
+            Self::Alloc(r, _) => vec![r].into_iter(),
             Self::Eq(a, b, c)
             | Self::Add(a, b, c)
             | Self::Mul(a, b, c)
@@ -1207,10 +1180,7 @@ impl OpCode {
 
     pub fn get_inputs_mut(&mut self) -> impl Iterator<Item = &mut ValueId> {
         match self {
-            Self::FieldConst(_, _)
-            | Self::BConst(_, _)
-            | Self::UConst(_, _)
-            | Self::Alloc(_, _) => vec![].into_iter(),
+            Self::Alloc(_, _) => vec![].into_iter(),
             Self::Eq(_, b, c)
             | Self::Add(_, b, c)
             | Self::Mul(_, b, c)
@@ -1226,10 +1196,7 @@ impl OpCode {
 
     pub fn get_inputs(&self) -> impl Iterator<Item = &ValueId> {
         match self {
-            Self::FieldConst(_, _)
-            | Self::BConst(_, _)
-            | Self::UConst(_, _)
-            | Self::Alloc(_, _) => vec![].into_iter(),
+            Self::Alloc(_, _) => vec![].into_iter(),
             Self::Eq(_, b, c)
             | Self::Add(_, b, c)
             | Self::Mul(_, b, c)
@@ -1245,10 +1212,7 @@ impl OpCode {
 
     pub fn get_results(&self) -> impl Iterator<Item = &ValueId> {
         match self {
-            Self::FieldConst(r, _)
-            | Self::BConst(r, _)
-            | Self::UConst(r, _)
-            | Self::Alloc(r, _)
+            Self::Alloc(r, _)
             | Self::Eq(r, _, _)
             | Self::Add(r, _, _)
             | Self::Mul(r, _, _)
