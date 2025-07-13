@@ -93,6 +93,9 @@ impl FunctionConverter {
                             BinaryOp::Mul { unchecked } => {
                                 custom_function.push_mul(custom_block_id, left_value, right_value)
                             }
+                            BinaryOp::Eq => {
+                                custom_function.push_eq(custom_block_id, left_value, right_value)
+                            }
                             _ => panic!("Unsupported binary operation: {:?}", binary.operator),
                         };
                         self.value_mapper.insert(result_id, rr_id);

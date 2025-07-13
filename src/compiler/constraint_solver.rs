@@ -27,59 +27,59 @@ impl ConstraintSolver {
 
     /// Main entry point for constraint solving
     pub fn solve(&mut self) {
-        println!("Solving constraints...");
+        // println!("Solving constraints...");
         // println!("{}", self.judgements_string());
-        println!("Number of judgements: {}", self.num_judgements());
+        // println!("Number of judgements: {}", self.num_judgements());
         self.simplify_unions_algebraically();
-        println!("\n\n=== Simplified unions algebraically ===");
+        // println!("\n\n=== Simplified unions algebraically ===");
         // println!("{}", self.judgements_string());
-        println!("Number of judgements: {}", self.num_judgements());
+        // println!("Number of judgements: {}", self.num_judgements());
         // TODO: Implement constraint solving logic
         self.inline_equalities();
-        println!("\n\n=== Inlined equalities ===");
+        // println!("\n\n=== Inlined equalities ===");
         // println!("{}", self.judgements_string());
-        println!("Number of judgements: {}", self.num_judgements());
+        // println!("Number of judgements: {}", self.num_judgements());
         self.blow_up_le_of_meet();
-        println!("\n\n=== Blow up le of meet ===");
+        // println!("\n\n=== Blow up le of meet ===");
         // println!("{}", self.judgements_string());
-        println!("Number of judgements: {}", self.num_judgements());
+        // println!("Number of judgements: {}", self.num_judgements());
         self.simplify_unions_algebraically();
-        println!("\n\n=== Simplified unions algebraically ===");
+        // println!("\n\n=== Simplified unions algebraically ===");
         // println!("{}", self.judgements_string());
-        println!("Number of judgements: {}", self.num_judgements());
+        // println!("Number of judgements: {}", self.num_judgements());
 
         let mut current_judgements = self.num_judgements();
         loop {
             self.simplify_le_const();
-            println!("\n\n=== Simplified le const ===");
+            // println!("\n\n=== Simplified le const ===");
             // println!("{}", self.judgements_string());
-            println!("Number of judgements: {}", self.num_judgements());
+            // println!("Number of judgements: {}", self.num_judgements());
             self.inline_equalities();
-            println!("\n\n=== Inlined equalities ===");
+            // println!("\n\n=== Inlined equalities ===");
             // println!("{}", self.judgements_string());
-            println!("Number of judgements: {}", self.num_judgements());
+            // println!("Number of judgements: {}", self.num_judgements());
             self.simplify_unions_algebraically();
-            println!("\n\n=== Simplified unions algebraically ===");
+            // println!("\n\n=== Simplified unions algebraically ===");
             // println!("{}", self.judgements_string());
-            println!("Number of judgements: {}", self.num_judgements());
+            // println!("Number of judgements: {}", self.num_judgements());
             if self.num_judgements() == current_judgements {
                 break;
             }
             current_judgements = self.num_judgements();
         }
-        println!("\n\n=== EQ / LE CONST LOOP ===");
+        // println!("\n\n=== EQ / LE CONST LOOP ===");
         // println!("{}", self.judgements_string());
-        println!("Number of judgements: {}", self.num_judgements());
+        // println!("Number of judgements: {}", self.num_judgements());
 
         self.run_defaulting();
-        println!("\n\n=== Defaulting ===");
+        // println!("\n\n=== Defaulting ===");
         // println!("{}", self.judgements_string());
-        println!("Number of judgements: {}", self.num_judgements());
+        // println!("Number of judgements: {}", self.num_judgements());
 
         self.inline_equalities();
-        println!("\n\n=== Inlined equalities ===");
+        // println!("\n\n=== Inlined equalities ===");
         // println!("{}", self.judgements_string());
-        println!("Number of judgements: {}", self.num_judgements());
+        // println!("Number of judgements: {}", self.num_judgements());
 
         if self.num_judgements() > 0 {
             panic!("Failed to solve constraints");

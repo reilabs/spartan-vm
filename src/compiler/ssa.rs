@@ -432,6 +432,19 @@ impl Function {
             .push(OpCode::BConst(value_id, value));
         value_id
     }
+
+    pub fn push_front_bool_const(&mut self, block_id: BlockId, value: bool) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.value_info.insert(value_id, Type::Bool);
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .insert(0, OpCode::BConst(value_id, value));
+        value_id
+    }
+
     pub fn push_u32_const(&mut self, block_id: BlockId, value: u32) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
@@ -722,8 +735,16 @@ impl Block {
         std::mem::take(&mut self.parameters)
     }
 
+    pub fn put_parameters(&mut self, parameters: Vec<(ValueId, Type)>) {
+        self.parameters = parameters;
+    }
+
     pub fn get_parameter_values(&self) -> impl Iterator<Item = &ValueId> {
         self.parameters.iter().map(|(id, _)| id)
+    }
+
+    pub fn get_instruction(&self, i: usize) -> &OpCode {
+        &self.instructions[i]
     }
 
     pub fn get_instructions(&self) -> impl Iterator<Item = &OpCode> {
@@ -744,6 +765,10 @@ impl Block {
 
     pub fn take_terminator(&mut self) -> Option<Terminator> {
         std::mem::take(&mut self.terminator)
+    }
+
+    pub fn has_parameters(&self) -> bool {
+        self.parameters.len() > 0
     }
 }
 
@@ -1196,6 +1221,43 @@ impl OpCode {
             Self::Load(_, c) | Self::WriteWitness(_, c) => vec![c].into_iter(),
             Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
             Self::Call(_, _, a) => a.iter_mut().collect::<Vec<_>>().into_iter(),
+        }
+    }
+
+    pub fn get_inputs(&self) -> impl Iterator<Item = &ValueId> {
+        match self {
+            Self::FieldConst(_, _)
+            | Self::BConst(_, _)
+            | Self::UConst(_, _)
+            | Self::Alloc(_, _) => vec![].into_iter(),
+            Self::Eq(_, b, c)
+            | Self::Add(_, b, c)
+            | Self::Mul(_, b, c)
+            | Self::Lt(_, b, c)
+            | Self::ArrayGet(_, b, c)
+            | Self::AssertEq(b, c)
+            | Self::Store(b, c) => vec![b, c].into_iter(),
+            Self::Load(_, c) | Self::WriteWitness(_, c) => vec![c].into_iter(),
+            Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
+            Self::Call(_, _, a) => a.iter().collect::<Vec<_>>().into_iter(),
+        }
+    }
+
+    pub fn get_results(&self) -> impl Iterator<Item = &ValueId> {
+        match self {
+            Self::FieldConst(r, _)
+            | Self::BConst(r, _)
+            | Self::UConst(r, _)
+            | Self::Alloc(r, _)
+            | Self::Eq(r, _, _)
+            | Self::Add(r, _, _)
+            | Self::Mul(r, _, _)
+            | Self::Lt(r, _, _)
+            | Self::ArrayGet(r, _, _)
+            | Self::WriteWitness(r, _)
+            | Self::Load(r, _) => vec![r].into_iter(),
+            Self::Call(r, _, _) => r.iter().collect::<Vec<_>>().into_iter(),
+            Self::Constrain { .. } | Self::Store(_, _) | Self::AssertEq(_, _) => vec![].into_iter(),
         }
     }
 }

@@ -19,13 +19,9 @@ impl Mem2Reg {
                 continue;
             }
             let cfg = cfg.get_function_cfg(*function_id);
-            println!("Function {:?} is escape safe", function_id);
             let writes = self.find_pointer_writes(function);
-            println!("Pointer writes: {:?}", writes);
             let phi_blocks = self.find_phi_blocks(&writes, cfg);
-            println!("Phi blocks: {:?}", phi_blocks);
             let phi_args = self.initialize_phis(function, &phi_blocks);
-            println!("Phi args: {:?}", phi_args);
             self.remove_ptrs(function, cfg, &phi_args);
         }
     }

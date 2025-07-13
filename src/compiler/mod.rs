@@ -1,4 +1,8 @@
+pub mod common_subexpression_elimination;
+pub mod condition_propagation;
 pub mod constraint_solver;
+pub mod dead_code_elimination;
+pub mod deduplicate_phis;
 pub mod explicit_witness;
 pub mod fix_double_jumps;
 pub mod flow_analysis;
@@ -10,4 +14,3 @@ pub mod ssa_gen;
 pub mod taint_analysis;
 pub mod union_find;
 pub mod witness_generation;
-pub mod common_subexpression_elimination;

@@ -127,6 +127,21 @@ impl ExplicitWitness {
                         assert_eq!(rhs_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
+                    OpCode::Eq(_, lhs, rhs) => {
+                        let lhs_taint = function_taint
+                            .get_value_taint(lhs)
+                            .toplevel_taint()
+                            .expect_constant();
+                        let rhs_taint = function_taint
+                            .get_value_taint(rhs)
+                            .toplevel_taint()
+                            .expect_constant();
+
+                        // Dynamic Eq not supported yet
+                        assert_eq!(lhs_taint, ConstantTaint::Pure);
+                        assert_eq!(rhs_taint, ConstantTaint::Pure);
+                        new_instructions.push(instruction);
+                    }
                     OpCode::Store(ptr, _) => {
                         let ptr_taint = function_taint
                             .get_value_taint(ptr)

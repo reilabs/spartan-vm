@@ -722,8 +722,8 @@ impl TaintAnalysis {
                             for input in merge_inputs {
                                 let input_taint = function_taint.value_taints.get(&input).unwrap();
                                 function_taint.judgements.push(Judgement::Le(
-                                    input_taint.toplevel_taint(),
                                     cond_taint.toplevel_taint(),
+                                    input_taint.toplevel_taint(),
                                 ));
                             }
 

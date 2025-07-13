@@ -3,6 +3,9 @@
 use std::any::Any;
 
 use crate::compiler::common_subexpression_elimination::CSE;
+use crate::compiler::condition_propagation::ConditionPropagation;
+use crate::compiler::dead_code_elimination::DCE;
+use crate::compiler::deduplicate_phis::DeduplicatePhis;
 use crate::compiler::explicit_witness::ExplicitWitness;
 use crate::compiler::fix_double_jumps::FixDoubleJumps;
 use crate::compiler::flow_analysis::{self, FlowAnalysis};
@@ -97,7 +100,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
                 Ssa::brillig_array_get_and_set,
                 "Brillig Array Get and Set Optimizations",
             ),
-            // We need a DIE pass to populate `used_globals`, otherwise it will panic later.
+            // // We need a DIE pass to populate `used_globals`, otherwise it will panic later.
             SsaPass::new(
                 Ssa::dead_instruction_elimination,
                 "Dead Instruction Elimination",
@@ -194,6 +197,56 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             "After CSE SSA:\n{}",
             custom_ssa.to_string(&DefaultSsaAnnotator)
         );
+
+        let mut condition_propagation = ConditionPropagation::new();
+        condition_propagation.run(&mut custom_ssa, &flow_analysis);
+
+        println!(
+            "After condition propagation SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+
+        // Running a second CSE to unify spurious constants from condition propagation
+        cse.run(&mut custom_ssa, &flow_analysis);
+
+        println!(
+            "After CSE SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+
+        let mut deduplicate_phis = DeduplicatePhis::new();
+        deduplicate_phis.run(&mut custom_ssa);
+
+        println!(
+            "After deduplicate phis SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+
+        drop(flow_analysis);
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+
+        let mut dce = DCE::new();
+        dce.run(&mut custom_ssa, &flow_analysis);
+
+        println!(
+            "After DCE SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+        drop(flow_analysis);
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+
+        let mut fix_double_jumps = FixDoubleJumps::new();
+        fix_double_jumps.run(&mut custom_ssa, &flow_analysis);
+
+        custom_ssa.typecheck();
+        println!(
+            "After fix double jumps SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+
+        drop(flow_analysis);
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+
 
         let mut r1cs_gen = R1CGen::new();
         r1cs_gen.run(&custom_ssa);

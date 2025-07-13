@@ -290,6 +290,14 @@ impl CFG {
             .collect()
     }
 
+    pub fn get_post_dominance_frontier(&self, block_id: BlockId) -> HashSet<BlockId> {
+        let node = *self.block_to_node.get(&block_id).unwrap();
+        let r = self.reverse_cfg.get_dominance_frontier(node);
+        r.into_iter()
+            .filter_map(|node| self.node_to_block.get(&node).cloned())
+            .collect()
+    }
+
     pub fn get_domination_pre_order(&self) -> impl Iterator<Item = BlockId> {
         self.cfg
             .dominator_pre_order
@@ -311,6 +319,30 @@ impl CFG {
         let a_node = *self.block_to_node.get(&a).unwrap();
         let b_node = *self.block_to_node.get(&b).unwrap();
         self.cfg.dominates(a_node, b_node)
+    }
+
+    pub fn post_dominates(&self, a: BlockId, b: BlockId) -> bool {
+        let a_node = *self.block_to_node.get(&a).unwrap();
+        let b_node = *self.block_to_node.get(&b).unwrap();
+        self.reverse_cfg.dominates(a_node, b_node)
+    }
+
+    pub fn get_jumps_into(&self, block_id: BlockId) -> Vec<BlockId> {
+        let node = *self.block_to_node.get(&block_id).unwrap();
+        let r = self.cfg.cfg.edges_directed(node, Direction::Incoming);
+        r.into_iter()
+            .filter_map(|edge| self.node_to_block.get(&edge.source()).cloned())
+            .collect()
+    }
+
+    pub fn get_post_dominator(&self, block_id: BlockId) -> BlockId {
+        let node = *self.block_to_node.get(&block_id).unwrap();
+        let r = self.reverse_cfg.dominators.immediate_dominator(node);
+        if let Some(dom) = r {
+            *self.node_to_block.get(&dom).unwrap()
+        } else {
+            panic!("ICE: block has no post-dominator");
+        }
     }
 }
 

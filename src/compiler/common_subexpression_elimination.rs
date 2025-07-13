@@ -109,7 +109,7 @@ impl CSE {
             let cfg = cfg.get_function_cfg(*function_id);
             let exprs = self.gather_expressions(function, cfg);
             let mut value_replacements = ValueReplacements::new();
-            for (_, occurrences) in exprs {
+            for (expr, occurrences) in exprs {
                 if occurrences.len() <= 1 {
                     continue;
                 }
@@ -135,7 +135,6 @@ impl CSE {
                     }
 
                 }
-                println!("replacement groups: {:?}", replacement_groups);
                 for ((_, _, value_id), others) in replacement_groups {
                     for other in others {
                         value_replacements.insert(other, value_id);

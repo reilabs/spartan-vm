@@ -53,6 +53,16 @@ impl Value {
         }
     }
 
+    pub fn eq(&self, other: &Value) -> Value {
+        let self_const = self.expect_fp();
+        let other_const = other.expect_fp();
+        if self_const == other_const {
+            Value::Fp(ark_bn254::Fr::ONE)
+        } else {
+            Value::Fp(ark_bn254::Fr::ZERO)
+        }
+    }
+
     pub fn expect_array(&self) -> Vec<Value> {
         match self {
             Value::Array(array) => array.clone(),
@@ -175,6 +185,13 @@ impl WitnessGen {
                         let index = scope.get(index).unwrap().expect_u32();
                         let value = array[index as usize].clone();
                         scope.insert(*result, value);
+                    }
+
+                    OpCode::Eq(result, lhs, rhs) => {
+                        let lhs = scope.get(lhs).unwrap();
+                        let rhs = scope.get(rhs).unwrap();
+                        let r = lhs.eq(rhs);
+                        scope.insert(*result, r);
                     }
 
                     OpCode::AssertEq(_, _) => {

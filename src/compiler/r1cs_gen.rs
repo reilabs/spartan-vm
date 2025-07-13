@@ -99,6 +99,16 @@ impl Value {
             .filter(|(_, c)| *c != ark_bn254::Fr::ZERO)
             .collect()
     }
+
+    pub fn eq(&self, other: &Value) -> Value {
+        let self_const = self.expect_constant();
+        let other_const = other.expect_constant();
+        if self_const == other_const {
+            Value::Const(ark_bn254::Fr::ONE)
+        } else {
+            Value::Const(ark_bn254::Fr::ZERO)
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -279,6 +289,13 @@ impl R1CGen {
                         for (ret, result) in ret.iter().zip(results.into_iter()) {
                             scope.insert(*ret, result);
                         }
+                    }
+
+                    OpCode::Eq(result, lhs, rhs) => {
+                        let lhs = scope.get(lhs).unwrap();
+                        let rhs = scope.get(rhs).unwrap();
+                        let r = lhs.eq(rhs);
+                        scope.insert(*result, r);
                     }
 
                     _ => panic!("unexpected instruction {:?}", instruction),
