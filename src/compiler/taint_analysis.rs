@@ -581,10 +581,18 @@ impl TaintAnalysis {
                     OpCode::Add(r, lhs, rhs)
                     | OpCode::Lt(r, lhs, rhs)
                     | OpCode::Eq(r, lhs, rhs)
+                    | OpCode::And(r, lhs, rhs)
                     | OpCode::Mul(r, lhs, rhs) => {
                         let lhs_taint = function_taint.value_taints.get(lhs).unwrap();
                         let rhs_taint = function_taint.value_taints.get(rhs).unwrap();
                         let result_taint = lhs_taint.union(rhs_taint);
+                        function_taint.value_taints.insert(*r, result_taint);
+                    }
+                    OpCode::Select(r, cond, then, otherwise) => {
+                        let cond_taint = function_taint.value_taints.get(cond).unwrap();
+                        let then_taint = function_taint.value_taints.get(then).unwrap();
+                        let otherwise_taint = function_taint.value_taints.get(otherwise).unwrap();
+                        let result_taint = cond_taint.union(then_taint).union(otherwise_taint);
                         function_taint.value_taints.insert(*r, result_taint);
                     }
                     OpCode::Alloc(r, t, _) => {
@@ -670,9 +678,9 @@ impl TaintAnalysis {
                         ));
                     }
 
-                    OpCode::WriteWitness { .. } | OpCode::Constrain { .. } => {
-                        panic!("Should not be present at this stage {:?}", instruction);
-                    }
+                    // OpCode::WriteWitness { .. } | OpCode::Constrain { .. } => {
+                    //     panic!("Should not be present at this stage {:?}", instruction);
+                    // }
                 }
             }
 

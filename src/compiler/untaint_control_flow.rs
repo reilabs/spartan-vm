@@ -73,8 +73,8 @@ impl UntaintControlFlow {
                     }
                     OpCode::Call(r, l, h) => OpCode::Call(r, l, h),
                     OpCode::AssertEq(r, l) => OpCode::AssertEq(r, l),
-                    OpCode::Constrain(r, l, h) => OpCode::Constrain(r, l, h),
-                    OpCode::WriteWitness(r, l) => OpCode::WriteWitness(r, l),
+                    OpCode::And(r, l, h) => OpCode::And(r, l, h),
+                    OpCode::Select(r, l, h, j) => OpCode::Select(r, l, h, j),
                 };
                 new_instructions.push(new);
             }
@@ -121,7 +121,6 @@ impl UntaintControlFlow {
                     OpCode::AssertEq(_, _) => {
                         assert_eq!(block_taint, None); // TODO: support conditional asserts
                         new_instructions.push(instruction);
-
                     }
                     OpCode::Lt(_, lhs, rhs) => {
                         let lhs_taint = function_taint
@@ -219,11 +218,8 @@ impl UntaintControlFlow {
                             let child_block_taint = match block_taint {
                                 Some(tnt) => {
                                     let result_val = function.fresh_value();
-                                    new_instructions.push(OpCode::Mul(result_val, tnt, cond));
-                                    let result = function.fresh_value();
-                                    new_instructions.push(OpCode::WriteWitness(result, result_val));
-                                    new_instructions.push(OpCode::Constrain(tnt, cond, result));
-                                    result
+                                    new_instructions.push(OpCode::And(result_val, tnt, cond));
+                                    result_val
                                 }
                                 None => cond,
                             };
@@ -314,26 +310,12 @@ impl UntaintControlFlow {
                                 // this way we only need to witnessize the first term and return the
                                 // linear combination.
 
-                                let const_neg_1 = function.push_field_const(-ark_bn254::Fr::ONE);
-
                                 for ((res, _), (lhs, rhs)) in merge_params.iter().zip(
                                     args_passed_from_lhs.iter().zip(args_passed_from_rhs.iter()),
                                 ) {
-                                    let neg_rhs =
-                                        function.push_mul(merger_block, *rhs, const_neg_1);
-                                    let lhs_rhs = function.push_add(merger_block, *lhs, neg_rhs);
-                                    let mul_cond = function.push_mul(merger_block, lhs_rhs, cond);
-                                    let mul_cond_wit =
-                                        function.push_witness_write(merger_block, mul_cond);
-                                    function.push_constrain(
-                                        merger_block,
-                                        lhs_rhs,
-                                        cond,
-                                        mul_cond_wit,
-                                    );
                                     function
                                         .get_block_mut(merger_block)
-                                        .push_instruction(OpCode::Add(*res, mul_cond_wit, *rhs));
+                                        .push_instruction(OpCode::Select(*res, cond, *lhs, *rhs));
                                 }
                             }
                         }

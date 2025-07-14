@@ -269,15 +269,15 @@ impl R1CGen {
                         // No-op
                     }
 
-                    OpCode::Constrain(a, b, c) => {
-                        let a = scope.get(a).unwrap().expect_linear_combination();
-                        let b = scope.get(b).unwrap().expect_linear_combination();
-                        let c = scope.get(c).unwrap().expect_linear_combination();
-                        self.result.push(R1C { a: a, b: b, c: c });
-                    }
-                    OpCode::WriteWitness(result, _) => {
-                        scope.insert(*result, Value::WitnessVar(self.next_witness()));
-                    }
+                    // OpCode::Constrain(a, b, c) => {
+                    //     let a = scope.get(a).unwrap().expect_linear_combination();
+                    //     let b = scope.get(b).unwrap().expect_linear_combination();
+                    //     let c = scope.get(c).unwrap().expect_linear_combination();
+                    //     self.result.push(R1C { a: a, b: b, c: c });
+                    // }
+                    // OpCode::WriteWitness(result, _) => {
+                    //     scope.insert(*result, Value::WitnessVar(self.next_witness()));
+                    // }
 
                     OpCode::Call(ret, tgt, args) => {
                         let args = args
@@ -296,6 +296,9 @@ impl R1CGen {
                         let r = lhs.eq(rhs);
                         scope.insert(*result, r);
                     }
+
+                    OpCode::And(result, lhs, rhs) => { todo!(); }
+                    OpCode::Select(result, cond, then, otherwise) => { todo!(); }
                 }
             }
 

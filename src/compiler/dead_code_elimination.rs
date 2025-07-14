@@ -49,7 +49,7 @@ impl DCE {
                 for (i, instruction) in block.get_instructions().enumerate() {
                     match instruction {
                         // calls, stores, constraints and witness stores are critical side-effects
-                        OpCode::Call { .. } | OpCode::Store { .. } | OpCode::Constrain { .. } => {
+                        OpCode::Call { .. } | OpCode::Store { .. } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
                         // assert_eq is critical if it's not definitionally true
@@ -64,7 +64,9 @@ impl DCE {
                         | OpCode::Eq { .. }
                         | OpCode::Alloc { .. }
                         | OpCode::Lt { .. }
-                        | OpCode::WriteWitness { .. } // Note that a witness store is only critical if the return is used
+                        | OpCode::And { .. }
+                        | OpCode::Select { .. }
+                        // | OpCode::WriteWitness { .. } // Note that a witness store is only critical if the return is used
                         | OpCode::ArrayGet { .. } => {}
                     }
                 }

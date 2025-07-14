@@ -198,19 +198,22 @@ impl WitnessGen {
                         // No-op
                     }
 
-                    OpCode::Constrain(a, b, c) => {
-                        let a = scope.get(a).unwrap();
-                        let b = scope.get(b).unwrap();
-                        let c = scope.get(c).unwrap();
-                        self.a.push(a.expect_fp());
-                        self.b.push(b.expect_fp());
-                        self.c.push(c.expect_fp());
-                    }
-                    OpCode::WriteWitness(result, v) => {
-                        let v = scope.get(v).unwrap().clone();
-                        scope.insert(*result, v.clone());
-                        self.witness.push(v.expect_fp());
-                    }
+                    OpCode::And(result, lhs, rhs) => { todo!(); }
+                    OpCode::Select(result, cond, then, otherwise) => { todo!(); }
+
+                    // OpCode::Constrain(a, b, c) => {
+                    //     let a = scope.get(a).unwrap();
+                    //     let b = scope.get(b).unwrap();
+                    //     let c = scope.get(c).unwrap();
+                    //     self.a.push(a.expect_fp());
+                    //     self.b.push(b.expect_fp());
+                    //     self.c.push(c.expect_fp());
+                    // }
+                    // OpCode::WriteWitness(result, v) => {
+                    //     let v = scope.get(v).unwrap().clone();
+                    //     scope.insert(*result, v.clone());
+                    //     self.witness.push(v.expect_fp());
+                    // }
 
                     OpCode::Call(ret, tgt, args) => {
                         let args = args

@@ -1,7 +1,12 @@
-use std::{collections::HashMap, fmt::{Debug, Display}};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+};
 
 use crate::compiler::{
-    fix_double_jumps::ValueReplacements, flow_analysis::{FlowAnalysis, CFG}, ssa::{BlockId, Const, Function, OpCode, ValueId, SSA}
+    fix_double_jumps::ValueReplacements,
+    flow_analysis::{CFG, FlowAnalysis},
+    ssa::{BlockId, Const, Function, OpCode, SSA, ValueId},
 };
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -14,6 +19,8 @@ enum Expr {
     Variable(u64),
     Eq(Box<Expr>, Box<Expr>),
     Lt(Box<Expr>, Box<Expr>),
+    And(Vec<Expr>),
+    Select(Box<Expr>, Box<Expr>, Box<Expr>),
     ArrayGet(Box<Expr>, Box<Expr>),
 }
 
@@ -36,6 +43,13 @@ impl Expr {
         }
     }
 
+    fn get_ands(&self) -> Vec<Self> {
+        match self {
+            Self::And(exprs) => exprs.iter().cloned().collect(),
+            _ => vec![self.clone()],
+        }
+    }
+
     pub fn add(&self, other: &Self) -> Self {
         let mut adds = self.get_adds();
         adds.extend(other.get_adds());
@@ -48,6 +62,13 @@ impl Expr {
         muls.extend(other.get_muls());
         muls.sort();
         Self::Mul(muls)
+    }
+
+    pub fn and(&self, other: &Self) -> Self {
+        let mut ands = self.get_ands();
+        ands.extend(other.get_ands());
+        ands.sort();
+        Self::And(ands)
     }
 
     pub fn bconst(value: bool) -> Self {
@@ -73,19 +94,49 @@ impl Expr {
     pub fn array_get(&self, index: &Self) -> Self {
         Self::ArrayGet(Box::new(self.clone()), Box::new(index.clone()))
     }
+
+    pub fn select(&self, then: &Self, otherwise: &Self) -> Self {
+        Self::Select(Box::new(self.clone()), Box::new(then.clone()), Box::new(otherwise.clone()))
+    }
 }
 
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Add(exprs) => write!(f, "({})", exprs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(" + ")),
-            Self::Mul(exprs) => write!(f, "({})", exprs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(" * ")),
+            Self::Add(exprs) => write!(
+                f,
+                "({})",
+                exprs
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            ),
+            Self::Mul(exprs) => write!(
+                f,
+                "({})",
+                exprs
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" * ")
+            ),
             Self::FConst(value) => write!(f, "{}", value),
             Self::BConst(value) => write!(f, "{}", value),
             Self::UConst(value) => write!(f, "{}", value),
             Self::Variable(value) => write!(f, "v{}", value),
             Self::Eq(lhs, rhs) => write!(f, "({} == {})", lhs, rhs),
             Self::Lt(lhs, rhs) => write!(f, "({} < {})", lhs, rhs),
+            Self::And(exprs) => write!(
+                f,
+                "({})",
+                exprs
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" & ")
+            ),
+            Self::Select(cond, then, otherwise) => write!(f, "({} ? {} : {})", cond, then, otherwise),
             Self::ArrayGet(array, index) => write!(f, "{}[{}]", array, index),
         }
     }
@@ -116,12 +167,26 @@ impl CSE {
                 let mut replacement_groups: Vec<((BlockId, usize, ValueId), Vec<ValueId>)> = vec![];
                 for (block_id, instruction_idx, value_id) in occurrences {
                     let mut found = false;
-                    for ((candidate_block, candidate_instruction, candidate_value_id), others) in replacement_groups.iter_mut() {
-                        if self.can_replace(cfg, *candidate_block, *candidate_instruction, block_id, instruction_idx) {
+                    for ((candidate_block, candidate_instruction, candidate_value_id), others) in
+                        replacement_groups.iter_mut()
+                    {
+                        if self.can_replace(
+                            cfg,
+                            *candidate_block,
+                            *candidate_instruction,
+                            block_id,
+                            instruction_idx,
+                        ) {
                             found = true;
                             others.push(value_id);
                             break;
-                        } else if self.can_replace(cfg, block_id, instruction_idx, *candidate_block, *candidate_instruction) {
+                        } else if self.can_replace(
+                            cfg,
+                            block_id,
+                            instruction_idx,
+                            *candidate_block,
+                            *candidate_instruction,
+                        ) {
                             found = true;
                             others.push(*candidate_value_id);
                             *candidate_block = block_id;
@@ -133,7 +198,6 @@ impl CSE {
                     if !found {
                         replacement_groups.push(((block_id, instruction_idx, value_id), vec![]));
                     }
-
                 }
                 for ((_, _, value_id), others) in replacement_groups {
                     for other in others {
@@ -151,7 +215,14 @@ impl CSE {
         }
     }
 
-    fn can_replace(&self, cfg: &CFG, block1: BlockId, instruction1: usize, block2: BlockId, instruction2: usize) -> bool {
+    fn can_replace(
+        &self,
+        cfg: &CFG,
+        block1: BlockId,
+        instruction1: usize,
+        block2: BlockId,
+        instruction2: usize,
+    ) -> bool {
         if block1 == block2 && instruction1 < instruction2 {
             return true;
         }
@@ -233,6 +304,17 @@ impl CSE {
                             *r,
                         ));
                     }
+                    OpCode::And(r, lhs, rhs) => {
+                        let lhs_expr = get_expr(&exprs, lhs);
+                        let rhs_expr = get_expr(&exprs, rhs);
+                        let result_expr = lhs_expr.and(&rhs_expr);
+                        exprs.insert(*r, result_expr.clone());
+                        result.entry(result_expr).or_default().push((
+                            block_id,
+                            instruction_idx,
+                            *r,
+                        ));
+                    }
                     OpCode::ArrayGet(r, array, index) => {
                         let array_expr = get_expr(&exprs, array);
                         let index_expr = get_expr(&exprs, index);
@@ -244,13 +326,23 @@ impl CSE {
                             *r,
                         ));
                     }
+                    OpCode::Select(r, cond, then, otherwise) => {
+                        let cond_expr = get_expr(&exprs, cond);
+                        let then_expr = get_expr(&exprs, then);
+                        let otherwise_expr = get_expr(&exprs, otherwise);
+                        let result_expr = cond_expr.select(&then_expr, &otherwise_expr);
+                        exprs.insert(*r, result_expr.clone());
+                        result.entry(result_expr).or_default().push((
+                            block_id,
+                            instruction_idx,
+                            *r,
+                        ));
+                    }
                     OpCode::Alloc { .. }
                     | OpCode::Store { .. }
                     | OpCode::Load { .. }
                     | OpCode::AssertEq { .. }
-                    | OpCode::Call { .. }
-                    | OpCode::WriteWitness { .. }
-                    | OpCode::Constrain(_, _, _) => {}
+                    | OpCode::Call { .. } => {}
                 }
             }
         }
