@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::TypeConverter;
 use crate::compiler::{
     ir::r#type::Empty,
-    ssa::{BlockId, Function, FunctionId, Terminator, ValueId},
+    ssa::{BlockId, Function, FunctionId, ValueId},
 };
 use noirc_evaluator::ssa::ir::{
     basic_block::BasicBlockId,
@@ -79,13 +79,13 @@ impl FunctionConverter {
                         let right_value =
                             self.convert_value(&mut custom_function, right_id, right_value);
                         let rr_id = match binary.operator {
-                            BinaryOp::Add { unchecked } => {
+                            BinaryOp::Add { unchecked: _ } => {
                                 custom_function.push_add(custom_block_id, left_value, right_value)
                             }
                             BinaryOp::Lt => {
                                 custom_function.push_lt(custom_block_id, left_value, right_value)
                             }
-                            BinaryOp::Mul { unchecked } => {
+                            BinaryOp::Mul { unchecked: _ } => {
                                 custom_function.push_mul(custom_block_id, left_value, right_value)
                             }
                             BinaryOp::Eq => {

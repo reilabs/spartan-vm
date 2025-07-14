@@ -2,9 +2,7 @@ use itertools::Itertools;
 
 use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::ir::r#type::{Empty, Type, TypeExpr};
-use crate::compiler::ssa::{
-    BlockId, FunctionId, OpCode, SSA, SsaAnnotator, Terminator, ValueId,
-};
+use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SSA, SsaAnnotator, Terminator, ValueId};
 use crate::compiler::union_find::UnionFind;
 use std::collections::{HashMap, HashSet};
 
@@ -253,12 +251,12 @@ impl TaintAnalysis {
             .join("\n")
     }
 
-    fn get_taint_type(&self, func_id: FunctionId, value_id: ValueId) -> Option<&TaintType> {
-        let Some(func) = self.functions.get(&func_id) else {
-            return None;
-        };
-        func.value_taints.get(&value_id)
-    }
+    // fn get_taint_type(&self, func_id: FunctionId, value_id: ValueId) -> Option<&TaintType> {
+    //     let Some(func) = self.functions.get(&func_id) else {
+    //         return None;
+    //     };
+    //     func.value_taints.get(&value_id)
+    // }
 
     pub fn get_function_taint(&self, func_id: FunctionId) -> &FunctionTaint {
         self.functions.get(&func_id).unwrap()
@@ -424,21 +422,21 @@ impl FunctionTaint {
 }
 
 impl SsaAnnotator for FunctionTaint {
-    fn annotate_value(&self, function_id: FunctionId, value_id: ValueId) -> String {
+    fn annotate_value(&self, _: FunctionId, value_id: ValueId) -> String {
         let Some(taint) = self.value_taints.get(&value_id) else {
             return "".to_string();
         };
         taint.to_string()
     }
 
-    fn annotate_block(&self, function_id: FunctionId, block_id: BlockId) -> String {
+    fn annotate_block(&self, _: FunctionId, block_id: BlockId) -> String {
         let Some(taint) = self.block_cfg_taints.get(&block_id) else {
             return "".to_string();
         };
         format!("cfg_taint: {}", taint.to_string())
     }
 
-    fn annotate_function(&self, function_id: FunctionId) -> String {
+    fn annotate_function(&self, _: FunctionId) -> String {
         let return_taints = self.returns_taint.iter().map(|t| t.to_string()).join(", ");
         format!(
             "returns: [{}], cfg_taint: {}",
@@ -446,12 +444,6 @@ impl SsaAnnotator for FunctionTaint {
             self.cfg_taint.to_string()
         )
     }
-}
-
-#[derive(Clone)]
-struct ScopedCfgTaint {
-    taint: Taint,
-    valid_until: Option<BlockId>,
 }
 
 #[derive(Clone)]
@@ -560,7 +552,10 @@ impl TaintAnalysis {
         }
 
         for (value_id, _) in func.iter_consts() {
-            function_taint.value_taints.insert(*value_id, TaintType::Primitive(Taint::Constant(ConstantTaint::Pure)));
+            function_taint.value_taints.insert(
+                *value_id,
+                TaintType::Primitive(Taint::Constant(ConstantTaint::Pure)),
+            );
         }
 
         for block_id in block_queue {
@@ -704,7 +699,7 @@ impl TaintAnalysis {
                             self.deep_le(param, target_param, &mut function_taint.judgements);
                         }
                     }
-                    Terminator::JmpIf(cond, t1, t2) => {
+                    Terminator::JmpIf(cond, _, _) => {
                         let cond_taint = function_taint.value_taints.get(cond).unwrap();
                         if cfg.is_loop_entry(block_id) {
                             // we assert that the condition is pure
@@ -768,29 +763,6 @@ impl TaintAnalysis {
             ) => {
                 judgements.push(Judgement::Le(lhs.clone(), rhs.clone()));
                 self.deep_le(inner_lhs, inner_rhs, judgements);
-            }
-            _ => panic!("Cannot compare different taint types"),
-        }
-    }
-
-    fn deep_eq(&self, lhs: &TaintType, rhs: &TaintType, judgements: &mut Vec<Judgement>) {
-        match (lhs, rhs) {
-            (TaintType::Primitive(lhs), TaintType::Primitive(rhs)) => {
-                judgements.push(Judgement::Eq(lhs.clone(), rhs.clone()));
-            }
-            (
-                TaintType::NestedImmutable(lhs, inner_lhs),
-                TaintType::NestedImmutable(rhs, inner_rhs),
-            ) => {
-                judgements.push(Judgement::Eq(lhs.clone(), rhs.clone()));
-                self.deep_eq(inner_lhs, inner_rhs, judgements);
-            }
-            (
-                TaintType::NestedMutable(lhs, inner_lhs),
-                TaintType::NestedMutable(rhs, inner_rhs),
-            ) => {
-                judgements.push(Judgement::Eq(lhs.clone(), rhs.clone()));
-                self.deep_eq(inner_lhs, inner_rhs, judgements);
             }
             _ => panic!("Cannot compare different taint types"),
         }

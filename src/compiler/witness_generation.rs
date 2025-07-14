@@ -1,12 +1,10 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::compiler::{
     ir::r#type::{Empty, Type, TypeExpr},
     ssa::{BlockId, Const, Function, FunctionId, OpCode, Terminator, ValueId, SSA},
 };
 use ark_ff::{AdditiveGroup, Field, PrimeField};
-use graphviz_rust::attributes::width;
-use itertools::Itertools;
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -224,8 +222,6 @@ impl WitnessGen {
                             scope.insert(*ret, result);
                         }
                     }
-
-                    _ => panic!("unexpected instruction {:?}", instruction),
                 }
             }
 

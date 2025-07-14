@@ -5,7 +5,7 @@ use crate::compiler::{
 };
 use core::panic;
 use itertools::Itertools;
-use std::{collections::HashMap, fmt::Display, rc::Rc};
+use std::{collections::HashMap, fmt::Display};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ValueId(pub u64);
@@ -15,13 +15,13 @@ pub struct BlockId(pub u64);
 pub struct FunctionId(pub u64);
 
 pub trait SsaAnnotator {
-    fn annotate_value(&self, function_id: FunctionId, value_id: ValueId) -> String {
+    fn annotate_value(&self, _function_id: FunctionId, _value_id: ValueId) -> String {
         "".to_string()
     }
-    fn annotate_function(&self, function_id: FunctionId) -> String {
+    fn annotate_function(&self, _function_id: FunctionId) -> String {
         "".to_string()
     }
-    fn annotate_block(&self, function_id: FunctionId, block_id: BlockId) -> String {
+    fn annotate_block(&self, _function_id: FunctionId, _block_id: BlockId) -> String {
         "".to_string()
     }
 }
@@ -694,7 +694,7 @@ pub enum OpCode<V> {
 }
 
 impl<V: Display> OpCode<V> {
-    pub fn to_string(&self, value_annotator: &LocalFunctionAnnotator) -> String {
+    fn to_string(&self, value_annotator: &LocalFunctionAnnotator) -> String {
         match self {
             OpCode::Eq(result, lhs, rhs) => format!(
                 "v{}[{}] = v{} == v{}",
@@ -882,7 +882,7 @@ impl<V: CommutativeSemigroup + Display + Clone + Eq> OpCode<V> {
                 type_assignments.insert(*result, Type::ref_of(typ.clone(), annotation.clone()));
                 Ok(())
             }
-            Self::Store(ptr, value) => Ok(()),
+            Self::Store(_, _) => Ok(()),
             Self::Load(result, ptr) => {
                 let ptr_type = type_assignments.get(ptr).ok_or_else(|| {
                     format!("Pointer value {:?} not found in type assignments", ptr)
@@ -931,12 +931,9 @@ impl<V: CommutativeSemigroup + Display + Clone + Eq> OpCode<V> {
                 }
                 Ok(())
             }
-            Self::ArrayGet(result, array, index) => {
+            Self::ArrayGet(result, array, _) => {
                 let array_type = type_assignments.get(array).ok_or_else(|| {
                     format!("Array value {:?} not found in type assignments", array)
-                })?;
-                let index_type = type_assignments.get(index).ok_or_else(|| {
-                    format!("Index value {:?} not found in type assignments", index)
                 })?;
 
                 let element_type = array_type.get_array_element();

@@ -1,9 +1,4 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::Write;
-use std::process::Command;
-
 use petgraph::Direction;
 use petgraph::algo::dominators::{self, Dominators};
 use petgraph::graph::{DiGraph, NodeIndex};
@@ -24,7 +19,7 @@ pub enum JumpType {
 pub struct CFGData {
     cfg: DiGraph<(), JumpType>,
     dominators: Dominators<NodeIndex<u32>>,
-    dominator_post_order: Vec<NodeIndex<u32>>,
+    _dominator_post_order: Vec<NodeIndex<u32>>,
     node_dominator_post_order: HashMap<NodeIndex<u32>, usize>,
     dominator_pre_order: Vec<NodeIndex<u32>>,
     node_dominator_pre_order: HashMap<NodeIndex<u32>, usize>,
@@ -49,7 +44,7 @@ impl CFGData {
         Self {
             cfg,
             dominators,
-            dominator_post_order: postorder,
+            _dominator_post_order: postorder,
             node_dominator_post_order: postorder_map,
             dominator_pre_order: preorder,
             node_dominator_pre_order: preorder_map,
@@ -170,7 +165,7 @@ impl CFGBuilder {
         let reverse_cfg_data = CFGData::from_graph(reverse_cfg, self.return_node);
         CFG {
             entry_node: self.entry_node,
-            return_node: self.return_node,
+            _return_node: self.return_node,
             block_to_node: self.block_to_node,
             node_to_block: self.node_to_block,
             cfg: cfg_data,
@@ -182,7 +177,7 @@ impl CFGBuilder {
 #[derive(Debug, Clone)]
 pub struct CFG {
     entry_node: NodeIndex<u32>,
-    return_node: NodeIndex<u32>,
+    _return_node: NodeIndex<u32>,
     block_to_node: HashMap<BlockId, NodeIndex<u32>>,
     node_to_block: HashMap<NodeIndex<u32>, BlockId>,
     cfg: CFGData,

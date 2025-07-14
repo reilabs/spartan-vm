@@ -17,7 +17,7 @@ impl ConditionPropagation {
 
             let mut replaces: Vec<(BlockId, ValueId, bool)> = vec![]; 
 
-            for (block_id, block) in function.get_blocks() {
+            for (_, block) in function.get_blocks() {
                 match block.get_terminator() {
                     Some(Terminator::JmpIf(cond, then_block, else_block)) => {
                         replaces.push((*then_block, *cond, true));

@@ -109,7 +109,7 @@ impl CSE {
             let cfg = cfg.get_function_cfg(*function_id);
             let exprs = self.gather_expressions(function, cfg);
             let mut value_replacements = ValueReplacements::new();
-            for (expr, occurrences) in exprs {
+            for (_, occurrences) in exprs {
                 if occurrences.len() <= 1 {
                     continue;
                 }

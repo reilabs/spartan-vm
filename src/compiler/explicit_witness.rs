@@ -3,13 +3,11 @@ use std::collections::HashMap;
 use crate::compiler::{
     flow_analysis::FlowAnalysis,
     ir::r#type::{Empty, Type, TypeExpr},
-    ssa::{BlockId, Function, FunctionId, OpCode, Terminator, ValueId, SSA},
+    ssa::{Function, FunctionId, OpCode, Terminator, SSA},
     taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis},
 };
 
-use ark_bn254::Fr;
 use ark_ff::Field;
-use noirc_frontend::hir::type_check;
 
 pub struct ExplicitWitness {}
 
@@ -286,7 +284,7 @@ impl ExplicitWitness {
                                 ),
                             };
 
-                            let mut merger_block = function.add_block();
+                            let merger_block = function.add_block();
                             function
                                 .get_block_mut(out_false_block)
                                 .set_terminator(Terminator::Jmp(merger_block, vec![]));

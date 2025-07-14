@@ -77,7 +77,7 @@ impl Value {
             Value::Mul(l, r) => match (&**l, &**r) {
                 (Value::Const(c), other) | (other, Value::Const(c)) => {
                     let mut r = other.expect_linear_combination();
-                    for (i, cx) in r.iter_mut() {
+                    for (_, cx) in r.iter_mut() {
                         *cx *= *c;
                     }
                     r
@@ -296,8 +296,6 @@ impl R1CGen {
                         let r = lhs.eq(rhs);
                         scope.insert(*result, r);
                     }
-
-                    _ => panic!("unexpected instruction {:?}", instruction),
                 }
             }
 

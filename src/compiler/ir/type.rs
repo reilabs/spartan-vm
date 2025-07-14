@@ -13,7 +13,7 @@ impl CommutativeSemigroup for Empty {
         Empty
     }
 
-    fn op(&self, other: &Self) -> Self {
+    fn op(&self, _: &Self) -> Self {
         Empty
     }
 }

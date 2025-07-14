@@ -3,7 +3,7 @@ use crate::compiler::taint_analysis::{
 };
 use crate::compiler::union_find::UnionFind;
 use petgraph::algo::tarjan_scc;
-use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::graph::{DiGraph};
 use std::collections::HashMap;
 
 /// Constraint solver for taint analysis
@@ -238,7 +238,7 @@ impl ConstraintSolver {
                         Taint::Constant(ConstantTaint::Pure),
                     ));
                 }
-                Judgement::Le(l, Taint::Constant(ConstantTaint::Witness)) => {}
+                Judgement::Le(_, Taint::Constant(ConstantTaint::Witness)) => {}
                 _ => new_judgements.push(judgement.clone()),
             }
         }
@@ -332,56 +332,56 @@ impl ConstraintSolver {
         }
     }
 
-    /// Clean up judgements by removing reflexive inequalities and duplicates
-    fn cleanup_judgements(&mut self) {
-        let mut new_judgements = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+    // /// Clean up judgements by removing reflexive inequalities and duplicates
+    // fn cleanup_judgements(&mut self) {
+    //     let mut new_judgements = Vec::new();
+    //     let mut seen = std::collections::HashSet::new();
 
-        for judgement in &self.judgements {
-            match judgement {
-                Judgement::Le(l, r) => {
-                    let l_substituted = self.unification.substitute_variables(l);
-                    let r_substituted = self.unification.substitute_variables(r);
+    //     for judgement in &self.judgements {
+    //         match judgement {
+    //             Judgement::Le(l, r) => {
+    //                 let l_substituted = self.unification.substitute_variables(l);
+    //                 let r_substituted = self.unification.substitute_variables(r);
 
-                    // Skip reflexive inequalities (X ≤ X)
-                    if l_substituted == r_substituted {
-                        continue;
-                    }
+    //                 // Skip reflexive inequalities (X ≤ X)
+    //                 if l_substituted == r_substituted {
+    //                     continue;
+    //                 }
 
-                    // Create a canonical form for deduplication
-                    let canonical = format!(
-                        "{} ≤ {}",
-                        l_substituted.to_string(),
-                        r_substituted.to_string()
-                    );
-                    if seen.insert(canonical) {
-                        new_judgements.push(judgement.clone());
-                    }
-                }
-                Judgement::Eq(l, r) => {
-                    let l_substituted = self.unification.substitute_variables(l);
-                    let r_substituted = self.unification.substitute_variables(r);
+    //                 // Create a canonical form for deduplication
+    //                 let canonical = format!(
+    //                     "{} ≤ {}",
+    //                     l_substituted.to_string(),
+    //                     r_substituted.to_string()
+    //                 );
+    //                 if seen.insert(canonical) {
+    //                     new_judgements.push(judgement.clone());
+    //                 }
+    //             }
+    //             Judgement::Eq(l, r) => {
+    //                 let l_substituted = self.unification.substitute_variables(l);
+    //                 let r_substituted = self.unification.substitute_variables(r);
 
-                    // Skip reflexive equalities (X = X)
-                    if l_substituted == r_substituted {
-                        continue;
-                    }
+    //                 // Skip reflexive equalities (X = X)
+    //                 if l_substituted == r_substituted {
+    //                     continue;
+    //                 }
 
-                    // Create a canonical form for deduplication
-                    let canonical = format!(
-                        "{} = {}",
-                        l_substituted.to_string(),
-                        r_substituted.to_string()
-                    );
-                    if seen.insert(canonical) {
-                        new_judgements.push(judgement.clone());
-                    }
-                }
-            }
-        }
+    //                 // Create a canonical form for deduplication
+    //                 let canonical = format!(
+    //                     "{} = {}",
+    //                     l_substituted.to_string(),
+    //                     r_substituted.to_string()
+    //                 );
+    //                 if seen.insert(canonical) {
+    //                     new_judgements.push(judgement.clone());
+    //                 }
+    //             }
+    //         }
+    //     }
 
-        self.judgements = new_judgements;
-    }
+    //     self.judgements = new_judgements;
+    // }
 
     fn push_deep_eq(&mut self, left_type: &TaintType, right_type: &TaintType) {
         match (left_type, right_type) {

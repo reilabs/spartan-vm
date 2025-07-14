@@ -1,9 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use nargo::foreign_calls::print;
-
 use crate::compiler::{
-    flow_analysis::{CFG, FlowAnalysis}, ir::r#type::Empty,
+    flow_analysis::{CFG, FlowAnalysis},
+    ir::r#type::Empty,
     ssa::{BlockId, Function, OpCode, SSA, Terminator, ValueId},
 };
 
@@ -97,7 +96,10 @@ impl DCE {
                         // because they decide whether or not this block is entered.
                         // Also, the condition on which they enter is live.
                         for pd in cfg.get_post_dominance_frontier(block_id) {
-                            println!("Aliving block {:?} because it's in the post-dom frontier of {:?}", pd, block_id);
+                            println!(
+                                "Aliving block {:?} because it's in the post-dom frontier of {:?}",
+                                pd, block_id
+                            );
                             worklist.push(WorkItem::LiveBlock(pd));
                             live_branches.insert(pd);
 
@@ -113,7 +115,10 @@ impl DCE {
                         // live, as they define the phi inputs.
                         if function.get_block(block_id).has_parameters() {
                             for predecessor in cfg.get_jumps_into(block_id) {
-                                println!("Aliving block {:?} because it jumps into {:?} with phi", predecessor, block_id);
+                                println!(
+                                    "Aliving block {:?} because it jumps into {:?} with phi",
+                                    predecessor, block_id
+                                );
                                 worklist.push(WorkItem::LiveBlock(predecessor));
                             }
                         }
@@ -140,7 +145,10 @@ impl DCE {
                                     .insert(*i);
 
                                 // The defining block is live
-                                println!("Aliving block {:?} because it defines {:?}", block_id, value_id);
+                                println!(
+                                    "Aliving block {:?} because it defines {:?}",
+                                    block_id, value_id
+                                );
                                 worklist.push(WorkItem::LiveBlock(*block_id));
                                 // For all jumps into it, the respective argument is live
                                 for block_id in cfg.get_jumps_into(*block_id) {
@@ -158,7 +166,10 @@ impl DCE {
                             ValueDefinition::Instruction(block_id, i) => {
                                 // The instruction is live
                                 if block_id.0 == 1 && *i == 0 {
-                                    println!("Aliving instruction {:?} in block {:?} because it defines {:?}", i, block_id, value_id);
+                                    println!(
+                                        "Aliving instruction {:?} in block {:?} because it defines {:?}",
+                                        i, block_id, value_id
+                                    );
                                 }
                                 worklist.push(WorkItem::LiveInstruction(*block_id, *i));
                             }
@@ -181,7 +192,10 @@ impl DCE {
                             .insert(i);
 
                         // The containing block is live
-                        println!("Aliving block {:?} because it contains live instruction {:?}", block_id, i);
+                        println!(
+                            "Aliving block {:?} because it contains live instruction {:?}",
+                            block_id, i
+                        );
                         worklist.push(WorkItem::LiveBlock(block_id));
 
                         let instruction = function.get_block(block_id).get_instruction(i);
@@ -194,7 +208,7 @@ impl DCE {
 
             // println!("Live params: {:?}", live_params);
 
-            for value_id in function.iter_consts().map(|(v,  _)| *v).collect::<Vec<_>>() {
+            for value_id in function.iter_consts().map(|(v, _)| *v).collect::<Vec<_>>() {
                 if !live_consts.contains(&value_id) {
                     function.remove_const(value_id);
                 }
@@ -264,7 +278,7 @@ impl DCE {
                     }
                     Some(Terminator::Return(values)) => {
                         let mut new_values = vec![];
-                        for (i, value) in values.into_iter().enumerate() {
+                        for value in values.into_iter() {
                             if live_values.contains(&value) {
                                 new_values.push(value);
                             }

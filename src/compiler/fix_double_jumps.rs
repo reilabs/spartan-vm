@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use nargo::foreign_calls::print;
-
 use crate::compiler::{
-    flow_analysis::FlowAnalysis, ir::r#type::Empty, ssa::{BlockId, OpCode, Terminator, ValueId, SSA}
+    flow_analysis::FlowAnalysis, ir::r#type::Empty,
+    ssa::{BlockId, OpCode, Terminator, ValueId, SSA},
 };
 
 pub struct ValueReplacements {

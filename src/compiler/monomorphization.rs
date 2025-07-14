@@ -107,12 +107,6 @@ impl Monomorphization {
         }
 
         Ok(())
-
-        // let mut constraint_solver = ConstraintSolver::new(&entry_point_taint);
-        // constraint_solver.add_assumption(
-        //     &TaintType::Primitive(entry_point_taint.cfg_taint.clone()),
-        //     &TaintType::Primitive(Taint::Pure),
-        // );
     }
 
     fn request_specialization(
