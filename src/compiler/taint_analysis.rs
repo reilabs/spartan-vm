@@ -1,8 +1,9 @@
 use itertools::Itertools;
 
 use crate::compiler::flow_analysis::FlowAnalysis;
+use crate::compiler::ir::r#type::{Empty, Type, TypeExpr};
 use crate::compiler::ssa::{
-    BlockId, FunctionId, OpCode, SSA, SsaAnnotator, Terminator, Type, ValueId,
+    BlockId, FunctionId, OpCode, SSA, SsaAnnotator, Terminator, ValueId,
 };
 use crate::compiler::union_find::UnionFind;
 use std::collections::{HashMap, HashSet};
@@ -502,7 +503,7 @@ impl TaintAnalysis {
         }
     }
 
-    pub fn run(&mut self, ssa: &SSA, cfg: &FlowAnalysis) -> Result<(), String> {
+    pub fn run(&mut self, ssa: &SSA<Empty>, cfg: &FlowAnalysis) -> Result<(), String> {
         let fns_post_order = cfg.get_call_graph().get_post_order(ssa.get_main_id());
         for fn_id in fns_post_order {
             self.analyze_function(ssa, cfg, fn_id);
@@ -510,7 +511,7 @@ impl TaintAnalysis {
         Ok(())
     }
 
-    fn analyze_function(&mut self, ssa: &SSA, cfg: &FlowAnalysis, func_id: FunctionId) {
+    fn analyze_function(&mut self, ssa: &SSA<Empty>, cfg: &FlowAnalysis, func_id: FunctionId) {
         let func = ssa.get_function(func_id);
         let cfg = cfg.get_function_cfg(func_id);
         let block_queue = cfg.get_blocks_bfs();
@@ -578,7 +579,7 @@ impl TaintAnalysis {
                         let result_taint = lhs_taint.union(rhs_taint);
                         function_taint.value_taints.insert(*r, result_taint);
                     }
-                    OpCode::Alloc(r, t) => {
+                    OpCode::Alloc(r, t, _) => {
                         let free = self.construct_free_taint_for_type(t);
                         let fv = self.fresh_ty_var();
                         function_taint.value_taints.insert(
@@ -801,16 +802,16 @@ impl TaintAnalysis {
         var
     }
 
-    fn construct_free_taint_for_type(&mut self, typ: &Type) -> TaintType {
-        match typ {
-            Type::U32 | Type::Field | Type::Bool => {
+    fn construct_free_taint_for_type(&mut self, typ: &Type<Empty>) -> TaintType {
+        match &typ.expr {
+            TypeExpr::U32 | TypeExpr::Field | TypeExpr::Bool => {
                 TaintType::Primitive(Taint::Variable(self.fresh_ty_var()))
             }
-            Type::Array(i, _) => TaintType::NestedImmutable(
+            TypeExpr::Array(i, _) => TaintType::NestedImmutable(
                 Taint::Variable(self.fresh_ty_var()),
                 Box::new(self.construct_free_taint_for_type(i)),
             ),
-            Type::Ref(i) => TaintType::NestedMutable(
+            TypeExpr::Ref(i) => TaintType::NestedMutable(
                 Taint::Variable(self.fresh_ty_var()),
                 Box::new(self.construct_free_taint_for_type(i)),
             ),

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use nargo::foreign_calls::print;
 
 use crate::compiler::{
-    flow_analysis::{CFG, FlowAnalysis},
+    flow_analysis::{CFG, FlowAnalysis}, ir::r#type::Empty,
     ssa::{BlockId, Function, OpCode, SSA, Terminator, ValueId},
 };
 
@@ -27,7 +27,7 @@ impl DCE {
         Self {}
     }
 
-    pub fn run(&mut self, ssa: &mut SSA, cfg: &FlowAnalysis) {
+    pub fn run(&mut self, ssa: &mut SSA<Empty>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             println!("DCE: function {:?}", function_id);
             let cfg = cfg.get_function_cfg(*function_id);
@@ -294,7 +294,7 @@ impl DCE {
         }
     }
 
-    fn generate_definitions(&self, ssa: &Function) -> HashMap<ValueId, ValueDefinition> {
+    fn generate_definitions(&self, ssa: &Function<Empty>) -> HashMap<ValueId, ValueDefinition> {
         let mut definitions = HashMap::new();
 
         for (value_id, _) in ssa.iter_consts() {

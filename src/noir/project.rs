@@ -111,13 +111,16 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         // Convert to custom SSA
         let mut custom_ssa = SSA::from_noir(&ssa.ssa);
-        custom_ssa.typecheck();
+        println!("Converted SSA Before TC:\n{}", custom_ssa.to_string(&DefaultSsaAnnotator));
+
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        custom_ssa.typecheck(&flow_analysis);
         println!(
             "Converted SSA:\n{}",
             custom_ssa.to_string(&DefaultSsaAnnotator)
         );
 
-        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
         // flow_analysis.save_as_png("flow_analysis.png").unwrap();
 
         let call_loops = flow_analysis.get_call_graph().detect_loops();
@@ -172,8 +175,6 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let mut fix_double_jumps = FixDoubleJumps::new();
         fix_double_jumps.run(&mut custom_ssa, &flow_analysis);
 
-        custom_ssa.typecheck();
-
         println!(
             "After fix double jumps SSA:\n{}",
             custom_ssa.to_string(&DefaultSsaAnnotator)
@@ -181,6 +182,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         drop(flow_analysis);
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        custom_ssa.typecheck(&flow_analysis);
 
         let mut mem2reg = Mem2Reg::new();
         mem2reg.run(&mut custom_ssa, &flow_analysis);
@@ -238,7 +240,6 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let mut fix_double_jumps = FixDoubleJumps::new();
         fix_double_jumps.run(&mut custom_ssa, &flow_analysis);
 
-        custom_ssa.typecheck();
         println!(
             "After fix double jumps SSA:\n{}",
             custom_ssa.to_string(&DefaultSsaAnnotator)
@@ -246,7 +247,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         drop(flow_analysis);
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
-
+        custom_ssa.typecheck(&flow_analysis);
 
         let mut r1cs_gen = R1CGen::new();
         r1cs_gen.run(&custom_ssa);

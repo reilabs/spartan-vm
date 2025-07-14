@@ -9,6 +9,7 @@ use petgraph::algo::dominators::{self, Dominators};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::{Bfs, DfsPostOrder, EdgeRef, Walker};
 
+use crate::compiler::ir::r#type::Empty;
 use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SSA, Terminator};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -402,7 +403,7 @@ pub struct FlowAnalysis {
 }
 
 impl FlowAnalysis {
-    pub fn run(ssa: &SSA) -> Self {
+    pub fn run(ssa: &SSA<Empty>) -> Self {
         let mut call_graph = CallGraph::new();
         let mut function_cfgs = HashMap::new();
 

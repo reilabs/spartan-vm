@@ -3,8 +3,7 @@ use std::collections::HashMap;
 use nargo::foreign_calls::print;
 
 use crate::compiler::{
-    flow_analysis::FlowAnalysis,
-    ssa::{BlockId, OpCode, SSA, Terminator, ValueId},
+    flow_analysis::FlowAnalysis, ir::r#type::Empty, ssa::{BlockId, OpCode, Terminator, ValueId, SSA}
 };
 
 pub struct ValueReplacements {
@@ -24,13 +23,13 @@ impl ValueReplacements {
             .insert(replaced, *replacements_replacement);
     }
 
-    pub fn replace_instruction(&self, instruction: &mut OpCode) {
+    pub fn replace_instruction(&self, instruction: &mut OpCode<Empty>) {
         for operand in instruction.get_operands_mut() {
             *operand = self.get_replacement(*operand);
         }
     }
 
-    pub fn replace_inputs(&self, instruction: &mut OpCode) {
+    pub fn replace_inputs(&self, instruction: &mut OpCode<Empty>) {
         for input in instruction.get_inputs_mut() {
             *input = self.get_replacement(*input);
         }
@@ -67,7 +66,7 @@ impl FixDoubleJumps {
         Self {}
     }
 
-    pub fn run(&mut self, ssa: &mut SSA, flow_analysis: &FlowAnalysis) {
+    pub fn run(&mut self, ssa: &mut SSA<Empty>, flow_analysis: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             let cfg = flow_analysis.get_function_cfg(*function_id);
             let jumps = cfg.find_redundant_jumps();

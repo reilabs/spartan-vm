@@ -3,7 +3,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use noirc_evaluator::ssa::ir::instruction;
 
 use crate::compiler::{
-    fix_double_jumps::ValueReplacements, flow_analysis::{FlowAnalysis, CFG}, ssa::{BlockId, Function, OpCode, Terminator, Type, ValueId, SSA}
+    fix_double_jumps::ValueReplacements,
+    flow_analysis::{CFG, FlowAnalysis},
+    ir::r#type::{Empty, Type, TypeExpr},
+    ssa::{BlockId, Function, OpCode, SSA, Terminator, ValueId},
 };
 
 pub struct Mem2Reg {}
@@ -13,7 +16,7 @@ impl Mem2Reg {
         Self {}
     }
 
-    pub fn run(&mut self, ssa: &mut SSA, cfg: &FlowAnalysis) {
+    pub fn run(&mut self, ssa: &mut SSA<Empty>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             if !self.escape_safe(function) {
                 continue;
@@ -26,7 +29,12 @@ impl Mem2Reg {
         }
     }
 
-    fn remove_ptrs(&self, function: &mut Function, cfg: &CFG, phi_map: &HashMap<BlockId, Vec<(ValueId, ValueId)>>) {
+    fn remove_ptrs(
+        &self,
+        function: &mut Function<Empty>,
+        cfg: &CFG,
+        phi_map: &HashMap<BlockId, Vec<(ValueId, ValueId)>>,
+    ) {
         let mut ptr_values = HashMap::<BlockId, HashMap<ValueId, ValueId>>::new();
         let mut value_replacements = ValueReplacements::new();
 
@@ -55,7 +63,7 @@ impl Mem2Reg {
 
             for mut instruction in instructions {
                 match instruction {
-                    OpCode::Alloc(_, _) => {}
+                    OpCode::Alloc(_, _, _) => {}
                     OpCode::Store(lhs, rhs) => {
                         values.insert(lhs, rhs);
                     }
@@ -70,7 +78,9 @@ impl Mem2Reg {
                 }
             }
 
-            function.get_block_mut(block_id).put_instructions(new_instructions);
+            function
+                .get_block_mut(block_id)
+                .put_instructions(new_instructions);
 
             let mut terminator = function.get_block_mut(block_id).take_terminator().unwrap();
             value_replacements.replace_terminator(&mut terminator);
@@ -96,23 +106,29 @@ impl Mem2Reg {
             function.get_block_mut(block_id).set_terminator(terminator);
             ptr_values.insert(block_id, values);
         }
-
     }
 
     // returns for each block the vector of (param_id, value_id), where param_id is the id of a new parameter,
     // and value_id is the id of the pointer that is being replaced
-    fn initialize_phis(&self, function: &mut Function, phi_blocks: &HashMap<ValueId, HashSet<BlockId>>) -> HashMap<BlockId, Vec<(ValueId, ValueId)>> {
+    fn initialize_phis(
+        &self,
+        function: &mut Function<Empty>,
+        phi_blocks: &HashMap<ValueId, HashSet<BlockId>>,
+    ) -> HashMap<BlockId, Vec<(ValueId, ValueId)>> {
         let mut result: HashMap<BlockId, Vec<(ValueId, ValueId)>> = HashMap::new();
         for (value, blocks) in phi_blocks {
             for block in blocks {
-                let param = function.add_parameter(*block, function.get_value_type(*value).unwrap().get_pointed());
+                let param = function.add_parameter(
+                    *block,
+                    function.get_value_type(*value).unwrap().get_pointed(),
+                );
                 result.entry(*block).or_default().push((param, *value));
             }
         }
         result
     }
 
-    fn find_pointer_writes(&self, function: &Function) -> HashMap<ValueId, HashSet<BlockId>> {
+    fn find_pointer_writes(&self, function: &Function<Empty>) -> HashMap<ValueId, HashSet<BlockId>> {
         let mut writes: HashMap<ValueId, HashSet<BlockId>> = HashMap::new();
         for (block_id, block) in function.get_blocks() {
             for instruction in block.get_instructions() {
@@ -158,7 +174,7 @@ impl Mem2Reg {
     // This is _very_ crude. We give up on mem2reg for the entire function
     // if we detect _any_ pointer escaping or entering the function, or being
     // written to another pointer. Obviously this needs a better implementation.
-    fn escape_safe(&self, function: &Function) -> bool {
+    fn escape_safe(&self, function: &Function<Empty>) -> bool {
         for (_, block) in function.get_blocks() {
             for (_, typ) in block.get_parameters() {
                 if self.type_contains_ptr(typ) {
@@ -202,10 +218,16 @@ impl Mem2Reg {
         true
     }
 
-    fn type_contains_ptr(&self, typ: &Type) -> bool {
+    fn type_contains_ptr(&self, typ: &Type<Empty>) -> bool {
         match typ {
-            Type::Ref(_) => true,
-            Type::Array(inner, _) => self.type_contains_ptr(inner),
+            Type {
+                expr: TypeExpr::Ref(_),
+                ..
+            } => true,
+            Type {
+                expr: TypeExpr::Array(inner, _),
+                ..
+            } => self.type_contains_ptr(inner),
             _ => false,
         }
     }

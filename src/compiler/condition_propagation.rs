@@ -1,6 +1,7 @@
 use crate::compiler::{
     fix_double_jumps::ValueReplacements,
     flow_analysis::FlowAnalysis,
+    ir::r#type::Empty,
     ssa::{BlockId, Terminator, ValueId, SSA},
 };
 
@@ -11,7 +12,7 @@ impl ConditionPropagation {
         Self {}
     }
 
-    pub fn run(&mut self, ssa: &mut SSA, cfg: &FlowAnalysis) {
+    pub fn run(&mut self, ssa: &mut SSA<Empty>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
 
             let mut replaces: Vec<(BlockId, ValueId, bool)> = vec![]; 

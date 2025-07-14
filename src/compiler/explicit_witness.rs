@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::compiler::{
     flow_analysis::FlowAnalysis,
-    ssa::{BlockId, Function, FunctionId, OpCode, SSA, Terminator, Type, ValueId},
+    ir::r#type::{Empty, Type, TypeExpr},
+    ssa::{BlockId, Function, FunctionId, OpCode, Terminator, ValueId, SSA},
     taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis},
 };
 
@@ -19,7 +20,7 @@ impl ExplicitWitness {
 
     pub fn run(
         &mut self,
-        ssa: &mut SSA,
+        ssa: &mut SSA<Empty>,
         taint_analysis: &TaintAnalysis,
         flow_analysis: &FlowAnalysis,
     ) {
@@ -32,7 +33,7 @@ impl ExplicitWitness {
     fn run_function(
         &mut self,
         function_id: FunctionId,
-        function: &mut Function,
+        function: &mut Function<Empty>,
         function_taint: &FunctionTaint,
         flow_analysis: &FlowAnalysis,
     ) {
@@ -42,7 +43,7 @@ impl ExplicitWitness {
             function_taint.cfg_taint,
             Taint::Constant(ConstantTaint::Witness)
         ) {
-            Some(function.add_parameter(function.get_entry_id(), Type::Bool))
+            Some(function.add_parameter(function.get_entry_id(), Type::bool(Empty)))
         } else {
             None
         };
@@ -63,9 +64,9 @@ impl ExplicitWitness {
                 match instruction {
                     OpCode::Mul(result, lhs, rhs) => {
                         let lhs_type = function.get_value_type(lhs).unwrap();
-                        assert_eq!(*lhs_type, Type::Field); // TODO
+                        assert_eq!(*lhs_type, Type::field(Empty)); // TODO
                         let rhs_type = function.get_value_type(rhs).unwrap();
-                        assert_eq!(*rhs_type, Type::Field); // TODO
+                        assert_eq!(*rhs_type, Type::field(Empty)); // TODO
 
                         let lhs_taint = function_taint
                             .get_value_taint(lhs)
@@ -174,7 +175,7 @@ impl ExplicitWitness {
                         assert_eq!(idx_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
-                    OpCode::Alloc(_, _) => {
+                    OpCode::Alloc(_, _, _) => {
                         new_instructions.push(instruction);
                     }
 
@@ -239,10 +240,16 @@ impl ExplicitWitness {
 
                             for (_, typ) in &merge_params {
                                 match typ {
-                                    Type::Array(_, _) => {
+                                    Type {
+                                        expr: TypeExpr::Array(_, _),
+                                        ..
+                                    } => {
                                         panic!("TODO: Witness array not supported yet")
                                     }
-                                    Type::Ref(_) => {
+                                    Type {
+                                        expr: TypeExpr::Ref(_),
+                                        ..
+                                    } => {
                                         panic!("TODO: Witness ref not supported yet")
                                     }
                                     _ => {}
@@ -296,8 +303,7 @@ impl ExplicitWitness {
                                 // this way we only need to witnessize the first term and return the
                                 // linear combination.
 
-                                let const_neg_1 =
-                                    function.push_field_const(-ark_bn254::Fr::ONE);
+                                let const_neg_1 = function.push_field_const(-ark_bn254::Fr::ONE);
 
                                 for ((res, _), (lhs, rhs)) in merge_params.iter().zip(
                                     args_passed_from_lhs.iter().zip(args_passed_from_rhs.iter()),

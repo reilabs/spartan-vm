@@ -6,6 +6,7 @@ pub mod deduplicate_phis;
 pub mod explicit_witness;
 pub mod fix_double_jumps;
 pub mod flow_analysis;
+pub mod ir;
 pub mod mem2reg;
 pub mod monomorphization;
 pub mod r1cs_gen;

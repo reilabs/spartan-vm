@@ -1,6 +1,6 @@
-use crate::compiler::ssa::Type;
-use std::sync::Arc;
 use noirc_evaluator::ssa::ir::types::{Type as NoirType, NumericType};
+
+use crate::compiler::ir::r#type::{Empty, Type};
 
 pub struct TypeConverter;
 
@@ -9,12 +9,12 @@ impl TypeConverter {
         TypeConverter
     }
 
-    pub fn convert_type(&self, noir_type: &NoirType) -> Type {
+    pub fn convert_type(&self, noir_type: &NoirType) -> Type<Empty> {
         match noir_type {
             NoirType::Numeric(numeric) => match numeric {
-                NumericType::NativeField => Type::Field,
-                NumericType::Unsigned { bit_size: 1 } => Type::Bool,
-                NumericType::Unsigned { bit_size: 32 } => Type::U32,
+                NumericType::NativeField => Type::field(Empty),
+                NumericType::Unsigned { bit_size: 1 } => Type::bool(Empty),
+                NumericType::Unsigned { bit_size: 32 } => Type::u32(Empty),
                 NumericType::Unsigned { bit_size } => {
                     panic!("Unsupported unsigned integer size: {}", bit_size)
                 }
@@ -24,7 +24,7 @@ impl TypeConverter {
             },
             NoirType::Reference(inner) => {
                 let inner_converted = self.convert_type(inner);
-                Type::Ref(Box::new(inner_converted))
+                Type::ref_of(inner_converted, Empty)
             }
             NoirType::Array(element_types, size) => {
                 if element_types.len() != 1 {
@@ -32,7 +32,7 @@ impl TypeConverter {
                 }
                 let element_type = &element_types[0];
                 let converted_element = self.convert_type(element_type);
-                Type::Array(Box::new(converted_element), (*size).try_into().unwrap())
+                Type::array_of(converted_element, (*size).try_into().unwrap(), Empty)
             }
             NoirType::Slice(_) => {
                 panic!("Slice types are not supported in custom SSA")

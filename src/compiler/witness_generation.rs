@@ -1,6 +1,9 @@
 use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
 
-use crate::compiler::ssa::{BlockId, Const, Function, FunctionId, OpCode, Terminator, Type, ValueId, SSA};
+use crate::compiler::{
+    ir::r#type::{Empty, Type, TypeExpr},
+    ssa::{BlockId, Const, Function, FunctionId, OpCode, Terminator, ValueId, SSA},
+};
 use ark_ff::{AdditiveGroup, Field, PrimeField};
 use graphviz_rust::attributes::width;
 use itertools::Itertools;
@@ -88,7 +91,7 @@ impl WitnessGen {
         }
     }
 
-    pub fn run(&mut self, ssa: &SSA) {
+    pub fn run(&mut self, ssa: &SSA<Empty>) {
         let entry_point = ssa.get_main_id();
         let params = ssa.get_function(entry_point).get_param_types();
         let mut main_params = vec![];
@@ -118,7 +121,7 @@ impl WitnessGen {
 
     pub fn run_function(
         &mut self,
-        ssa: &SSA,
+        ssa: &SSA<Empty>,
         function_id: FunctionId,
         params: Vec<Value>,
     ) -> Vec<Value> {
@@ -128,8 +131,12 @@ impl WitnessGen {
         self.update_scope_with_args(&mut scope, params, &function, entry_block_id);
         for (value_id, const_) in function.iter_consts() {
             match const_ {
-                Const::Bool(value) => scope.insert(*value_id, Value::Fp(ark_bn254::Fr::from(*value as u64))),
-                Const::U32(value) => scope.insert(*value_id, Value::Fp(ark_bn254::Fr::from(*value as u64))),
+                Const::Bool(value) => {
+                    scope.insert(*value_id, Value::Fp(ark_bn254::Fr::from(*value as u64)))
+                }
+                Const::U32(value) => {
+                    scope.insert(*value_id, Value::Fp(ark_bn254::Fr::from(*value as u64)))
+                }
                 Const::Field(value) => scope.insert(*value_id, Value::Fp(*value)),
             };
         }
@@ -161,7 +168,7 @@ impl WitnessGen {
                         scope.insert(*result, r);
                     }
 
-                    OpCode::Alloc(result, _) => {
+                    OpCode::Alloc(result, _, _) => {
                         scope.insert(*result, Value::Ptr(Rc::new(RefCell::new(Value::Invalid))));
                     }
                     OpCode::Store(ptr, value) => {
@@ -258,7 +265,7 @@ impl WitnessGen {
         &self,
         scope: &mut HashMap<ValueId, Value>,
         args: Vec<Value>,
-        function: &Function,
+        function: &Function<Empty>,
         block_id: BlockId,
     ) {
         let block = function.get_block(block_id);
@@ -269,14 +276,14 @@ impl WitnessGen {
 
     fn initialize_main_input(
         &mut self,
-        tp: &Type,
+        tp: &Type<Empty>,
         witness_iter: &mut impl Iterator<Item = ark_bn254::Fr>,
     ) -> Value {
-        match tp {
-            Type::Bool => Value::Fp(witness_iter.next().unwrap()),
-            Type::U32 => Value::Fp(witness_iter.next().unwrap()),
-            Type::Field => Value::Fp(witness_iter.next().unwrap()),
-            Type::Array(tp, size) => {
+        match &tp.expr {
+            TypeExpr::Bool => Value::Fp(witness_iter.next().unwrap()),
+            TypeExpr::U32 => Value::Fp(witness_iter.next().unwrap()),
+            TypeExpr::Field => Value::Fp(witness_iter.next().unwrap()),
+            TypeExpr::Array(tp, size) => {
                 let mut result = vec![];
                 for _ in 0..*size {
                     result.push(self.initialize_main_input(tp, witness_iter));

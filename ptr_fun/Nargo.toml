@@ -1,0 +1,6 @@
+[package]
+name = "ptr_fun"
+type = "bin"
+authors = [""]
+
+[dependencies]
