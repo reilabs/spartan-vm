@@ -1,7 +1,7 @@
 use itertools::Itertools;
 
 use crate::compiler::flow_analysis::FlowAnalysis;
-use crate::compiler::ir::r#type::{Empty, Type, TypeExpr};
+use crate::compiler::ir::r#type::{CommutativeSemigroup, Empty, Type, TypeExpr};
 use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SSA, SsaAnnotator, Terminator, ValueId};
 use crate::compiler::union_find::UnionFind;
 use std::collections::{HashMap, HashSet};
@@ -19,6 +19,19 @@ impl std::fmt::Display for TypeVariable {
 pub enum ConstantTaint {
     Pure,
     Witness,
+}
+
+impl CommutativeSemigroup for ConstantTaint {
+    fn empty() -> Self {
+        ConstantTaint::Pure
+    }
+
+    fn op(&self, other: &Self) -> Self {
+        match (self, other) {
+            (ConstantTaint::Pure, ConstantTaint::Pure) => ConstantTaint::Pure,
+            _ => ConstantTaint::Witness,
+        }
+    }
 }
 
 impl std::fmt::Display for ConstantTaint {

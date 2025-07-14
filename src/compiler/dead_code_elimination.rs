@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 
 use crate::compiler::{
     flow_analysis::{CFG, FlowAnalysis},
-    ir::r#type::Empty,
     ssa::{BlockId, Function, OpCode, SSA, Terminator, ValueId},
 };
 
@@ -26,7 +25,7 @@ impl DCE {
         Self {}
     }
 
-    pub fn run(&mut self, ssa: &mut SSA<Empty>, cfg: &FlowAnalysis) {
+    pub fn run<V: Clone>(&mut self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             println!("DCE: function {:?}", function_id);
             let cfg = cfg.get_function_cfg(*function_id);
@@ -308,7 +307,7 @@ impl DCE {
         }
     }
 
-    fn generate_definitions(&self, ssa: &Function<Empty>) -> HashMap<ValueId, ValueDefinition> {
+    fn generate_definitions<V: Clone>(&self, ssa: &Function<V>) -> HashMap<ValueId, ValueDefinition> {
         let mut definitions = HashMap::new();
 
         for (value_id, _) in ssa.iter_consts() {

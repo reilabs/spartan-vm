@@ -16,7 +16,7 @@ impl Mem2Reg {
         Self {}
     }
 
-    pub fn run(&mut self, ssa: &mut SSA<Empty>, cfg: &FlowAnalysis) {
+    pub fn run<V: Clone>(&mut self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             if !self.escape_safe(function) {
                 continue;
@@ -29,9 +29,9 @@ impl Mem2Reg {
         }
     }
 
-    fn remove_ptrs(
+    fn remove_ptrs<V: Clone>(
         &self,
-        function: &mut Function<Empty>,
+        function: &mut Function<V>,
         cfg: &CFG,
         phi_map: &HashMap<BlockId, Vec<(ValueId, ValueId)>>,
     ) {
@@ -110,9 +110,9 @@ impl Mem2Reg {
 
     // returns for each block the vector of (param_id, value_id), where param_id is the id of a new parameter,
     // and value_id is the id of the pointer that is being replaced
-    fn initialize_phis(
+    fn initialize_phis<V: Clone>(
         &self,
-        function: &mut Function<Empty>,
+        function: &mut Function<V>,
         phi_blocks: &HashMap<ValueId, HashSet<BlockId>>,
     ) -> HashMap<BlockId, Vec<(ValueId, ValueId)>> {
         let mut result: HashMap<BlockId, Vec<(ValueId, ValueId)>> = HashMap::new();
@@ -128,7 +128,10 @@ impl Mem2Reg {
         result
     }
 
-    fn find_pointer_writes(&self, function: &Function<Empty>) -> HashMap<ValueId, HashSet<BlockId>> {
+    fn find_pointer_writes<V: Clone>(
+        &self,
+        function: &Function<V>,
+    ) -> HashMap<ValueId, HashSet<BlockId>> {
         let mut writes: HashMap<ValueId, HashSet<BlockId>> = HashMap::new();
         for (block_id, block) in function.get_blocks() {
             for instruction in block.get_instructions() {
@@ -174,7 +177,7 @@ impl Mem2Reg {
     // This is _very_ crude. We give up on mem2reg for the entire function
     // if we detect _any_ pointer escaping or entering the function, or being
     // written to another pointer. Obviously this needs a better implementation.
-    fn escape_safe(&self, function: &Function<Empty>) -> bool {
+    fn escape_safe<V: Clone>(&self, function: &Function<V>) -> bool {
         for (_, block) in function.get_blocks() {
             for (_, typ) in block.get_parameters() {
                 if self.type_contains_ptr(typ) {
@@ -218,7 +221,7 @@ impl Mem2Reg {
         true
     }
 
-    fn type_contains_ptr(&self, typ: &Type<Empty>) -> bool {
+    fn type_contains_ptr<V>(&self, typ: &Type<V>) -> bool {
         match typ {
             Type {
                 expr: TypeExpr::Ref(_),

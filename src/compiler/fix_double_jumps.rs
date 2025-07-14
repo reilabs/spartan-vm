@@ -22,13 +22,13 @@ impl ValueReplacements {
             .insert(replaced, *replacements_replacement);
     }
 
-    pub fn replace_instruction(&self, instruction: &mut OpCode<Empty>) {
+    pub fn replace_instruction<V>(&self, instruction: &mut OpCode<V>) {
         for operand in instruction.get_operands_mut() {
             *operand = self.get_replacement(*operand);
         }
     }
 
-    pub fn replace_inputs(&self, instruction: &mut OpCode<Empty>) {
+    pub fn replace_inputs<V>(&self, instruction: &mut OpCode<V>) {
         for input in instruction.get_inputs_mut() {
             *input = self.get_replacement(*input);
         }
@@ -65,22 +65,19 @@ impl FixDoubleJumps {
         Self {}
     }
 
-    pub fn run(&mut self, ssa: &mut SSA<Empty>, flow_analysis: &FlowAnalysis) {
+    pub fn run<V: Clone>(&mut self, ssa: &mut SSA<V>, flow_analysis: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             let cfg = flow_analysis.get_function_cfg(*function_id);
             let jumps = cfg.find_redundant_jumps();
             let mut replacements = HashMap::<BlockId, BlockId>::new();
             let mut value_replacements = ValueReplacements::new();
             for (mut source, mut target) in jumps {
-                println!("Inlining block {:?} into {:?}", target, source);
-
                 while let Some(src) = replacements.get(&source) {
                     source = *src
                 }
                 while let Some(tgt) = replacements.get(&target) {
                     target = *tgt;
                 }
-                println!("Actually inlining block {:?} into {:?}", target, source);
                 let mut target_block = function.take_block(target);
                 let source_block = function.get_block_mut(source);
 

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
-    ir::r#type::Empty,
     ssa::{BlockId, SSA, Terminator, ValueId},
 };
 
@@ -12,7 +11,7 @@ impl DeduplicatePhis {
         Self {}
     }
 
-    pub fn run(&self, ssa: &mut SSA<Empty>) {
+    pub fn run<V: Clone>(&self, ssa: &mut SSA<V>) {
         for (_, function) in ssa.iter_functions_mut() {
             let mut unifications: HashMap<(BlockId, Vec<ValueId>), Vec<BlockId>> = HashMap::new();
             for (block_id, block) in function.get_blocks() {

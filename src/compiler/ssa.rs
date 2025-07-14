@@ -70,6 +70,17 @@ where
         }
     }
 
+    pub fn prepare_rebuild<V2>(self) -> (SSA<V2>, HashMap<FunctionId, Function<V>>) {
+        (
+            SSA {
+                functions: HashMap::new(),
+                main_id: self.main_id,
+                next_function_id: self.next_function_id,
+            },
+            self.functions,
+        )
+    }
+
     pub fn insert_function(&mut self, function: Function<V>) -> FunctionId {
         let new_id = FunctionId(self.next_function_id);
         self.next_function_id += 1;
@@ -228,6 +239,23 @@ impl<V: Clone> Function<V> {
             consts: HashMap::new(),
             consts_to_val: HashMap::new(),
         }
+    }
+
+    pub fn prepare_rebuild<V2>(self) -> (Function<V2>, HashMap<BlockId, Block<V>>, Vec<Type<V>>) {
+        (
+            Function {
+                entry_block: self.entry_block,
+                blocks: HashMap::new(),
+                next_block: self.next_block,
+                returns: vec![],
+                value_info: HashMap::new(),
+                next_value: self.next_value,
+                consts: self.consts,
+                consts_to_val: self.consts_to_val,
+            },
+            self.blocks,
+            self.returns,
+        )
     }
 
     pub fn unsafe_empty() -> Self {
@@ -523,6 +551,10 @@ impl<V: Clone> Function<V> {
         let v = self.consts.remove(&value_id);
         self.consts_to_val.remove(&v.unwrap());
     }
+
+    pub fn take_returns(&mut self) -> Vec<Type<V>> {
+        std::mem::take(&mut self.returns)
+    }
 }
 
 impl<V: CommutativeSemigroup + Display + Eq + Clone> Function<V> {
@@ -543,6 +575,11 @@ impl<V: CommutativeSemigroup + Display + Eq + Clone> Function<V> {
 
         for block in cfg.get_domination_pre_order() {
             let block = self.get_block(block);
+
+            for param in block.get_parameters() {
+                new_value_info.insert(param.0, param.1.clone());
+            }
+
             for instruction in block.get_instructions() {
                 instruction.typecheck(&mut new_value_info, function_types)?;
             }
@@ -572,11 +609,17 @@ impl<V: Display> Block<V> {
             .parameters
             .iter()
             .map(|v| {
+                let annotation = value_annotator.annotate_value(func_id, v.0);
+                let annotation = if annotation.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" [{}]", annotation)
+                };
                 format!(
-                    "v{} : {} [{}]",
+                    "v{} : {}{}",
                     v.0.0,
                     v.1.to_string(),
-                    value_annotator.annotate_value(func_id, v.0)
+                    annotation
                 )
             })
             .join(", ");
@@ -590,11 +633,17 @@ impl<V: Display> Block<V> {
             Some(t) => format!("    {}", t.to_string()),
             None => "".to_string(),
         };
+        let block_annotation = value_annotator.annotate_block(func_id, id);
+        let block_annotation = if block_annotation.is_empty() {
+            "".to_string()
+        } else {
+            format!(" [{}]", block_annotation)
+        };
         format!(
-            "  block_{}({}) [{}] {{\n{}\n{}\n  }}",
+            "  block_{}({}){} {{\n{}\n{}\n  }}",
             id.0,
             params,
-            value_annotator.annotate_block(func_id, id),
+            block_annotation,
             instructions,
             terminator
         )
@@ -695,48 +744,56 @@ pub enum OpCode<V> {
 
 impl<V: Display> OpCode<V> {
     fn to_string(&self, value_annotator: &LocalFunctionAnnotator) -> String {
+        fn annotate(value_annotator: &LocalFunctionAnnotator, value: ValueId) -> String {
+            let annotation = value_annotator.annotate_value(value);
+            if annotation.is_empty() {
+                "".to_string()
+            } else {
+                format!("[{}]", annotation)
+            }
+        }
         match self {
             OpCode::Eq(result, lhs, rhs) => format!(
-                "v{}[{}] = v{} == v{}",
+                "v{}{} = v{} == v{}",
                 result.0,
-                value_annotator.annotate_value(*result),
+                annotate(value_annotator, *result),
                 lhs.0,
                 rhs.0
             ),
             OpCode::Add(result, lhs, rhs) => format!(
-                "v{}[{}] = v{} + v{}",
+                "v{}{} = v{} + v{}",
                 result.0,
-                value_annotator.annotate_value(*result),
+                annotate(value_annotator, *result),
                 lhs.0,
                 rhs.0
             ),
             OpCode::Mul(result, lhs, rhs) => format!(
-                "v{}[{}] = v{} * v{}",
+                "v{}{} = v{} * v{}",
                 result.0,
-                value_annotator.annotate_value(*result),
+                annotate(value_annotator, *result),
                 lhs.0,
                 rhs.0
             ),
             OpCode::Lt(result, lhs, rhs) => format!(
-                "v{}[{}] = v{} < v{}",
+                "v{}{} = v{} < v{}",
                 result.0,
-                value_annotator.annotate_value(*result),
+                annotate(value_annotator, *result),
                 lhs.0,
                 rhs.0
             ),
             OpCode::Alloc(result, typ, annotation) => format!(
-                "v{}[{}] = alloc({} as {})",
+                "v{}{} = alloc({} as {})",
                 result.0,
-                value_annotator.annotate_value(*result),
+                annotate(value_annotator, *result),
                 typ,
                 annotation
             ),
-            OpCode::Store(ptr, value) => format!("*v{} = v{}", ptr.0, value.0),
+            OpCode::Store(ptr, value) => format!("*v{}{} = v{}", ptr.0, annotate(value_annotator, *ptr), value.0),
             OpCode::Load(result, ptr) => {
                 format!(
-                    "v{}[{}] = *v{}",
+                    "v{}{} = *v{}",
                     result.0,
-                    value_annotator.annotate_value(*result),
+                    annotate(value_annotator, *result),
                     ptr.0
                 )
             }
@@ -745,24 +802,24 @@ impl<V: Display> OpCode<V> {
                 let args_str = args.iter().map(|v| format!("v{}", v.0)).join(", ");
                 let result_str = result
                     .iter()
-                    .map(|v| format!("v{}[{}]", v.0, value_annotator.annotate_value(*v)))
+                    .map(|v| format!("v{}{}", v.0, annotate(value_annotator, *v)))
                     .join(", ");
                 format!("{} = call {}({})", result_str, fn_id.0, args_str)
             }
             OpCode::ArrayGet(result, array, index) => {
                 format!(
-                    "v{}[{}] = v{}[v{}]",
+                    "v{}{} = v{}[v{}]",
                     result.0,
-                    value_annotator.annotate_value(*result),
+                    annotate(value_annotator, *result),
                     array.0,
                     index.0
                 )
             }
             OpCode::WriteWitness(result, value) => {
                 format!(
-                    "v{}[{}] = witness(v{})",
+                    "v{}{} = witness(v{})",
                     result.0,
-                    value_annotator.annotate_value(*result),
+                    annotate(value_annotator, *result),
                     value.0
                 )
             }

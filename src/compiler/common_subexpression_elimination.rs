@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::{Debug, Display}};
 
 use crate::compiler::{
-    fix_double_jumps::ValueReplacements, flow_analysis::{FlowAnalysis, CFG}, ir::r#type::Empty, ssa::{BlockId, Const, Function, OpCode, ValueId, SSA}
+    fix_double_jumps::ValueReplacements, flow_analysis::{FlowAnalysis, CFG}, ssa::{BlockId, Const, Function, OpCode, ValueId, SSA}
 };
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -104,7 +104,7 @@ impl CSE {
         Self {}
     }
 
-    pub fn run(&self, ssa: &mut SSA<Empty>, cfg: &FlowAnalysis) {
+    pub fn run<V: Clone>(&self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             let cfg = cfg.get_function_cfg(*function_id);
             let exprs = self.gather_expressions(function, cfg);
@@ -161,9 +161,9 @@ impl CSE {
         false
     }
 
-    fn gather_expressions(
+    fn gather_expressions<V: Clone>(
         &self,
-        ssa: &Function<Empty>,
+        ssa: &Function<V>,
         cfg: &CFG,
     ) -> HashMap<Expr, Vec<(BlockId, usize, ValueId)>> {
         let mut result: HashMap<Expr, Vec<(BlockId, usize, ValueId)>> = HashMap::new();

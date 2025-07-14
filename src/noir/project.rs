@@ -1,20 +1,16 @@
 //! Functionality for working with projects of Noir sources.
 
-use std::any::Any;
-
 use crate::compiler::common_subexpression_elimination::CSE;
 use crate::compiler::condition_propagation::ConditionPropagation;
 use crate::compiler::dead_code_elimination::DCE;
 use crate::compiler::deduplicate_phis::DeduplicatePhis;
-use crate::compiler::explicit_witness::ExplicitWitness;
 use crate::compiler::fix_double_jumps::FixDoubleJumps;
-use crate::compiler::flow_analysis::{self, FlowAnalysis};
 use crate::compiler::mem2reg::Mem2Reg;
+use crate::compiler::untaint_control_flow::UntaintControlFlow;
+use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::monomorphization::Monomorphization;
-use crate::compiler::r1cs_gen::R1CGen;
 use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
 use crate::compiler::taint_analysis::TaintAnalysis;
-use crate::compiler::witness_generation::WitnessGen;
 use crate::noir::error::compilation::{Error as CompileError, Result as CompileResult};
 use fm::FileManager;
 use nargo::{
@@ -162,16 +158,24 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         // flow_analysis.save_as_png("flow_analysis_after_monomorphization.png").unwrap();
 
-        let mut explicit_witness = ExplicitWitness::new();
-        explicit_witness.run(&mut custom_ssa, &taint_analysis, &flow_analysis);
+        let mut untaint_cf = UntaintControlFlow::new();
+        let mut custom_ssa = untaint_cf.run(custom_ssa, &taint_analysis, &flow_analysis);
 
         println!(
-            "After explicit witness SSA:\n{}",
+            "After untaint control flow SSA:\n{}",
             custom_ssa.to_string(&DefaultSsaAnnotator)
         );
 
         drop(flow_analysis);
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
+
+        custom_ssa.typecheck(&flow_analysis);
+
+        println!(
+            "After untaint control flow SSA (TC):\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+
         let mut fix_double_jumps = FixDoubleJumps::new();
         fix_double_jumps.run(&mut custom_ssa, &flow_analysis);
 
@@ -208,7 +212,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             custom_ssa.to_string(&DefaultSsaAnnotator)
         );
 
-        // Running a second CSE to unify spurious constants from condition propagation
+        // // Running a second CSE to unify spurious constants from condition propagation
         cse.run(&mut custom_ssa, &flow_analysis);
 
         println!(
@@ -249,59 +253,59 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         custom_ssa.typecheck(&flow_analysis);
 
-        let mut r1cs_gen = R1CGen::new();
-        r1cs_gen.run(&custom_ssa);
-        let r1cs = r1cs_gen.clone().get_r1cs();
-        println!(
-            "R1CS (constraints = {}) (witness_size = {}):\n{}",
-            r1cs.len(),
-            r1cs_gen.get_witness_size(),
-            r1cs.iter()
-                .map(|r1c| r1c.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
+        // let mut r1cs_gen = R1CGen::new();
+        // r1cs_gen.run(&custom_ssa);
+        // let r1cs = r1cs_gen.clone().get_r1cs();
+        // println!(
+        //     "R1CS (constraints = {}) (witness_size = {}):\n{}",
+        //     r1cs.len(),
+        //     r1cs_gen.get_witness_size(),
+        //     r1cs.iter()
+        //         .map(|r1c| r1c.to_string())
+        //         .collect::<Vec<_>>()
+        //         .join("\n")
+        // );
 
-        let mut witness_gen = WitnessGen::new(public_witness);
-        witness_gen.run(&custom_ssa);
-        let witness = witness_gen.get_witness();
-        println!(
-            "Witness:\n{}",
-            witness
-                .iter()
-                .map(|w| w.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!(
-            "A:\n{}",
-            witness_gen
-                .get_a()
-                .iter()
-                .map(|w| w.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!(
-            "B:\n{}",
-            witness_gen
-                .get_b()
-                .iter()
-                .map(|w| w.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!(
-            "C:\n{}",
-            witness_gen
-                .get_c()
-                .iter()
-                .map(|w| w.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        // let mut witness_gen = WitnessGen::new(public_witness);
+        // witness_gen.run(&custom_ssa);
+        // let witness = witness_gen.get_witness();
+        // println!(
+        //     "Witness:\n{}",
+        //     witness
+        //         .iter()
+        //         .map(|w| w.to_string())
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
+        // println!(
+        //     "A:\n{}",
+        //     witness_gen
+        //         .get_a()
+        //         .iter()
+        //         .map(|w| w.to_string())
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
+        // println!(
+        //     "B:\n{}",
+        //     witness_gen
+        //         .get_b()
+        //         .iter()
+        //         .map(|w| w.to_string())
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
+        // println!(
+        //     "C:\n{}",
+        //     witness_gen
+        //         .get_c()
+        //         .iter()
+        //         .map(|w| w.to_string())
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
 
-        r1cs_gen.verify(&witness);
+        // r1cs_gen.verify(&witness);
 
         Ok(())
     }

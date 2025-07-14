@@ -398,7 +398,7 @@ pub struct FlowAnalysis {
 }
 
 impl FlowAnalysis {
-    pub fn run(ssa: &SSA<Empty>) -> Self {
+    pub fn run<V: Clone>(ssa: &SSA<V>) -> Self {
         let mut call_graph = CallGraph::new();
         let mut function_cfgs = HashMap::new();
 

@@ -3,45 +3,100 @@ use std::collections::HashMap;
 use crate::compiler::{
     flow_analysis::FlowAnalysis,
     ir::r#type::{Empty, Type, TypeExpr},
-    ssa::{Function, FunctionId, OpCode, Terminator, SSA},
-    taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis},
+    ssa::{Block, Function, FunctionId, OpCode, SSA, Terminator},
+    taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis, TaintType},
 };
 
 use ark_ff::Field;
 
-pub struct ExplicitWitness {}
+pub struct UntaintControlFlow {}
 
-impl ExplicitWitness {
+impl UntaintControlFlow {
     pub fn new() -> Self {
         Self {}
     }
 
     pub fn run(
         &mut self,
-        ssa: &mut SSA<Empty>,
+        ssa: SSA<Empty>,
         taint_analysis: &TaintAnalysis,
         flow_analysis: &FlowAnalysis,
-    ) {
-        for (function_id, function) in ssa.iter_functions_mut() {
-            let function_taint = taint_analysis.get_function_taint(*function_id);
-            self.run_function(*function_id, function, function_taint, flow_analysis);
+    ) -> SSA<ConstantTaint> {
+        let (mut result_ssa, functions) = ssa.prepare_rebuild::<ConstantTaint>();
+
+        for (function_id, function) in functions.into_iter() {
+            let function_taint = taint_analysis.get_function_taint(function_id);
+            let new_function =
+                self.run_function(function_id, function, function_taint, flow_analysis);
+            result_ssa.put_function(function_id, new_function);
         }
+        result_ssa
     }
 
     fn run_function(
         &mut self,
         function_id: FunctionId,
-        function: &mut Function<Empty>,
+        function: Function<Empty>,
         function_taint: &FunctionTaint,
         flow_analysis: &FlowAnalysis,
-    ) {
+    ) -> Function<ConstantTaint> {
         let cfg = flow_analysis.get_function_cfg(function_id);
+
+        let (mut function, blocks, returns) = function.prepare_rebuild::<ConstantTaint>();
+
+        for (block_id, mut block) in blocks.into_iter() {
+            let mut new_block = Block::empty();
+
+            let mut new_parameters = Vec::new();
+            for (value_id, typ) in block.take_parameters() {
+                let taint = function_taint.get_value_taint(value_id);
+                new_parameters.push((value_id, self.typify_taint(typ, taint)));
+            }
+            new_block.put_parameters(new_parameters);
+
+            let mut new_instructions = Vec::<OpCode<ConstantTaint>>::new();
+            for instruction in block.take_instructions() {
+                let new = match instruction {
+                    OpCode::Add(r, l, h) => OpCode::Add(r, l, h),
+                    OpCode::Mul(r, l, h) => OpCode::Mul(r, l, h),
+                    OpCode::Lt(r, l, h) => OpCode::Lt(r, l, h),
+                    OpCode::Eq(r, l, h) => OpCode::Eq(r, l, h),
+                    OpCode::Store(r, l) => OpCode::Store(r, l),
+                    OpCode::Load(r, l) => OpCode::Load(r, l),
+                    OpCode::ArrayGet(r, l, h) => OpCode::ArrayGet(r, l, h),
+                    OpCode::Alloc(r, l, _) => {
+                        let r_taint = function_taint.get_value_taint(r);
+                        let child = r_taint.child_taint_type().unwrap();
+                        let child_typ = self.typify_taint(l, &child);
+                        let self_taint = r_taint.toplevel_taint().expect_constant();
+                        OpCode::Alloc(r, child_typ, self_taint)
+                    }
+                    OpCode::Call(r, l, h) => OpCode::Call(r, l, h),
+                    OpCode::AssertEq(r, l) => OpCode::AssertEq(r, l),
+                    OpCode::Constrain(r, l, h) => OpCode::Constrain(r, l, h),
+                    OpCode::WriteWitness(r, l) => OpCode::WriteWitness(r, l),
+                };
+                new_instructions.push(new);
+            }
+            new_block.put_instructions(new_instructions);
+
+            new_block.set_terminator(block.take_terminator().unwrap());
+
+            function.put_block(block_id, new_block);
+        }
+
+        for (ret, ret_taint) in returns.into_iter().zip(function_taint.returns_taint.iter()) {
+            let ret_typ = self.typify_taint(ret, ret_taint);
+            function.add_return_type(ret_typ);
+        }
 
         let cfg_taint_param = if matches!(
             function_taint.cfg_taint,
             Taint::Constant(ConstantTaint::Witness)
         ) {
-            Some(function.add_parameter(function.get_entry_id(), Type::bool(Empty)))
+            Some(
+                function.add_parameter(function.get_entry_id(), Type::bool(ConstantTaint::Witness)),
+            )
         } else {
             None
         };
@@ -60,55 +115,13 @@ impl ExplicitWitness {
 
             for instruction in old_instructions {
                 match instruction {
-                    OpCode::Mul(result, lhs, rhs) => {
-                        let lhs_type = function.get_value_type(lhs).unwrap();
-                        assert_eq!(*lhs_type, Type::field(Empty)); // TODO
-                        let rhs_type = function.get_value_type(rhs).unwrap();
-                        assert_eq!(*rhs_type, Type::field(Empty)); // TODO
-
-                        let lhs_taint = function_taint
-                            .get_value_taint(lhs)
-                            .toplevel_taint()
-                            .expect_constant();
-                        let rhs_taint = function_taint
-                            .get_value_taint(rhs)
-                            .toplevel_taint()
-                            .expect_constant();
-
-                        match (lhs_taint, rhs_taint) {
-                            (ConstantTaint::Witness, ConstantTaint::Witness) => {
-                                let result_val = function.fresh_value();
-                                new_instructions.push(OpCode::Mul(result_val, lhs, rhs));
-                                new_instructions.push(OpCode::WriteWitness(result, result_val));
-                                new_instructions.push(OpCode::Constrain(lhs, rhs, result));
-                            }
-                            _ => {
-                                new_instructions.push(instruction);
-                            }
-                        }
-                    }
-                    OpCode::Add(_, _, _) => {
+                    OpCode::Add(_, _, _) | OpCode::Mul(_, _, _) => {
                         new_instructions.push(instruction);
                     }
-                    OpCode::AssertEq(lhs, rhs) => {
-                        let lhs_taint = function_taint
-                            .get_value_taint(lhs)
-                            .toplevel_taint()
-                            .expect_constant();
-                        let rhs_taint = function_taint
-                            .get_value_taint(rhs)
-                            .toplevel_taint()
-                            .expect_constant();
+                    OpCode::AssertEq(_, _) => {
+                        assert_eq!(block_taint, None); // TODO: support conditional asserts
+                        new_instructions.push(instruction);
 
-                        match (lhs_taint, rhs_taint) {
-                            (ConstantTaint::Pure, ConstantTaint::Pure) => {
-                                new_instructions.push(instruction);
-                            }
-                            _ => {
-                                let one = function.push_field_const(ark_bn254::Fr::ONE);
-                                new_instructions.push(OpCode::Constrain(lhs, one, rhs));
-                            }
-                        }
                     }
                     OpCode::Lt(_, lhs, rhs) => {
                         let lhs_taint = function_taint
@@ -331,6 +344,37 @@ impl ExplicitWitness {
 
             block.put_instructions(new_instructions);
             function.put_block(block_id, block);
+        }
+
+        function
+    }
+
+    fn typify_taint(&self, typ: Type<Empty>, taint: &TaintType) -> Type<ConstantTaint> {
+        match (typ.expr, taint) {
+            (TypeExpr::Field, TaintType::Primitive(taint)) => Type {
+                expr: TypeExpr::Field,
+                annotation: taint.expect_constant(),
+            },
+            (TypeExpr::Bool, TaintType::Primitive(taint)) => Type {
+                expr: TypeExpr::Bool,
+                annotation: taint.expect_constant(),
+            },
+            (TypeExpr::U32, TaintType::Primitive(taint)) => Type {
+                expr: TypeExpr::U32,
+                annotation: taint.expect_constant(),
+            },
+            (TypeExpr::Array(inner, size), TaintType::NestedImmutable(top, inner_taint)) => Type {
+                expr: TypeExpr::Array(
+                    Box::new(self.typify_taint(*inner, inner_taint.as_ref())),
+                    size,
+                ),
+                annotation: top.expect_constant(),
+            },
+            (TypeExpr::Ref(inner), TaintType::NestedMutable(top, inner_taint)) => Type {
+                expr: TypeExpr::Ref(Box::new(self.typify_taint(*inner, inner_taint.as_ref()))),
+                annotation: top.expect_constant(),
+            },
+            (tp, taint) => panic!("Unexpected type {:?} with taint {:?}", tp, taint),
         }
     }
 }
