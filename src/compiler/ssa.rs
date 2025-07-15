@@ -763,13 +763,9 @@ pub enum OpCode<V> {
     ArrayGet(ValueId, ValueId, ValueId),          // _1 = _2[_3]
     Select(ValueId, ValueId, ValueId, ValueId),   // _1 = _2 ? _3 : _4
 
-                                                  // Phase 2
-                                                  // WriteWitness(ValueId, ValueId), // _1 = as_witness(_2)
-                                                  // IncA(ValueId, ValueId, ValueId), // a += _2(pure) * _3(witness); _1 = a
-                                                  // IncB(ValueId, ValueId, ValueId), // b += _2(pure) * _3(witness); _1 = b
-                                                  // IncC(ValueId, ValueId, ValueId), // c += _2(pure) * _3(witness); _1 = c
-                                                  // SealConstraint,
-                                                  // Constrain(ValueId, ValueId, ValueId), // assert(_1 * _2 - _3 == 0)
+    // Phase 2
+    WriteWitness(ValueId, ValueId, V),    // _1 = as_witness(_2)
+    Constrain(ValueId, ValueId, ValueId), // assert(_1 * _2 - _3 == 0)
 }
 
 impl<V: Display> OpCode<V> {
@@ -869,45 +865,18 @@ impl<V: Display> OpCode<V> {
                     then.0,
                     otherwise.0
                 )
-            } // OpCode::WriteWitness(result, value) => {
-              //     format!(
-              //         "v{}{} = witness(v{})",
-              //         result.0,
-              //         annotate(value_annotator, *result),
-              //         value.0
-              //     )
-              // }
-              // // OpCode::IncA(result, coeff, witness) => {
-              // //     format!(
-              // //         "v{}[{}] = inc_a(v{}, v{})",
-              // //         result.0,
-              // //         value_annotator.annotate_value(*result),
-              // //         coeff.0,
-              // //         witness.0
-              // //     )
-              // // }
-              // // OpCode::IncB(result, coeff, witness) => {
-              // //     format!(
-              // //         "v{}[{}] = inc_b(v{}, v{})",
-              // //         result.0,
-              // //         value_annotator.annotate_value(*result),
-              // //         coeff.0,
-              // //         witness.0
-              // //     )
-              // // }
-              // // OpCode::IncC(result, coeff, witness) => {
-              // //     format!(
-              // //         "v{}[{}] = inc_c(v{}, v{})",
-              // //         result.0,
-              // //         value_annotator.annotate_value(*result),
-              // //         coeff.0,
-              // //         witness.0
-              // //     )
-              // // }
-              // // OpCode::SealConstraint => "seal_constraint".to_string(),
-              // OpCode::Constrain(a, b, c) => {
-              //     format!("constrain_r1c(v{} * v{} - v{} == 0)", a.0, b.0, c.0)
-              // }
+            }
+            OpCode::WriteWitness(result, value, _) => {
+                format!(
+                    "v{}{} = witness(v{})",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    value.0
+                )
+            }
+            OpCode::Constrain(a, b, c) => {
+                format!("constrain_r1c(v{} * v{} - v{} == 0)", a.0, b.0, c.0)
+            }
         }
     }
 }
@@ -1086,18 +1055,18 @@ impl<V: CommutativeSemigroup + Display + Clone + Eq> OpCode<V> {
                     then_type.get_arithmetic_result_type(otherwise_type),
                 );
                 Ok(())
-            } // Self::WriteWitness(result, value) => {
-              //     let witness_type = type_assignments.get(value).ok_or_else(|| {
-              //         format!("Witness value {:?} not found in type assignments", value)
-              //     })?;
-              //     type_assignments.insert(*result, witness_type.clone());
-              //     Ok(())
-              // }
-              // Self::IncA { .. }
-              // | Self::IncB { .. }
-              // | Self::IncC { .. }
-              // | Self::SealConstraint
-              // Self::Constrain { .. } => Ok(()),
+            }
+            Self::WriteWitness(result, value, annotation) => {
+                let witness_type = type_assignments.get(value).ok_or_else(|| {
+                    format!("Witness value {:?} not found in type assignments", value)
+                })?;
+                type_assignments.insert(
+                    *result,
+                    witness_type.clone().combine_with_annotation(annotation),
+                );
+                Ok(())
+            }
+            Self::Constrain(_, _, _) => Ok(()),
         }
     }
 }
@@ -1113,13 +1082,11 @@ impl<V> OpCode<V> {
             | Self::ArrayGet(a, b, c)
             | Self::And(a, b, c)
             | Self::AssertR1C(a, b, c)
-            // | Self::Constrain(a, b, c) 
-            => vec![a, b, c].into_iter(),
+            | Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
             Self::Store(a, b)
             | Self::Load(a, b)
             | Self::AssertEq(a, b)
-            // | Self::WriteWitness(a, b) 
-            => vec![a, b].into_iter(),
+            | Self::WriteWitness(a, b, _) => vec![a, b].into_iter(),
             Self::Call(r, _, a) => {
                 let mut ret_vec = r.iter_mut().collect::<Vec<_>>();
                 let args_vec = a.iter_mut().collect::<Vec<_>>();
@@ -1141,9 +1108,11 @@ impl<V> OpCode<V> {
             | Self::ArrayGet(_, b, c)
             | Self::AssertEq(b, c)
             | Self::Store(b, c) => vec![b, c].into_iter(),
-            Self::Load(_, c) => vec![c].into_iter(),
+            Self::Load(_, c) | Self::WriteWitness(_, c, _) => vec![c].into_iter(),
             Self::Call(_, _, a) => a.iter_mut().collect::<Vec<_>>().into_iter(),
-            Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) => vec![b, c, d].into_iter(),
+            Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) | Self::Constrain(b, c, d) => {
+                vec![b, c, d].into_iter()
+            }
         }
     }
 
@@ -1158,10 +1127,11 @@ impl<V> OpCode<V> {
             | Self::ArrayGet(_, b, c)
             | Self::AssertEq(b, c)
             | Self::Store(b, c) => vec![b, c].into_iter(),
-            Self::Load(_, c) => vec![c].into_iter(),
-            // Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
+            Self::Load(_, c) | Self::WriteWitness(_, c, _) => vec![c].into_iter(),
             Self::Call(_, _, a) => a.iter().collect::<Vec<_>>().into_iter(),
-            Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) => vec![b, c, d].into_iter(),
+            Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) | Self::Constrain(b, c, d) => {
+                vec![b, c, d].into_iter()
+            }
         }
     }
 
@@ -1175,12 +1145,13 @@ impl<V> OpCode<V> {
             | Self::Lt(r, _, _)
             | Self::ArrayGet(r, _, _)
             | Self::Load(r, _)
+            | Self::WriteWitness(r, _, _)
             | Self::Select(r, _, _, _) => vec![r].into_iter(),
             Self::Call(r, _, _) => r.iter().collect::<Vec<_>>().into_iter(),
-            /*Self::Constrain { .. } |*/
-            Self::Store(_, _) | Self::AssertEq(_, _) | Self::AssertR1C(_, _, _) => {
-                vec![].into_iter()
-            }
+            Self::Constrain { .. }
+            | Self::Store(_, _)
+            | Self::AssertEq(_, _)
+            | Self::AssertR1C(_, _, _) => vec![].into_iter(),
         }
     }
 }

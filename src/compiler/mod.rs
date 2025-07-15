@@ -3,6 +3,7 @@ pub mod condition_propagation;
 pub mod constraint_solver;
 pub mod dead_code_elimination;
 pub mod deduplicate_phis;
+pub mod explicit_witness;
 pub mod fix_double_jumps;
 pub mod flow_analysis;
 pub mod ir;

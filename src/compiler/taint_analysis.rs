@@ -695,9 +695,9 @@ impl TaintAnalysis {
                         ));
                     }
 
-                    // OpCode::WriteWitness { .. } | OpCode::Constrain { .. } => {
-                    //     panic!("Should not be present at this stage {:?}", instruction);
-                    // }
+                    OpCode::WriteWitness { .. } | OpCode::Constrain { .. } => {
+                        panic!("Should not be present at this stage {:?}", instruction);
+                    }
                 }
             }
 

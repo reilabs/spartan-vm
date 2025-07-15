@@ -1,11 +1,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use noirc_evaluator::ssa::ir::instruction;
-
 use crate::compiler::{
     fix_double_jumps::ValueReplacements,
     flow_analysis::{CFG, FlowAnalysis},
-    ir::r#type::{Empty, Type, TypeExpr},
+    ir::r#type::{Type, TypeExpr},
     ssa::{BlockId, Function, OpCode, SSA, Terminator, ValueId},
 };
 

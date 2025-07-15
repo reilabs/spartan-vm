@@ -5,7 +5,9 @@ use crate::compiler::{
     ssa::{BlockId, Function, OpCode, SSA, Terminator, ValueId},
 };
 
-pub struct DCE {}
+pub struct DCE {
+    config: Config,
+}
 
 #[derive(Debug)]
 enum WorkItem {
@@ -20,9 +22,27 @@ enum ValueDefinition {
     Const(ValueId),
 }
 
+pub struct Config {
+    pub witness_shape_frozen: bool,
+}
+
+impl Config {
+    pub fn pre_r1c() -> Self {
+        Self {
+            witness_shape_frozen: false,
+        }
+    }
+
+    pub fn post_r1c() -> Self {
+        Self {
+            witness_shape_frozen: true,
+        }
+    }
+}
+
 impl DCE {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(config: Config) -> Self {
+        Self { config }
     }
 
     pub fn run<V: Clone>(&mut self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
@@ -60,6 +80,16 @@ impl DCE {
                         OpCode::AssertR1C(_, _, _) => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
+                        OpCode::Constrain { .. } => {
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
+                        OpCode::WriteWitness { .. } => {
+                            // Witness stores are critical after the constraint system is generated.
+                            // Previously, they only matter if the result is used.
+                            if !self.config.witness_shape_frozen {
+                                worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                            }
+                        }
                         OpCode::Load { .. }
                         | OpCode::Add { .. }
                         | OpCode::Mul { .. }
@@ -68,7 +98,6 @@ impl DCE {
                         | OpCode::Lt { .. }
                         | OpCode::And { .. }
                         | OpCode::Select { .. }
-                        // | OpCode::WriteWitness { .. } // Note that a witness store is only critical if the return is used
                         | OpCode::ArrayGet { .. } => {}
                     }
                 }

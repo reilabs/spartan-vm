@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
-    flow_analysis::FlowAnalysis, ir::r#type::Empty,
-    ssa::{BlockId, OpCode, Terminator, ValueId, SSA},
+    flow_analysis::FlowAnalysis,
+    ssa::{BlockId, OpCode, SSA, Terminator, ValueId},
 };
 
 pub struct ValueReplacements {

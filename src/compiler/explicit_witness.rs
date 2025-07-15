@@ -1,0 +1,120 @@
+use std::collections::HashMap;
+
+use crate::compiler::{
+    ssa::{Block, BlockId, OpCode, SSA},
+    taint_analysis::ConstantTaint,
+};
+
+pub struct ExplicitWitness {}
+
+impl ExplicitWitness {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    pub fn run(&mut self, ssa: &mut SSA<ConstantTaint>) {
+        for (_, function) in ssa.iter_functions_mut() {
+            let mut new_blocks = HashMap::<BlockId, Block<ConstantTaint>>::new();
+            for (bid, mut block) in function.take_blocks().into_iter() {
+                let mut new_instructions = Vec::new();
+                for instruction in block.take_instructions().into_iter() {
+                    match instruction {
+                        OpCode::Add { .. } | OpCode::Alloc { .. } | OpCode::Call { .. } | OpCode::Constrain { .. } | OpCode::WriteWitness { .. } => {
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::Eq(r, l, _) | OpCode::Lt(r, l, _) => {
+                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
+                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+                            // TODO: witness versions
+                            assert!(l_taint.is_pure());
+                            assert!(r_taint.is_pure());
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::Mul(res, l, r) => {
+                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
+                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+
+                            if l_taint.is_pure() || r_taint.is_pure() {
+                                new_instructions.push(instruction);
+                                continue;
+                            }
+
+                            // witness-witness mul
+                            let mul_witness = function.fresh_value();
+                            new_instructions.push(OpCode::Mul(mul_witness, l, r));
+                            new_instructions.push(OpCode::WriteWitness(res, mul_witness, ConstantTaint::Witness));
+                            new_instructions.push(OpCode::Constrain(l, r, res));
+                        }
+                        OpCode::And {..} => todo!(),
+                        OpCode::Store(ptr, _) => {
+                            let ptr_taint = function.get_value_type(ptr).unwrap().get_annotation();
+                            assert!(ptr_taint.is_pure());
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::Load(_, ptr) => {
+                            let ptr_taint = function.get_value_type(ptr).unwrap().get_annotation();
+                            assert!(ptr_taint.is_pure());
+                            new_instructions.push(instruction);
+                        },
+                        OpCode::AssertEq(l, r) => {
+                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
+                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+                            if l_taint.is_pure() && r_taint.is_pure() {
+                                new_instructions.push(instruction);
+                                continue;
+                            }
+                            let one = function.push_field_const(ark_ff::Fp::from(1));
+                            new_instructions.push(OpCode::Constrain(l, one, r));
+                        }
+                        OpCode::AssertR1C(a, b, c) => {
+                            let a_taint = function.get_value_type(a).unwrap().get_annotation();
+                            let b_taint = function.get_value_type(b).unwrap().get_annotation();
+                            let c_taint = function.get_value_type(c).unwrap().get_annotation();
+                            if a_taint.is_pure() && b_taint.is_pure() && c_taint.is_pure() {
+                                new_instructions.push(instruction);
+                                continue;
+                            }
+                            new_instructions.push(OpCode::Constrain(a, b, c));
+                        }
+                        OpCode::ArrayGet(_, arr, idx) => {
+                            let arr_taint = function.get_value_type(arr).unwrap().get_annotation();
+                            let idx_taint = function.get_value_type(idx).unwrap().get_annotation();
+                            assert!(arr_taint.is_pure());
+                            assert!(idx_taint.is_pure());
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::Select(res, cond, l, r) => {
+                            let cond_taint = function.get_value_type(cond).unwrap().get_annotation();
+                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
+                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+                            // The result is cond * l + (1 - cond) * r
+                            // If either cond or both l and r and pure, this becomes a linear combination
+                            // and as such doesn't need a witness
+                            if cond_taint.is_pure() || (l_taint.is_pure() && r_taint.is_pure()) {
+                                new_instructions.push(instruction);
+                                continue;
+                            }
+                            let select_witness = function.fresh_value();
+                            new_instructions.push(OpCode::Select(select_witness, cond, l, r));
+                            new_instructions.push(OpCode::WriteWitness(res, select_witness, ConstantTaint::Witness));
+                            // Goal is to assert 0 = cond * l + (1 - cond) * r - res
+                            // This is equivalent to 0 = cond * (l - r) + r - res = cond * (l - r) - (res - r)
+                            let neg_one = function.push_field_const(ark_ff::Fp::from(-1));
+                            let neg_r = function.fresh_value();
+                            new_instructions.push(OpCode::Mul(neg_r, r, neg_one));
+                            let l_sub_r = function.fresh_value();
+                            new_instructions.push(OpCode::Add(l_sub_r, l, neg_r));
+                            let res_sub_r = function.fresh_value();
+                            new_instructions.push(OpCode::Add(res_sub_r, res, neg_r));
+                            new_instructions.push(OpCode::Constrain(cond, l_sub_r, res_sub_r));
+                        }
+
+                    }
+                }
+                block.put_instructions(new_instructions);
+                new_blocks.insert(bid, block);
+            }
+            function.put_blocks(new_blocks);
+        }
+    }
+}

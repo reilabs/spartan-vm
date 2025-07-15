@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::compiler::{
     ir::r#type::{Empty, Type, TypeExpr},
-    ssa::{BlockId, Const, Function, FunctionId, OpCode, Terminator, ValueId, SSA},
+    ssa::{BlockId, Const, Function, FunctionId, OpCode, SSA, Terminator, ValueId},
 };
 use ark_ff::{AdditiveGroup, Field, PrimeField};
 
@@ -89,7 +89,7 @@ impl WitnessGen {
         }
     }
 
-    pub fn run(&mut self, ssa: &SSA<Empty>) {
+    pub fn run<V: Clone>(&mut self, ssa: &SSA<V>) {
         let entry_point = ssa.get_main_id();
         let params = ssa.get_function(entry_point).get_param_types();
         let mut main_params = vec![];
@@ -117,9 +117,9 @@ impl WitnessGen {
         self.c.clone()
     }
 
-    pub fn run_function(
+    pub fn run_function<V: Clone>(
         &mut self,
-        ssa: &SSA<Empty>,
+        ssa: &SSA<V>,
         function_id: FunctionId,
         params: Vec<Value>,
     ) -> Vec<Value> {
@@ -202,22 +202,34 @@ impl WitnessGen {
                         todo!();
                     }
 
-                    OpCode::And(_, _, _) => { todo!(); }
-                    OpCode::Select(_, _, _, _) => { todo!(); }
+                    OpCode::And(_, _, _) => {
+                        todo!();
+                    }
+                    OpCode::Select(res_slot, cond, a, b) => {
+                        let cond = scope.get(cond).unwrap();
+                        let a = scope.get(a).unwrap();
+                        let b = scope.get(b).unwrap();
+                        let res = if cond.expect_fp() == ark_bn254::Fr::ONE {
+                            a.clone()
+                        } else {
+                            b.clone()
+                        };
+                        scope.insert(*res_slot, res);
+                    }
 
-                    // OpCode::Constrain(a, b, c) => {
-                    //     let a = scope.get(a).unwrap();
-                    //     let b = scope.get(b).unwrap();
-                    //     let c = scope.get(c).unwrap();
-                    //     self.a.push(a.expect_fp());
-                    //     self.b.push(b.expect_fp());
-                    //     self.c.push(c.expect_fp());
-                    // }
-                    // OpCode::WriteWitness(result, v) => {
-                    //     let v = scope.get(v).unwrap().clone();
-                    //     scope.insert(*result, v.clone());
-                    //     self.witness.push(v.expect_fp());
-                    // }
+                    OpCode::Constrain(a, b, c) => {
+                        let a = scope.get(a).unwrap();
+                        let b = scope.get(b).unwrap();
+                        let c = scope.get(c).unwrap();
+                        self.a.push(a.expect_fp());
+                        self.b.push(b.expect_fp());
+                        self.c.push(c.expect_fp());
+                    }
+                    OpCode::WriteWitness(result, v, _) => {
+                        let v = scope.get(v).unwrap().clone();
+                        scope.insert(*result, v.clone());
+                        self.witness.push(v.expect_fp());
+                    }
 
                     OpCode::Call(ret, tgt, args) => {
                         let args = args
@@ -264,11 +276,11 @@ impl WitnessGen {
         }
     }
 
-    fn update_scope_with_args(
+    fn update_scope_with_args<V: Clone>(
         &self,
         scope: &mut HashMap<ValueId, Value>,
         args: Vec<Value>,
-        function: &Function<Empty>,
+        function: &Function<V>,
         block_id: BlockId,
     ) {
         let block = function.get_block(block_id);
@@ -277,9 +289,9 @@ impl WitnessGen {
         }
     }
 
-    fn initialize_main_input(
+    fn initialize_main_input<V: Clone>(
         &mut self,
-        tp: &Type<Empty>,
+        tp: &Type<V>,
         witness_iter: &mut impl Iterator<Item = ark_bn254::Fr>,
     ) -> Value {
         match &tp.expr {

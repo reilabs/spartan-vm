@@ -1,8 +1,8 @@
 use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
 
 use crate::compiler::{
-    ir::r#type::{Empty, Type, TypeExpr},
-    ssa::{BlockId, Const, Function, FunctionId, OpCode, Terminator, ValueId, SSA},
+    ir::r#type::{Type, TypeExpr},
+    ssa::{BlockId, Const, Function, FunctionId, OpCode, SSA, Terminator, ValueId},
 };
 use ark_ff::{AdditiveGroup, Field, PrimeField};
 use itertools::Itertools;
@@ -23,6 +23,16 @@ impl Value {
         match (self, other) {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs + rhs),
             (lhs, rhs) => Value::Add(Box::new(lhs.clone()), Box::new(rhs.clone())),
+        }
+    }
+
+    pub fn sub(&self, other: &Value) -> Value {
+        match (self, other) {
+            (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs - rhs),
+            (lhs, rhs) => {
+                let neg_rhs = Value::Const(ark_bn254::Fr::from(-1)).mul(rhs);
+                lhs.add(&neg_rhs)
+            }
         }
     }
 
@@ -170,16 +180,28 @@ impl R1CGen {
 
     pub fn verify(&self, witness: &[ark_bn254::Fr]) -> bool {
         for r1c in &self.result {
-            let a = r1c.a.iter().map(|(i, c)| c * &witness[*i]).sum::<ark_bn254::Fr>();
-            let b = r1c.b.iter().map(|(i, c)| c * &witness[*i]).sum::<ark_bn254::Fr>();
-            let c = r1c.c.iter().map(|(i, c)| c * &witness[*i]).sum::<ark_bn254::Fr>();
+            let a = r1c
+                .a
+                .iter()
+                .map(|(i, c)| c * &witness[*i])
+                .sum::<ark_bn254::Fr>();
+            let b = r1c
+                .b
+                .iter()
+                .map(|(i, c)| c * &witness[*i])
+                .sum::<ark_bn254::Fr>();
+            let c = r1c
+                .c
+                .iter()
+                .map(|(i, c)| c * &witness[*i])
+                .sum::<ark_bn254::Fr>();
             let success_emoji = if a * b == c { "✅" } else { "❌" };
             println!("VERIFIER {}: a: {}, b: {}, c: {}", success_emoji, a, b, c);
         }
         return true;
     }
 
-    pub fn run(&mut self, ssa: &SSA<Empty>) {
+    pub fn run<V: Clone>(&mut self, ssa: &SSA<V>) {
         let entry_point = ssa.get_main_id();
         let params = ssa.get_function(entry_point).get_param_types();
         let mut main_params = vec![];
@@ -198,9 +220,9 @@ impl R1CGen {
         self.next_witness
     }
 
-    pub fn run_function(
+    pub fn run_function<V: Clone>(
         &mut self,
-        ssa: &SSA<Empty>,
+        ssa: &SSA<V>,
         function_id: FunctionId,
         params: Vec<Value>,
     ) -> Vec<Value> {
@@ -211,8 +233,12 @@ impl R1CGen {
 
         for (value_id, const_) in function.iter_consts() {
             match const_ {
-                Const::Bool(value) => scope.insert(*value_id, Value::Const(ark_bn254::Fr::from(*value as u64))),
-                Const::U32(value) => scope.insert(*value_id, Value::Const(ark_bn254::Fr::from(*value as u64))),
+                Const::Bool(value) => {
+                    scope.insert(*value_id, Value::Const(ark_bn254::Fr::from(*value as u64)))
+                }
+                Const::U32(value) => {
+                    scope.insert(*value_id, Value::Const(ark_bn254::Fr::from(*value as u64)))
+                }
                 Const::Field(value) => scope.insert(*value_id, Value::Const(*value)),
             };
         }
@@ -273,15 +299,15 @@ impl R1CGen {
                         todo!();
                     }
 
-                    // OpCode::Constrain(a, b, c) => {
-                    //     let a = scope.get(a).unwrap().expect_linear_combination();
-                    //     let b = scope.get(b).unwrap().expect_linear_combination();
-                    //     let c = scope.get(c).unwrap().expect_linear_combination();
-                    //     self.result.push(R1C { a: a, b: b, c: c });
-                    // }
-                    // OpCode::WriteWitness(result, _) => {
-                    //     scope.insert(*result, Value::WitnessVar(self.next_witness()));
-                    // }
+                    OpCode::Constrain(a, b, c) => {
+                        let a = scope.get(a).unwrap().expect_linear_combination();
+                        let b = scope.get(b).unwrap().expect_linear_combination();
+                        let c = scope.get(c).unwrap().expect_linear_combination();
+                        self.result.push(R1C { a: a, b: b, c: c });
+                    }
+                    OpCode::WriteWitness(result, _, _) => {
+                        scope.insert(*result, Value::WitnessVar(self.next_witness()));
+                    }
 
                     OpCode::Call(ret, tgt, args) => {
                         let args = args
@@ -301,8 +327,17 @@ impl R1CGen {
                         scope.insert(*result, r);
                     }
 
-                    OpCode::And(_, _, _) => { todo!(); }
-                    OpCode::Select(_, _, _, _) => { todo!(); }
+                    OpCode::And(_, _, _) => {
+                        todo!();
+                    }
+                    OpCode::Select(rslot, c, l, r) => {
+                        let cond = scope.get(c).unwrap();
+                        let l = scope.get(l).unwrap();
+                        let r = scope.get(r).unwrap();
+
+                        let res = cond.mul(l).add(&Value::Const(ark_bn254::Fr::ONE).sub(cond).mul(r));
+                        scope.insert(*rslot, res);
+                    }
                 }
             }
 
@@ -317,7 +352,12 @@ impl R1CGen {
                 Some(Terminator::Jmp(target, args)) => {
                     let args = args
                         .iter()
-                        .map(|arg| scope.get(arg).expect(&format!("expected value {:?}", arg)).clone())
+                        .map(|arg| {
+                            scope
+                                .get(arg)
+                                .expect(&format!("expected value {:?}", arg))
+                                .clone()
+                        })
                         .collect();
                     self.update_scope_with_args(&mut scope, args, &function, *target);
                     block_id = *target;
@@ -338,11 +378,11 @@ impl R1CGen {
         }
     }
 
-    fn update_scope_with_args(
+    fn update_scope_with_args<V: Clone>(
         &self,
         scope: &mut HashMap<ValueId, Value>,
         args: Vec<Value>,
-        function: &Function<Empty>,
+        function: &Function<V>,
         block_id: BlockId,
     ) {
         let block = function.get_block(block_id);
@@ -357,7 +397,7 @@ impl R1CGen {
         result
     }
 
-    fn initialize_main_input(&mut self, tp: &Type<Empty>) -> Value {
+    fn initialize_main_input<V: Clone>(&mut self, tp: &Type<V>) -> Value {
         match &tp.expr {
             TypeExpr::Bool => Value::WitnessVar(self.next_witness()),
             TypeExpr::U32 => Value::WitnessVar(self.next_witness()),

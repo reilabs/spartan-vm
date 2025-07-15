@@ -74,6 +74,10 @@ impl UntaintControlFlow {
                     OpCode::AssertR1C(r, l, h) => OpCode::AssertR1C(r, l, h),
                     OpCode::And(r, l, h) => OpCode::And(r, l, h),
                     OpCode::Select(r, l, h, j) => OpCode::Select(r, l, h, j),
+                    OpCode::WriteWitness(r, l, _) => {
+                        OpCode::WriteWitness(r, l, ConstantTaint::Witness)
+                    }
+                    OpCode::Constrain(a, b, c) => OpCode::Constrain(a, b, c),
                 };
                 new_instructions.push(new);
             }

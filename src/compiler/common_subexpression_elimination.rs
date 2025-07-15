@@ -338,7 +338,9 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::Alloc { .. }
+                    | OpCode::WriteWitness { .. } // TODO: is witness store a subexpression to be optimized?
+                    | OpCode::Constrain { .. }
+                    | OpCode::Alloc { .. }
                     | OpCode::Store { .. }
                     | OpCode::Load { .. }
                     | OpCode::AssertEq { .. }
