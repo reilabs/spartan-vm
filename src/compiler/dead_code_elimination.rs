@@ -27,7 +27,6 @@ impl DCE {
 
     pub fn run<V: Clone>(&mut self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
-            println!("DCE: function {:?}", function_id);
             let cfg = cfg.get_function_cfg(*function_id);
             let definitions = self.generate_definitions(function);
 
@@ -58,6 +57,9 @@ impl DCE {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
                         }
+                        OpCode::AssertR1C(_, _, _) => {
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
                         OpCode::Load { .. }
                         | OpCode::Add { .. }
                         | OpCode::Mul { .. }
@@ -85,7 +87,6 @@ impl DCE {
             }
 
             while let Some(item) = worklist.pop() {
-                // println!("Item: {:?}", item);
                 match item {
                     WorkItem::LiveBlock(block_id) => {
                         if live_blocks.contains(&block_id) {
@@ -97,10 +98,6 @@ impl DCE {
                         // because they decide whether or not this block is entered.
                         // Also, the condition on which they enter is live.
                         for pd in cfg.get_post_dominance_frontier(block_id) {
-                            println!(
-                                "Aliving block {:?} because it's in the post-dom frontier of {:?}",
-                                pd, block_id
-                            );
                             worklist.push(WorkItem::LiveBlock(pd));
                             live_branches.insert(pd);
 
@@ -116,10 +113,6 @@ impl DCE {
                         // live, as they define the phi inputs.
                         if function.get_block(block_id).has_parameters() {
                             for predecessor in cfg.get_jumps_into(block_id) {
-                                println!(
-                                    "Aliving block {:?} because it jumps into {:?} with phi",
-                                    predecessor, block_id
-                                );
                                 worklist.push(WorkItem::LiveBlock(predecessor));
                             }
                         }
@@ -146,10 +139,6 @@ impl DCE {
                                     .insert(*i);
 
                                 // The defining block is live
-                                println!(
-                                    "Aliving block {:?} because it defines {:?}",
-                                    block_id, value_id
-                                );
                                 worklist.push(WorkItem::LiveBlock(*block_id));
                                 // For all jumps into it, the respective argument is live
                                 for block_id in cfg.get_jumps_into(*block_id) {
@@ -166,12 +155,6 @@ impl DCE {
                             }
                             ValueDefinition::Instruction(block_id, i) => {
                                 // The instruction is live
-                                if block_id.0 == 1 && *i == 0 {
-                                    println!(
-                                        "Aliving instruction {:?} in block {:?} because it defines {:?}",
-                                        i, block_id, value_id
-                                    );
-                                }
                                 worklist.push(WorkItem::LiveInstruction(*block_id, *i));
                             }
                             ValueDefinition::Const(value_id) => {
@@ -193,10 +176,6 @@ impl DCE {
                             .insert(i);
 
                         // The containing block is live
-                        println!(
-                            "Aliving block {:?} because it contains live instruction {:?}",
-                            block_id, i
-                        );
                         worklist.push(WorkItem::LiveBlock(block_id));
 
                         let instruction = function.get_block(block_id).get_instruction(i);
@@ -206,8 +185,6 @@ impl DCE {
                     }
                 }
             }
-
-            // println!("Live params: {:?}", live_params);
 
             for value_id in function.iter_consts().map(|(v, _)| *v).collect::<Vec<_>>() {
                 if !live_consts.contains(&value_id) {
@@ -241,13 +218,11 @@ impl DCE {
                         if live_blocks.contains(&target) {
                             let mut new_params = vec![];
                             for (i, param) in params.into_iter().enumerate() {
-                                // println!("Jump from {:?} to {:?}", block_id, target);
                                 if live_params
                                     .get(&target)
                                     .unwrap_or(&HashSet::new())
                                     .contains(&i)
                                 {
-                                    // println!("Keeping param {:?}", param);
                                     new_params.push(param);
                                 }
                             }

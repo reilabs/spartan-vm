@@ -195,11 +195,15 @@ impl WitnessGen {
                     }
 
                     OpCode::AssertEq(_, _) => {
-                        // No-op
+                        todo!();
                     }
 
-                    OpCode::And(result, lhs, rhs) => { todo!(); }
-                    OpCode::Select(result, cond, then, otherwise) => { todo!(); }
+                    OpCode::AssertR1C(_, _, _) => {
+                        todo!();
+                    }
+
+                    OpCode::And(_, _, _) => { todo!(); }
+                    OpCode::Select(_, _, _, _) => { todo!(); }
 
                     // OpCode::Constrain(a, b, c) => {
                     //     let a = scope.get(a).unwrap();

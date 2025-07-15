@@ -7,8 +7,6 @@ use crate::compiler::{
     taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis, TaintType},
 };
 
-use ark_ff::Field;
-
 pub struct UntaintControlFlow {}
 
 impl UntaintControlFlow {
@@ -73,6 +71,7 @@ impl UntaintControlFlow {
                     }
                     OpCode::Call(r, l, h) => OpCode::Call(r, l, h),
                     OpCode::AssertEq(r, l) => OpCode::AssertEq(r, l),
+                    OpCode::AssertR1C(r, l, h) => OpCode::AssertR1C(r, l, h),
                     OpCode::And(r, l, h) => OpCode::And(r, l, h),
                     OpCode::Select(r, l, h, j) => OpCode::Select(r, l, h, j),
                 };

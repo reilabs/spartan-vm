@@ -452,17 +452,25 @@ impl<V: Clone> Function<V> {
         self.blocks
             .get_mut(&block_id)
             .unwrap()
-            .instructions.push(OpCode::And(value_id, lhs, rhs));
+            .instructions
+            .push(OpCode::And(value_id, lhs, rhs));
         value_id
     }
 
-    pub fn push_select(&mut self, block_id: BlockId, cond: ValueId, then: ValueId, otherwise: ValueId) -> ValueId {
+    pub fn push_select(
+        &mut self,
+        block_id: BlockId,
+        cond: ValueId,
+        then: ValueId,
+        otherwise: ValueId,
+    ) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
         self.blocks
             .get_mut(&block_id)
             .unwrap()
-            .instructions.push(OpCode::Select(value_id, cond, then, otherwise));
+            .instructions
+            .push(OpCode::Select(value_id, cond, then, otherwise));
         value_id
     }
 
@@ -555,6 +563,14 @@ impl<V: Clone> Function<V> {
 
     pub fn get_blocks_mut(&mut self) -> impl Iterator<Item = (&BlockId, &mut Block<V>)> {
         self.blocks.iter_mut()
+    }
+
+    pub fn take_blocks(&mut self) -> HashMap<BlockId, Block<V>> {
+        std::mem::take(&mut self.blocks)
+    }
+
+    pub fn put_blocks(&mut self, blocks: HashMap<BlockId, Block<V>>) {
+        self.blocks = blocks;
     }
 
     pub fn fresh_value(&mut self) -> ValueId {
@@ -742,6 +758,7 @@ pub enum OpCode<V> {
     Store(ValueId, ValueId),                      // *_1 = _2
     Load(ValueId, ValueId),                       // _1 = *_2
     AssertEq(ValueId, ValueId),                   // assert _1 == _2
+    AssertR1C(ValueId, ValueId, ValueId),         // assert _1 * _2 - _3 == 0
     Call(Vec<ValueId>, FunctionId, Vec<ValueId>), // _1, ... = call function(_2, _3, ...)
     ArrayGet(ValueId, ValueId, ValueId),          // _1 = _2[_3]
     Select(ValueId, ValueId, ValueId, ValueId),   // _1 = _2 ? _3 : _4
@@ -823,6 +840,9 @@ impl<V: Display> OpCode<V> {
                 )
             }
             OpCode::AssertEq(lhs, rhs) => format!("assert v{} == v{}", lhs.0, rhs.0),
+            OpCode::AssertR1C(lhs, rhs, cond) => {
+                format!("assert v{} * v{} - v{} == 0", lhs.0, rhs.0, cond.0)
+            }
             OpCode::Call(result, fn_id, args) => {
                 let args_str = args.iter().map(|v| format!("v{}", v.0)).join(", ");
                 let result_str = result
@@ -1010,6 +1030,7 @@ impl<V: CommutativeSemigroup + Display + Clone + Eq> OpCode<V> {
                 Ok(())
             }
             Self::AssertEq(_, _) => Ok(()),
+            Self::AssertR1C(_, _, _) => Ok(()),
             Self::Call(result, fn_id, args) => {
                 let (param_types, return_types) = function_types
                     .get(fn_id)
@@ -1091,6 +1112,7 @@ impl<V> OpCode<V> {
             | Self::Lt(a, b, c)
             | Self::ArrayGet(a, b, c)
             | Self::And(a, b, c)
+            | Self::AssertR1C(a, b, c)
             // | Self::Constrain(a, b, c) 
             => vec![a, b, c].into_iter(),
             Self::Store(a, b)
@@ -1121,7 +1143,7 @@ impl<V> OpCode<V> {
             | Self::Store(b, c) => vec![b, c].into_iter(),
             Self::Load(_, c) => vec![c].into_iter(),
             Self::Call(_, _, a) => a.iter_mut().collect::<Vec<_>>().into_iter(),
-            Self::Select(_, b, c, d) => vec![b, c, d].into_iter(),
+            Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) => vec![b, c, d].into_iter(),
         }
     }
 
@@ -1139,7 +1161,7 @@ impl<V> OpCode<V> {
             Self::Load(_, c) => vec![c].into_iter(),
             // Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
             Self::Call(_, _, a) => a.iter().collect::<Vec<_>>().into_iter(),
-            Self::Select(_, b, c, d) => vec![b, c, d].into_iter(),
+            Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) => vec![b, c, d].into_iter(),
         }
     }
 
@@ -1156,7 +1178,9 @@ impl<V> OpCode<V> {
             | Self::Select(r, _, _, _) => vec![r].into_iter(),
             Self::Call(r, _, _) => r.iter().collect::<Vec<_>>().into_iter(),
             /*Self::Constrain { .. } |*/
-            Self::Store(_, _) | Self::AssertEq(_, _) => vec![].into_iter(),
+            Self::Store(_, _) | Self::AssertEq(_, _) | Self::AssertR1C(_, _, _) => {
+                vec![].into_iter()
+            }
         }
     }
 }

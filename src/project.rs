@@ -64,7 +64,7 @@ impl Project {
         let noir_project = noir::Project::new(&self.nargo_file_manager, &self.nargo_parsed_files);
 
         for package in &self.nargo_workspace.members {
-            let with_warnings = self.extract_package(&noir_project, package, public_witness.clone())?;
+            let _with_warnings = self.extract_package(&noir_project, package, public_witness.clone())?;
 
         }
         Ok(())
@@ -76,13 +76,13 @@ impl Project {
         package: &Package,
         public_witness: Vec<ark_bn254::Fr>,
     ) -> Result<WithWarnings<()>, Error> {
-        let package_name = &package.name.to_string();
-        let package_version =
+        let _package_name = &package.name.to_string();
+        let _package_version =
             &package.version.clone().unwrap_or(NONE_DEPENDENCY_VERSION.to_string());
 
-        let mut warnings = vec![];
+        let warnings = vec![];
 
-        let res = Self::compile_package(noir_project, package, public_witness)?;
+        let _res = Self::compile_package(noir_project, package, public_witness)?;
         // warnings.extend(res.warnings);
         // let extracted_code = res.data;
         // let additional_dependencies = Self::get_dependencies_with_lampe(package)?;
@@ -98,7 +98,7 @@ impl Project {
         package: &Package,
         public_witness: Vec<ark_bn254::Fr>
     ) -> Result<(), Error> {
-        let compile_result = noir_project.compile_package(package, public_witness)?;
+        let _compile_result = noir_project.compile_package(package, public_witness)?;
         Ok(())
     }
 }

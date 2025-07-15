@@ -266,7 +266,11 @@ impl R1CGen {
                     }
 
                     OpCode::AssertEq(_, _) => {
-                        // No-op
+                        todo!();
+                    }
+
+                    OpCode::AssertR1C(_, _, _) => {
+                        todo!();
                     }
 
                     // OpCode::Constrain(a, b, c) => {
@@ -297,8 +301,8 @@ impl R1CGen {
                         scope.insert(*result, r);
                     }
 
-                    OpCode::And(result, lhs, rhs) => { todo!(); }
-                    OpCode::Select(result, cond, then, otherwise) => { todo!(); }
+                    OpCode::And(_, _, _) => { todo!(); }
+                    OpCode::Select(_, _, _, _) => { todo!(); }
                 }
             }
 

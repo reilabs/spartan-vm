@@ -342,6 +342,7 @@ impl CSE {
                     | OpCode::Store { .. }
                     | OpCode::Load { .. }
                     | OpCode::AssertEq { .. }
+                    | OpCode::AssertR1C { .. }
                     | OpCode::Call { .. } => {}
                 }
             }

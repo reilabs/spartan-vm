@@ -6,6 +6,7 @@ use crate::compiler::dead_code_elimination::DCE;
 use crate::compiler::deduplicate_phis::DeduplicatePhis;
 use crate::compiler::fix_double_jumps::FixDoubleJumps;
 use crate::compiler::mem2reg::Mem2Reg;
+use crate::compiler::pull_into_assert::PullIntoAssert;
 use crate::compiler::untaint_control_flow::UntaintControlFlow;
 use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::monomorphization::Monomorphization;
@@ -252,6 +253,25 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         drop(flow_analysis);
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         custom_ssa.typecheck(&flow_analysis);
+
+        let mut pull_into_assert = PullIntoAssert::new();
+        pull_into_assert.run(&mut custom_ssa);
+
+        println!(
+            "After pull into assert SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+
+        // DCE to clean up unused multiplications after pulls
+        let mut dce = DCE::new();
+        dce.run(&mut custom_ssa, &flow_analysis);
+
+        println!(
+            "After DCE SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+        drop(flow_analysis);
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
 
         // let mut r1cs_gen = R1CGen::new();
         // r1cs_gen.run(&custom_ssa);

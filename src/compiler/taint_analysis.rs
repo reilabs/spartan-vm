@@ -43,6 +43,22 @@ impl std::fmt::Display for ConstantTaint {
     }
 }
 
+impl ConstantTaint {
+    pub fn is_pure(&self) -> bool {
+        match self {
+            ConstantTaint::Pure => true,
+            ConstantTaint::Witness => false,
+        }
+    }
+
+    pub fn is_witness(&self) -> bool {
+        match self {
+            ConstantTaint::Pure => false,
+            ConstantTaint::Witness => true,
+        }
+    }
+}
+
 // Throughout this, we loosely interpret taints as records
 // with Witness any record (forall A. {A}) and `Pure` having
 // a single row, i.e. Pure = forall A. { pure := () | A }. This is handy
@@ -633,6 +649,7 @@ impl TaintAnalysis {
                         }
                     }
                     OpCode::AssertEq(_, _) => {}
+                    OpCode::AssertR1C(_, _, _) => {}
                     OpCode::ArrayGet(r, arr, idx) => {
                         let arr_taint = function_taint.value_taints.get(arr).unwrap();
                         let idx_taint = function_taint.value_taints.get(idx).unwrap();
