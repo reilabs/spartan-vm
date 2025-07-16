@@ -2,14 +2,14 @@ use std::collections::HashMap;
 
 use super::TypeConverter;
 use crate::compiler::{
-    ir::r#type::Empty,
-    ssa::{BlockId, Function, FunctionId, ValueId},
+    ir::r#type::{Empty, TypeExpr},
+    ssa::{BlockId, CastTarget, Endianness, Function, FunctionId, SeqType, ValueId},
 };
 use noirc_evaluator::ssa::ir::{
     basic_block::BasicBlockId,
     function::{Function as NoirFunction, FunctionId as NoirFunctionId},
-    instruction::{BinaryOp, Instruction as NoirInstruction, TerminatorInstruction},
-    types::NumericType,
+    instruction::{BinaryOp, Endian, Instruction as NoirInstruction, Intrinsic, TerminatorInstruction},
+    types::{NumericType, Type as NoirType},
     value::{Value, ValueId as NoirValueId},
 };
 
@@ -91,6 +91,12 @@ impl FunctionConverter {
                             BinaryOp::Eq => {
                                 custom_function.push_eq(custom_block_id, left_value, right_value)
                             }
+                            BinaryOp::Div => {
+                                custom_function.push_div(custom_block_id, left_value, right_value)
+                            }
+                            BinaryOp::Sub { unchecked: _ } => {
+                                custom_function.push_sub(custom_block_id, left_value, right_value)
+                            }
                             _ => panic!("Unsupported binary operation: {:?}", binary.operator),
                         };
                         self.value_mapper.insert(result_id, rr_id);
@@ -124,12 +130,86 @@ impl FunctionConverter {
                             {
                                 self.value_mapper.insert(*result_id, *return_value);
                             }
+                        } else if let Value::Intrinsic(intrinsic) = function_value {
+                            match intrinsic {
+                                Intrinsic::AsWitness { .. } => {} // ignore this call, it's a compiler hint and taking hints is a sign of weakness
+                                Intrinsic::ToBits(endianness) => {
+                                    let result_id = noir_function
+                                        .dfg
+                                        .instruction_results(*noir_instruction_id)[0];
+                                    let result_value = &noir_function.dfg.values[result_id];
+                                    let result_type = result_value.get_type();
+                                    let result_size = match result_type.as_ref() {
+                                        NoirType::Array(_, size) => *size,
+                                        _ => panic!("ToBits result should be an array, got: {:?}", result_type),
+                                    };
+                                    let input_id = arguments[0];
+                                    let input_value = &noir_function.dfg.values[input_id];
+                                    let input_converted =
+                                        self.convert_value(&mut custom_function, input_id, input_value);
+                                    let endianness = match endianness {
+                                        Endian::Big => Endianness::Big,
+                                        Endian::Little => Endianness::Little,
+                                    };
+                                    let to_bits_result = custom_function.push_to_bits(
+                                        custom_block_id,
+                                        input_converted,
+                                        endianness,
+                                        result_size as usize,
+                                    );
+                                    self.value_mapper.insert(result_id, to_bits_result);
+                                }
+                                _ => panic!("Unsupported intrinsic: {:?}", intrinsic),
+                            }
                         } else {
                             panic!(
                                 "Call instruction with non-constant function value not supported: {:?}",
                                 function_value
                             );
                         }
+                    }
+
+                    NoirInstruction::Not(value) => {
+                        let value_value = &noir_function.dfg.values[*value];
+                        let value_converted =
+                            self.convert_value(&mut custom_function, *value, value_value);
+                        let result_id =
+                            noir_function.dfg.instruction_results(*noir_instruction_id)[0];
+                        let not_result = custom_function.push_not(custom_block_id, value_converted);
+                        self.value_mapper.insert(result_id, not_result);
+                    }
+                    NoirInstruction::Cast(input, target) => {
+                        let input_value = &noir_function.dfg.values[*input];
+                        let input_converted =
+                            self.convert_value(&mut custom_function, *input, input_value);
+                        let target = match target {
+                            NumericType::Signed { .. } => todo!(),
+                            NumericType::Unsigned { bit_size } => CastTarget::U(*bit_size as usize),
+                            NumericType::NativeField => CastTarget::Field,
+                        };
+                        let result_id =
+                            noir_function.dfg.instruction_results(*noir_instruction_id)[0];
+                        let cast_result =
+                            custom_function.push_cast(custom_block_id, input_converted, target);
+                        self.value_mapper.insert(result_id, cast_result);
+                    }
+                    NoirInstruction::Truncate {
+                        value,
+                        bit_size,
+                        max_bit_size,
+                    } => {
+                        let value_value = &noir_function.dfg.values[*value];
+                        let value_converted =
+                            self.convert_value(&mut custom_function, *value, value_value);
+                        let result_id =
+                            noir_function.dfg.instruction_results(*noir_instruction_id)[0];
+                        let truncate_result = custom_function.push_truncate(
+                            custom_block_id,
+                            value_converted,
+                            *bit_size as usize,
+                            *max_bit_size as usize,
+                        );
+                        self.value_mapper.insert(result_id, truncate_result);
                     }
                     NoirInstruction::Constrain(l, r, _) => {
                         let left_value = &noir_function.dfg.values[*l];
@@ -180,6 +260,34 @@ impl FunctionConverter {
                             value_converted,
                         );
                     }
+
+                    NoirInstruction::MakeArray { elements, typ } => {
+                        let elements_converted = elements
+                            .iter()
+                            .map(|e| {
+                                self.convert_value(
+                                    &mut custom_function,
+                                    *e,
+                                    &noir_function.dfg.values[*e],
+                                )
+                            })
+                            .collect();
+                        let result_id =
+                            noir_function.dfg.instruction_results(*noir_instruction_id)[0];
+                        let converted_typ = self.type_converter.convert_type(typ);
+                        let (stp, tp) = match converted_typ.expr {
+                            TypeExpr::Array(inner, size) => (SeqType::Array(size), inner),
+                            TypeExpr::Slice(inner) => (SeqType::Slice, inner),
+                            _ => panic!("Unexpected type in array conversion: {:?}", converted_typ),
+                        };
+                        let result_converted = custom_function.push_mk_array(
+                            custom_block_id,
+                            elements_converted,
+                            stp,
+                            *tp,
+                        );
+                        self.value_mapper.insert(result_id, result_converted);
+                    }
                     NoirInstruction::ArrayGet { array, index, .. } => {
                         let array_value = &noir_function.dfg.values[*array];
                         let index_value = &noir_function.dfg.values[*index];
@@ -198,6 +306,34 @@ impl FunctionConverter {
                         );
 
                         self.value_mapper.insert(result_id, array_get_result);
+                    }
+                    NoirInstruction::ArraySet {
+                        array,
+                        index,
+                        value,
+                        ..
+                    } => {
+                        let array_value = &noir_function.dfg.values[*array];
+                        let index_value = &noir_function.dfg.values[*index];
+                        let value_value = &noir_function.dfg.values[*value];
+                        let array_converted =
+                            self.convert_value(&mut custom_function, *array, array_value);
+                        let index_converted =
+                            self.convert_value(&mut custom_function, *index, index_value);
+                        let value_converted =
+                            self.convert_value(&mut custom_function, *value, value_value);
+
+                        let result_id =
+                            noir_function.dfg.instruction_results(*noir_instruction_id)[0];
+
+                        let array_set_result = custom_function.push_array_set(
+                            custom_block_id,
+                            array_converted,
+                            index_converted,
+                            value_converted,
+                        );
+
+                        self.value_mapper.insert(result_id, array_set_result);
                     }
                     NoirInstruction::Load { address } => {
                         let address_value = &noir_function.dfg.values[*address];
@@ -290,19 +426,13 @@ impl FunctionConverter {
     ) -> ValueId {
         match noir_value {
             Value::NumericConstant { constant, typ } => match typ {
-                NumericType::Unsigned { bit_size: 32 } => {
+                NumericType::Unsigned { bit_size: s } => {
                     let custom_value_id = custom_function
-                        .push_u32_const(constant.to_string().parse::<u32>().unwrap());
+                        .push_u_const(*s as usize, constant.to_string().parse::<u128>().unwrap());
                     self.value_mapper.insert(noir_value_id, custom_value_id);
                     custom_value_id
                 }
-                NumericType::Unsigned { bit_size: 1 } => {
-                    let u32_value = constant.to_string().parse::<u32>().unwrap();
-                    let bool_value = u32_value != 0;
-                    let custom_value_id = custom_function.push_bool_const(bool_value);
-                    self.value_mapper.insert(noir_value_id, custom_value_id);
-                    custom_value_id
-                }
+
                 NumericType::NativeField => {
                     let field_value = constant.to_string();
                     let field_value = ark_bn254::Fr::from_str(&field_value).unwrap();

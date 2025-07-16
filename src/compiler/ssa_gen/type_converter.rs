@@ -13,11 +13,8 @@ impl TypeConverter {
         match noir_type {
             NoirType::Numeric(numeric) => match numeric {
                 NumericType::NativeField => Type::field(Empty),
-                NumericType::Unsigned { bit_size: 1 } => Type::bool(Empty),
-                NumericType::Unsigned { bit_size: 32 } => Type::u32(Empty),
-                NumericType::Unsigned { bit_size } => {
-                    panic!("Unsupported unsigned integer size: {}", bit_size)
-                }
+                NumericType::Unsigned { bit_size: 1 } => Type::u(1, Empty),
+                NumericType::Unsigned { bit_size } => Type::u((*bit_size).try_into().unwrap(), Empty),
                 NumericType::Signed { bit_size } => {
                     panic!("Signed integers not supported: {} bits", bit_size)
                 }
@@ -34,8 +31,13 @@ impl TypeConverter {
                 let converted_element = self.convert_type(element_type);
                 Type::array_of(converted_element, (*size).try_into().unwrap(), Empty)
             }
-            NoirType::Slice(_) => {
-                panic!("Slice types are not supported in custom SSA")
+            NoirType::Slice(element_types) => {
+                if element_types.len() != 1 {
+                    panic!("Only single-type slices are supported, got element_types = {:?}", element_types)
+                }
+                let element_type = &element_types[0];
+                let converted_element = self.convert_type(element_type);
+                Type::slice_of(converted_element, Empty)
             }
             NoirType::Function => {
                 panic!("Function types are not supported in custom SSA")

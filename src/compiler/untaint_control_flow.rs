@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::compiler::{
     flow_analysis::FlowAnalysis,
     ir::r#type::{Empty, Type, TypeExpr},
-    ssa::{Block, Function, FunctionId, OpCode, SSA, Terminator},
+    ssa::{BinaryArithOpKind, Block, Function, FunctionId, OpCode, SSA, Terminator},
     taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis, TaintType},
 };
 
@@ -55,13 +55,12 @@ impl UntaintControlFlow {
             let mut new_instructions = Vec::<OpCode<ConstantTaint>>::new();
             for instruction in block.take_instructions() {
                 let new = match instruction {
-                    OpCode::Add(r, l, h) => OpCode::Add(r, l, h),
-                    OpCode::Mul(r, l, h) => OpCode::Mul(r, l, h),
-                    OpCode::Lt(r, l, h) => OpCode::Lt(r, l, h),
-                    OpCode::Eq(r, l, h) => OpCode::Eq(r, l, h),
+                    OpCode::BinaryArithOp(kind, r, l, h) => OpCode::BinaryArithOp(kind, r, l, h),
+                    OpCode::Cmp(kind, r, l, h) => OpCode::Cmp(kind, r, l, h),
                     OpCode::Store(r, l) => OpCode::Store(r, l),
                     OpCode::Load(r, l) => OpCode::Load(r, l),
                     OpCode::ArrayGet(r, l, h) => OpCode::ArrayGet(r, l, h),
+                    OpCode::ArraySet(r, l, h, j) => OpCode::ArraySet(r, l, h, j),
                     OpCode::Alloc(r, l, _) => {
                         let r_taint = function_taint.get_value_taint(r);
                         let child = r_taint.child_taint_type().unwrap();
@@ -72,12 +71,24 @@ impl UntaintControlFlow {
                     OpCode::Call(r, l, h) => OpCode::Call(r, l, h),
                     OpCode::AssertEq(r, l) => OpCode::AssertEq(r, l),
                     OpCode::AssertR1C(r, l, h) => OpCode::AssertR1C(r, l, h),
-                    OpCode::And(r, l, h) => OpCode::And(r, l, h),
                     OpCode::Select(r, l, h, j) => OpCode::Select(r, l, h, j),
                     OpCode::WriteWitness(r, l, _) => {
                         OpCode::WriteWitness(r, l, ConstantTaint::Witness)
                     }
                     OpCode::Constrain(a, b, c) => OpCode::Constrain(a, b, c),
+                    OpCode::MkSeq(r, l, stp, tp) => {
+                        let r_taint = function_taint
+                            .get_value_taint(r)
+                            .child_taint_type()
+                            .unwrap();
+                        OpCode::MkSeq(r, l, stp, self.typify_taint(tp, &r_taint))
+                    }
+                    OpCode::Cast(r, l, t) => OpCode::Cast(r, l, t),
+                    OpCode::Truncate(r, l, out_bits, in_bits) => {
+                        OpCode::Truncate(r, l, out_bits, in_bits)
+                    }
+                    OpCode::Not(r, l) => OpCode::Not(r, l),
+                    OpCode::ToBits(r, l, e, s) => OpCode::ToBits(r, l, e, s),
                 };
                 new_instructions.push(new);
             }
@@ -98,7 +109,7 @@ impl UntaintControlFlow {
             Taint::Constant(ConstantTaint::Witness)
         ) {
             Some(
-                function.add_parameter(function.get_entry_id(), Type::bool(ConstantTaint::Witness)),
+                function.add_parameter(function.get_entry_id(), Type::u(1, ConstantTaint::Witness)),
             )
         } else {
             None
@@ -118,41 +129,17 @@ impl UntaintControlFlow {
 
             for instruction in old_instructions {
                 match instruction {
-                    OpCode::Add(_, _, _) | OpCode::Mul(_, _, _) => {
+                    OpCode::BinaryArithOp(_, _, _, _)
+                    | OpCode::Cmp(_, _, _, _)
+                    | OpCode::MkSeq(_, _, _, _)
+                    | OpCode::Cast(_, _, _)
+                    | OpCode::Truncate(_, _, _, _)
+                    | OpCode::Not(_, _)
+                    | OpCode::ToBits(_, _, _, _) => {
                         new_instructions.push(instruction);
                     }
                     OpCode::AssertEq(_, _) => {
                         assert_eq!(block_taint, None); // TODO: support conditional asserts
-                        new_instructions.push(instruction);
-                    }
-                    OpCode::Lt(_, lhs, rhs) => {
-                        let lhs_taint = function_taint
-                            .get_value_taint(lhs)
-                            .toplevel_taint()
-                            .expect_constant();
-                        let rhs_taint = function_taint
-                            .get_value_taint(rhs)
-                            .toplevel_taint()
-                            .expect_constant();
-
-                        // Dynamic Lt not supported yet
-                        assert_eq!(lhs_taint, ConstantTaint::Pure);
-                        assert_eq!(rhs_taint, ConstantTaint::Pure);
-                        new_instructions.push(instruction);
-                    }
-                    OpCode::Eq(_, lhs, rhs) => {
-                        let lhs_taint = function_taint
-                            .get_value_taint(lhs)
-                            .toplevel_taint()
-                            .expect_constant();
-                        let rhs_taint = function_taint
-                            .get_value_taint(rhs)
-                            .toplevel_taint()
-                            .expect_constant();
-
-                        // Dynamic Eq not supported yet
-                        assert_eq!(lhs_taint, ConstantTaint::Pure);
-                        assert_eq!(rhs_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
                     OpCode::Store(ptr, _) => {
@@ -175,6 +162,20 @@ impl UntaintControlFlow {
                         new_instructions.push(instruction);
                     }
                     OpCode::ArrayGet(_, arr, idx) => {
+                        let arr_taint = function_taint
+                            .get_value_taint(arr)
+                            .toplevel_taint()
+                            .expect_constant();
+                        let idx_taint = function_taint
+                            .get_value_taint(idx)
+                            .toplevel_taint()
+                            .expect_constant();
+                        // dynamic array access not supported
+                        assert_eq!(arr_taint, ConstantTaint::Pure);
+                        assert_eq!(idx_taint, ConstantTaint::Pure);
+                        new_instructions.push(instruction);
+                    }
+                    OpCode::ArraySet(_, arr, idx, _) => {
                         let arr_taint = function_taint
                             .get_value_taint(arr)
                             .toplevel_taint()
@@ -221,7 +222,12 @@ impl UntaintControlFlow {
                             let child_block_taint = match block_taint {
                                 Some(tnt) => {
                                     let result_val = function.fresh_value();
-                                    new_instructions.push(OpCode::And(result_val, tnt, cond));
+                                    new_instructions.push(OpCode::BinaryArithOp(
+                                        BinaryArithOpKind::And,
+                                        result_val,
+                                        tnt,
+                                        cond,
+                                    ));
                                     result_val
                                 }
                                 None => cond,
@@ -305,14 +311,6 @@ impl UntaintControlFlow {
                                 .set_terminator(Terminator::Jmp(merge, vec![]));
 
                             if args_passed_from_lhs.len() > 0 {
-                                // The naive solution is to witnesize the result and assert
-                                // res = lhs * cond + rhs * (cond - 1)
-                                // but this is 2 non-constant muls.
-                                // Instead, we notice that:
-                                // res = (lhs - rhs) * cond + rhs
-                                // this way we only need to witnessize the first term and return the
-                                // linear combination.
-
                                 for ((res, _), (lhs, rhs)) in merge_params.iter().zip(
                                     args_passed_from_lhs.iter().zip(args_passed_from_rhs.iter()),
                                 ) {
@@ -340,12 +338,8 @@ impl UntaintControlFlow {
                 expr: TypeExpr::Field,
                 annotation: taint.expect_constant(),
             },
-            (TypeExpr::Bool, TaintType::Primitive(taint)) => Type {
-                expr: TypeExpr::Bool,
-                annotation: taint.expect_constant(),
-            },
-            (TypeExpr::U32, TaintType::Primitive(taint)) => Type {
-                expr: TypeExpr::U32,
+            (TypeExpr::U(size), TaintType::Primitive(taint)) => Type {
+                expr: TypeExpr::U(size),
                 annotation: taint.expect_constant(),
             },
             (TypeExpr::Array(inner, size), TaintType::NestedImmutable(top, inner_taint)) => Type {
@@ -353,6 +347,10 @@ impl UntaintControlFlow {
                     Box::new(self.typify_taint(*inner, inner_taint.as_ref())),
                     size,
                 ),
+                annotation: top.expect_constant(),
+            },
+            (TypeExpr::Slice(inner), TaintType::NestedImmutable(top, inner_taint)) => Type {
+                expr: TypeExpr::Slice(Box::new(self.typify_taint(*inner, inner_taint.as_ref()))),
                 annotation: top.expect_constant(),
             },
             (TypeExpr::Ref(inner), TaintType::NestedMutable(top, inner_taint)) => Type {

@@ -1,7 +1,7 @@
 use itertools::Itertools;
 
 use crate::compiler::flow_analysis::FlowAnalysis;
-use crate::compiler::ir::r#type::{CommutativeSemigroup, Empty, Type, TypeExpr};
+use crate::compiler::ir::r#type::{CommutativeMonoid, Empty, Type, TypeExpr};
 use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SSA, SsaAnnotator, Terminator, ValueId};
 use crate::compiler::union_find::UnionFind;
 use std::collections::{HashMap, HashSet};
@@ -21,7 +21,7 @@ pub enum ConstantTaint {
     Witness,
 }
 
-impl CommutativeSemigroup for ConstantTaint {
+impl CommutativeMonoid for ConstantTaint {
     fn empty() -> Self {
         ConstantTaint::Pure
     }
@@ -594,11 +594,7 @@ impl TaintAnalysis {
 
             for instruction in block.get_instructions() {
                 match instruction {
-                    OpCode::Add(r, lhs, rhs)
-                    | OpCode::Lt(r, lhs, rhs)
-                    | OpCode::Eq(r, lhs, rhs)
-                    | OpCode::And(r, lhs, rhs)
-                    | OpCode::Mul(r, lhs, rhs) => {
+                    OpCode::BinaryArithOp(_, r, lhs, rhs) | OpCode::Cmp(_, r, lhs, rhs) => {
                         let lhs_taint = function_taint.value_taints.get(lhs).unwrap();
                         let rhs_taint = function_taint.value_taints.get(rhs).unwrap();
                         let result_taint = lhs_taint.union(rhs_taint);
@@ -613,10 +609,12 @@ impl TaintAnalysis {
                     }
                     OpCode::Alloc(r, t, _) => {
                         let free = self.construct_free_taint_for_type(t);
-                        let fv = self.fresh_ty_var();
                         function_taint.value_taints.insert(
                             *r,
-                            TaintType::NestedMutable(Taint::Variable(fv), Box::new(free)),
+                            TaintType::NestedMutable(
+                                Taint::Constant(ConstantTaint::Pure),
+                                Box::new(free),
+                            ),
                         );
                     }
                     OpCode::Store(ptr, v) => {
@@ -662,6 +660,15 @@ impl TaintAnalysis {
                         );
                         function_taint.value_taints.insert(*r, result_taint);
                     }
+                    OpCode::ArraySet(r, arr, idx, value) => {
+                        let arr_taint = function_taint.value_taints.get(arr).unwrap();
+                        let idx_taint = function_taint.value_taints.get(idx).unwrap();
+                        let value_taint = function_taint.value_taints.get(value).unwrap();
+                        let arr_elem_taint = arr_taint.child_taint_type().unwrap();
+                        let result_arr_taint = idx_taint.union(&arr_elem_taint).union(value_taint);
+                        let result_taint = TaintType::NestedImmutable(arr_taint.toplevel_taint(), Box::new(result_arr_taint));
+                        function_taint.value_taints.insert(*r, result_taint);
+                    }
                     OpCode::Call(outputs, func, inputs) => {
                         let return_types = ssa.get_function(*func).get_returns();
                         for (output, typ) in outputs.iter().zip(return_types.iter()) {
@@ -693,6 +700,44 @@ impl TaintAnalysis {
                             cfg_taint.clone(),
                             func_taint.cfg_taint.clone(),
                         ));
+                    }
+                    OpCode::MkSeq(result, inputs, _, tp) => {
+                        let inputs_taint = inputs
+                            .iter()
+                            .map(|v| function_taint.value_taints.get(v).unwrap())
+                            .collect::<Vec<_>>();
+                        let result_taint = inputs_taint
+                            .iter()
+                            .fold(self.construct_pure_taint_for_type(tp), |acc, t| {
+                                acc.union(t)
+                            });
+                        function_taint.value_taints.insert(
+                            *result,
+                            TaintType::NestedImmutable(
+                                Taint::Constant(ConstantTaint::Pure),
+                                Box::new(result_taint),
+                            ),
+                        );
+                    }
+                    OpCode::Cast(result, value, _) => {
+                        let value_taint = function_taint.value_taints.get(value).unwrap().clone();
+                        function_taint.value_taints.insert(*result, value_taint);
+                    }
+                    OpCode::Truncate(result, value, _, _) => {
+                        let value_taint = function_taint.value_taints.get(value).unwrap().clone();
+                        function_taint.value_taints.insert(*result, value_taint);
+                    }
+                    OpCode::Not(result, value) => {
+                        let value_taint = function_taint.value_taints.get(value).unwrap().clone();
+                        function_taint.value_taints.insert(*result, value_taint);
+                    }
+                    OpCode::ToBits(result, value, _, _) => {
+                        let value_taint = function_taint.value_taints.get(value).unwrap().clone();
+                        let result_taint = TaintType::NestedImmutable(
+                            Taint::Constant(ConstantTaint::Pure),
+                            Box::new(value_taint),
+                        );
+                        function_taint.value_taints.insert(*result, result_taint);
                     }
 
                     OpCode::WriteWitness { .. } | OpCode::Constrain { .. } => {
@@ -741,7 +786,7 @@ impl TaintAnalysis {
                         let cond_taint = function_taint.value_taints.get(cond).unwrap();
                         if cfg.is_loop_entry(block_id) {
                             // we assert that the condition is pure
-                            function_taint.judgements.push(Judgement::Eq(
+                            function_taint.judgements.push(Judgement::Le(
                                 cond_taint.toplevel_taint(),
                                 Taint::Constant(ConstantTaint::Pure),
                             ));
@@ -814,16 +859,40 @@ impl TaintAnalysis {
 
     fn construct_free_taint_for_type(&mut self, typ: &Type<Empty>) -> TaintType {
         match &typ.expr {
-            TypeExpr::U32 | TypeExpr::Field | TypeExpr::Bool => {
+            TypeExpr::U(_) | TypeExpr::Field => {
                 TaintType::Primitive(Taint::Variable(self.fresh_ty_var()))
             }
             TypeExpr::Array(i, _) => TaintType::NestedImmutable(
                 Taint::Variable(self.fresh_ty_var()),
                 Box::new(self.construct_free_taint_for_type(i)),
             ),
+            TypeExpr::Slice(i) => TaintType::NestedImmutable(
+                Taint::Variable(self.fresh_ty_var()),
+                Box::new(self.construct_free_taint_for_type(i)),
+            ),
             TypeExpr::Ref(i) => TaintType::NestedMutable(
                 Taint::Variable(self.fresh_ty_var()),
                 Box::new(self.construct_free_taint_for_type(i)),
+            ),
+        }
+    }
+
+    fn construct_pure_taint_for_type(&mut self, typ: &Type<Empty>) -> TaintType {
+        match &typ.expr {
+            TypeExpr::U(_) | TypeExpr::Field => {
+                TaintType::Primitive(Taint::Constant(ConstantTaint::Pure))
+            }
+            TypeExpr::Array(i, _) => TaintType::NestedImmutable(
+                Taint::Constant(ConstantTaint::Pure),
+                Box::new(self.construct_pure_taint_for_type(i)),
+            ),
+            TypeExpr::Slice(i) => TaintType::NestedImmutable(
+                Taint::Constant(ConstantTaint::Pure),
+                Box::new(self.construct_pure_taint_for_type(i)),
+            ),
+            TypeExpr::Ref(i) => TaintType::NestedMutable(
+                Taint::Constant(ConstantTaint::Pure),
+                Box::new(self.construct_pure_taint_for_type(i)),
             ),
         }
     }

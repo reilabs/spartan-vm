@@ -2,17 +2,19 @@ use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
 
 use crate::compiler::{
     ir::r#type::{Type, TypeExpr},
-    ssa::{BlockId, Const, Function, FunctionId, OpCode, SSA, Terminator, ValueId},
+    ssa::{
+        BinaryArithOpKind, BlockId, CmpKind, Const, Function, FunctionId, OpCode, SSA, Terminator,
+        ValueId,
+    },
 };
-use ark_ff::{AdditiveGroup, Field, PrimeField};
+use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
 use itertools::Itertools;
 
 #[derive(Clone, Debug)]
 pub enum Value {
     Const(ark_bn254::Fr),
     WitnessVar(usize),
-    Add(Box<Value>, Box<Value>),
-    Mul(Box<Value>, Box<Value>),
+    Arith(BinaryArithOpKind, Box<Value>, Box<Value>),
     Array(Vec<Value>),
     Ptr(Rc<RefCell<Value>>),
     Invalid,
@@ -22,17 +24,33 @@ impl Value {
     pub fn add(&self, other: &Value) -> Value {
         match (self, other) {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs + rhs),
-            (lhs, rhs) => Value::Add(Box::new(lhs.clone()), Box::new(rhs.clone())),
+            (lhs, rhs) => Value::Arith(
+                BinaryArithOpKind::Add,
+                Box::new(lhs.clone()),
+                Box::new(rhs.clone()),
+            ),
         }
     }
 
     pub fn sub(&self, other: &Value) -> Value {
         match (self, other) {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs - rhs),
-            (lhs, rhs) => {
-                let neg_rhs = Value::Const(ark_bn254::Fr::from(-1)).mul(rhs);
-                lhs.add(&neg_rhs)
-            }
+            (lhs, rhs) => Value::Arith(
+                BinaryArithOpKind::Sub,
+                Box::new(lhs.clone()),
+                Box::new(rhs.clone()),
+            ),
+        }
+    }
+
+    pub fn div(&self, other: &Value) -> Value {
+        match (self, other) {
+            (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs / rhs),
+            (lhs, rhs) => Value::Arith(
+                BinaryArithOpKind::Div,
+                Box::new(lhs.clone()),
+                Box::new(rhs.clone()),
+            ),
         }
     }
 
@@ -53,7 +71,11 @@ impl Value {
     pub fn mul(&self, other: &Value) -> Value {
         match (self, other) {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs * rhs),
-            (lhs, rhs) => Value::Mul(Box::new(lhs.clone()), Box::new(rhs.clone())),
+            (lhs, rhs) => Value::Arith(
+                BinaryArithOpKind::Mul,
+                Box::new(lhs.clone()),
+                Box::new(rhs.clone()),
+            ),
         }
     }
 
@@ -84,7 +106,7 @@ impl Value {
     pub fn expect_linear_combination(&self) -> Vec<(usize, ark_bn254::Fr)> {
         let first = match self {
             Value::Const(c) => vec![(0, *c)],
-            Value::Mul(l, r) => match (&**l, &**r) {
+            Value::Arith(BinaryArithOpKind::Mul, l, r) => match (&**l, &**r) {
                 (Value::Const(c), other) | (other, Value::Const(c)) => {
                     let mut r = other.expect_linear_combination();
                     for (_, cx) in r.iter_mut() {
@@ -94,10 +116,17 @@ impl Value {
                 }
                 _ => panic!("expected linear combination, got arb mul"),
             },
-            Value::Add(l, r) => {
+            Value::Arith(BinaryArithOpKind::Add, l, r) => {
                 let mut l = l.expect_linear_combination();
                 let r = r.expect_linear_combination();
                 l.extend(r);
+                l
+            }
+            Value::Arith(BinaryArithOpKind::Sub, l, r) => {
+                let mut l = l.expect_linear_combination();
+                let r = r.expect_linear_combination();
+                let r_negated: Vec<_> = r.iter().map(|(i, c)| (*i, -*c)).collect();
+                l.extend(r_negated);
                 l
             }
             Value::WitnessVar(i) => vec![(*i, ark_bn254::Fr::ONE)],
@@ -233,11 +262,8 @@ impl R1CGen {
 
         for (value_id, const_) in function.iter_consts() {
             match const_ {
-                Const::Bool(value) => {
-                    scope.insert(*value_id, Value::Const(ark_bn254::Fr::from(*value as u64)))
-                }
-                Const::U32(value) => {
-                    scope.insert(*value_id, Value::Const(ark_bn254::Fr::from(*value as u64)))
+                Const::U(_, value) => {
+                    scope.insert(*value_id, Value::Const(ark_bn254::Fr::from(*value)))
                 }
                 Const::Field(value) => scope.insert(*value_id, Value::Const(*value)),
             };
@@ -249,21 +275,35 @@ impl R1CGen {
             let block = function.get_block(block_id);
             for instruction in block.get_instructions() {
                 match instruction {
-                    OpCode::Add(result, lhs, rhs) => {
+                    OpCode::BinaryArithOp(BinaryArithOpKind::Add, result, lhs, rhs) => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         let r = lhs.add(rhs);
                         scope.insert(*result, r);
                     }
 
-                    OpCode::Mul(result, lhs, rhs) => {
+                    OpCode::BinaryArithOp(BinaryArithOpKind::Sub, result, lhs, rhs) => {
+                        let lhs = scope.get(lhs).unwrap();
+                        let rhs = scope.get(rhs).unwrap();
+                        let r = lhs.sub(rhs);
+                        scope.insert(*result, r);
+                    }
+
+                    OpCode::BinaryArithOp(BinaryArithOpKind::Mul, result, lhs, rhs) => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         let r = lhs.mul(rhs);
                         scope.insert(*result, r);
                     }
 
-                    OpCode::Lt(result, lhs, rhs) => {
+                    OpCode::BinaryArithOp(BinaryArithOpKind::Div, result, lhs, rhs) => {
+                        let lhs = scope.get(lhs).unwrap();
+                        let rhs = scope.get(rhs).unwrap();
+                        let r = lhs.div(rhs);
+                        scope.insert(*result, r);
+                    }
+
+                    OpCode::Cmp(CmpKind::Lt, result, lhs, rhs) => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         let r = lhs.lt(rhs);
@@ -289,6 +329,15 @@ impl R1CGen {
                         let index = scope.get(index).unwrap().expect_u32();
                         let value = array[index as usize].clone();
                         scope.insert(*result, value);
+                    }
+
+                    OpCode::ArraySet(result, array, index, value) => {
+                        let array = scope.get(array).unwrap().expect_array();
+                        let index = scope.get(index).unwrap().expect_u32();
+                        let value = scope.get(value).unwrap().clone();
+                        let mut new_array = array.clone();
+                        new_array[index as usize] = value;
+                        scope.insert(*result, Value::Array(new_array));
                     }
 
                     OpCode::AssertEq(_, _) => {
@@ -322,14 +371,14 @@ impl R1CGen {
                         }
                     }
 
-                    OpCode::Eq(result, lhs, rhs) => {
+                    OpCode::Cmp(CmpKind::Eq, result, lhs, rhs) => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         let r = lhs.eq(rhs);
                         scope.insert(*result, r);
                     }
 
-                    OpCode::And(_, _, _) => {
+                    OpCode::BinaryArithOp(BinaryArithOpKind::And, _, _, _) => {
                         todo!();
                     }
                     OpCode::Select(rslot, c, l, r) => {
@@ -337,8 +386,74 @@ impl R1CGen {
                         let l = scope.get(l).unwrap();
                         let r = scope.get(r).unwrap();
 
-                        let res = cond.mul(l).add(&Value::Const(ark_bn254::Fr::ONE).sub(cond).mul(r));
+                        let res = cond
+                            .mul(l)
+                            .add(&Value::Const(ark_bn254::Fr::ONE).sub(cond).mul(r));
                         scope.insert(*rslot, res);
+                    }
+                    OpCode::MkSeq(result, values, _, _) => {
+                        let values = values
+                            .iter()
+                            .map(|v| scope.get(v).unwrap().clone())
+                            .collect();
+                        scope.insert(*result, Value::Array(values));
+                    }
+                    OpCode::Cast(result, value, _) => {
+                        let value = scope.get(value).unwrap().clone();
+                        scope.insert(*result, value);
+                    }
+                    OpCode::Truncate(result, value, target_bits, _) => {
+                        let value = scope.get(value).unwrap().clone();
+                        let new_value = value.expect_constant().into_bigint().to_bits_le().iter().take(*target_bits).cloned().collect::<Vec<_>>();
+                        let new_value = Value::Const(ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&new_value)).unwrap());
+                        scope.insert(*result, new_value);
+                    }
+                    OpCode::Not(result, value_id) => {
+                        let value = scope.get(value_id).unwrap().clone();
+                        let value_const = value.expect_constant();
+                        let bits = value_const.into_bigint().to_bits_le();
+                        let value_type = function.get_value_type(*value_id).unwrap();
+                        let bit_size = value_type.get_bit_size();
+                        let mut negated_bits = Vec::new();
+                        for i in 0..bit_size {
+                            let bit = if i < bits.len() { bits[i] } else { false };
+                            negated_bits.push(!bit);
+                        }
+                        let new_value = Value::Const(ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&negated_bits)).unwrap());
+                        scope.insert(*result, new_value);
+                    }
+                    OpCode::ToBits(result, value_id, endianness, output_size) => {
+                        let value = scope.get(value_id).unwrap().clone();
+                        let value_const = value.expect_constant();
+                        let mut bits = value_const.into_bigint().to_bits_le();
+                        // Truncate or pad to the desired output size
+                        if bits.len() > *output_size {
+                            bits.truncate(*output_size);
+                        } else {
+                            while bits.len() < *output_size {
+                                bits.push(false);
+                            }
+                        }
+                        // Handle endianness
+                        let final_bits = match endianness {
+                            crate::compiler::ssa::Endianness::Little => bits,
+                            crate::compiler::ssa::Endianness::Big => {
+                                let mut reversed = bits;
+                                reversed.reverse();
+                                reversed
+                            }
+                        };
+                        // Convert bits to array of field elements (0 or 1)
+                        let mut bit_values = Vec::new();
+                        for bit in final_bits {
+                            let bit_value = if bit {
+                                Value::Const(ark_bn254::Fr::from(1u128))
+                            } else {
+                                Value::Const(ark_bn254::Fr::from(0u128))
+                            };
+                            bit_values.push(bit_value);
+                        }
+                        scope.insert(*result, Value::Array(bit_values));
                     }
                 }
             }
@@ -401,8 +516,7 @@ impl R1CGen {
 
     fn initialize_main_input<V: Clone>(&mut self, tp: &Type<V>) -> Value {
         match &tp.expr {
-            TypeExpr::Bool => Value::WitnessVar(self.next_witness()),
-            TypeExpr::U32 => Value::WitnessVar(self.next_witness()),
+            TypeExpr::U(_) => Value::WitnessVar(self.next_witness()),
             TypeExpr::Field => Value::WitnessVar(self.next_witness()),
             TypeExpr::Array(tp, size) => {
                 let mut result = vec![];

@@ -1,6 +1,6 @@
 use crate::compiler::{
     flow_analysis::{CFG, FlowAnalysis},
-    ir::r#type::{CommutativeSemigroup, Empty, Type},
+    ir::r#type::{CommutativeMonoid, Empty, Type},
     ssa_gen::SsaConverter,
 };
 use core::panic;
@@ -152,7 +152,7 @@ impl SSA<Empty> {
     }
 }
 
-impl<V: CommutativeSemigroup + Display + Eq + Clone> SSA<V> {
+impl<V: CommutativeMonoid + Display + Eq + Clone> SSA<V> {
     pub fn typecheck(&mut self, cfg: &FlowAnalysis) {
         let function_types = self
             .functions
@@ -181,8 +181,7 @@ impl<V: Display> SSA<V> {
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Const {
-    Bool(bool),
-    U32(u32),
+    U(usize, u128),
     Field(ark_bn254::Fr),
 }
 
@@ -358,13 +357,10 @@ impl<V: Clone> Function<V> {
         value_id
     }
 
-    pub fn push_bool_const(&mut self, value: bool) -> ValueId {
-        self.push_const(Const::Bool(value))
+    pub fn push_u_const(&mut self, size: usize, value: u128) -> ValueId {
+        self.push_const(Const::U(size, value))
     }
 
-    pub fn push_u32_const(&mut self, value: u32) -> ValueId {
-        self.push_const(Const::U32(value))
-    }
     pub fn push_field_const(&mut self, value: ark_bn254::Fr) -> ValueId {
         self.push_const(Const::Field(value))
     }
@@ -375,7 +371,7 @@ impl<V: Clone> Function<V> {
             .get_mut(&block_id)
             .unwrap()
             .instructions
-            .push(OpCode::Eq(value_id, lhs, rhs));
+            .push(OpCode::Cmp(CmpKind::Eq, value_id, lhs, rhs));
         value_id
     }
     pub fn push_add(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
@@ -388,7 +384,12 @@ impl<V: Clone> Function<V> {
             .get_mut(&block_id)
             .unwrap()
             .instructions
-            .push(OpCode::Add(value_id, lhs, rhs));
+            .push(OpCode::BinaryArithOp(
+                BinaryArithOpKind::Add,
+                value_id,
+                lhs,
+                rhs,
+            ));
         value_id
     }
     pub fn push_mul(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
@@ -398,7 +399,33 @@ impl<V: Clone> Function<V> {
             .get_mut(&block_id)
             .unwrap()
             .instructions
-            .push(OpCode::Mul(value_id, lhs, rhs));
+            .push(OpCode::BinaryArithOp(
+                BinaryArithOpKind::Mul,
+                value_id,
+                lhs,
+                rhs,
+            ));
+        value_id
+    }
+
+    pub fn push_div(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::BinaryArithOp(BinaryArithOpKind::Div, value_id, lhs, rhs));
+        value_id
+    }
+    pub fn push_sub(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::BinaryArithOp(BinaryArithOpKind::Sub, value_id, lhs, rhs));
         value_id
     }
     pub fn push_lt(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
@@ -408,7 +435,7 @@ impl<V: Clone> Function<V> {
             .get_mut(&block_id)
             .unwrap()
             .instructions
-            .push(OpCode::Lt(value_id, lhs, rhs));
+            .push(OpCode::Cmp(CmpKind::Lt, value_id, lhs, rhs));
         value_id
     }
     pub fn push_alloc(&mut self, block_id: BlockId, typ: Type<V>, annotation: V) -> ValueId {
@@ -453,7 +480,12 @@ impl<V: Clone> Function<V> {
             .get_mut(&block_id)
             .unwrap()
             .instructions
-            .push(OpCode::And(value_id, lhs, rhs));
+            .push(OpCode::BinaryArithOp(
+                BinaryArithOpKind::And,
+                value_id,
+                lhs,
+                rhs,
+            ));
         value_id
     }
 
@@ -503,6 +535,67 @@ impl<V: Clone> Function<V> {
             .unwrap()
             .instructions
             .push(OpCode::ArrayGet(value_id, array, index));
+        value_id
+    }
+
+    pub fn push_array_set(&mut self, block_id: BlockId, array: ValueId, index: ValueId, element: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::ArraySet(value_id, array, index, element));
+        value_id
+    }
+
+    pub fn push_mk_array(&mut self, block_id: BlockId, elements: Vec<ValueId>, stp: SeqType, typ: Type<V>) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions.push(OpCode::MkSeq(value_id, elements, stp, typ));
+        value_id
+    }
+
+    pub fn push_cast(&mut self, block_id: BlockId, value: ValueId, target: CastTarget) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions.push(OpCode::Cast(value_id, value, target));
+        value_id
+    }
+
+    pub fn push_truncate(&mut self, block_id: BlockId, value: ValueId, out_bit_size: usize, in_bit_size: usize) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions.push(OpCode::Truncate(value_id, value, out_bit_size, in_bit_size));
+        value_id
+    }
+
+    pub fn push_not(&mut self, block_id: BlockId, value: ValueId) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions.push(OpCode::Not(value_id, value));
+        value_id
+    }
+
+    pub fn push_to_bits(&mut self, block_id: BlockId, value: ValueId, endianness: Endianness, output_size: usize) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions.push(OpCode::ToBits(value_id, value, endianness, output_size));
         value_id
     }
 
@@ -593,7 +686,7 @@ impl<V: Clone> Function<V> {
     }
 }
 
-impl<V: CommutativeSemigroup + Display + Eq + Clone> Function<V> {
+impl<V: CommutativeMonoid + Display + Eq + Clone> Function<V> {
     fn typecheck(
         &mut self,
         function_types: &HashMap<FunctionId, (Vec<Type<V>>, Vec<Type<V>>)>,
@@ -603,8 +696,7 @@ impl<V: CommutativeSemigroup + Display + Eq + Clone> Function<V> {
 
         for (value_id, const_) in self.consts.iter() {
             match const_ {
-                Const::Bool(_) => new_value_info.insert(*value_id, Type::bool(V::empty())),
-                Const::U32(_) => new_value_info.insert(*value_id, Type::u32(V::empty())),
+                Const::U(size, _) => new_value_info.insert(*value_id, Type::u(*size, V::empty())),
                 Const::Field(_) => new_value_info.insert(*value_id, Type::field(V::empty())),
             };
         }
@@ -748,20 +840,92 @@ impl<V> Block<V> {
 }
 
 #[derive(Debug, Clone)]
+pub enum BinaryArithOpKind {
+    Add,
+    Mul,
+    Div,
+    Sub,
+    And,
+}
+
+#[derive(Debug, Clone)]
+pub enum CmpKind {
+    Lt,
+    Eq,
+}
+
+#[derive(Debug, Clone)]
+pub enum SeqType {
+    Array(usize),
+    Slice,
+}
+
+#[derive(Debug, Clone)]
+pub enum CastTarget {
+    Field,
+    U(usize),
+}
+
+#[derive(Debug, Clone)]
+pub enum Endianness {
+    Big,
+    Little,
+}
+
+impl Display for CastTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CastTarget::Field => write!(f, "Field"),
+            CastTarget::U(size) => write!(f, "u{}", size),
+        }
+    }
+}
+
+impl Display for Endianness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Endianness::Big => write!(f, "big"),
+            Endianness::Little => write!(f, "little"),
+        }
+    }
+}
+
+impl Display for SeqType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SeqType::Array(len) => write!(f, "Array[{}]", len),
+            SeqType::Slice => write!(f, "Slice"),
+        }
+    }
+}
+
+impl SeqType {
+    pub fn of<V: CommutativeMonoid>(&self, t: Type<V>) -> Type<V> {
+        match self {
+            SeqType::Array(len) => Type::array_of(t, *len, V::empty()),
+            SeqType::Slice => Type::slice_of(t, V::empty()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum OpCode<V> {
-    Eq(ValueId, ValueId, ValueId),                // _1 = _2 == _3
-    Add(ValueId, ValueId, ValueId),               // _1 = _2 + _3
-    Mul(ValueId, ValueId, ValueId),               // _1 = _2 * _3
-    Lt(ValueId, ValueId, ValueId),                // _1 = _2 < _3
-    And(ValueId, ValueId, ValueId),               // _1 = _2 & _3
-    Alloc(ValueId, Type<V>, V),                   // _1 = alloc(Type)
-    Store(ValueId, ValueId),                      // *_1 = _2
-    Load(ValueId, ValueId),                       // _1 = *_2
-    AssertEq(ValueId, ValueId),                   // assert _1 == _2
-    AssertR1C(ValueId, ValueId, ValueId),         // assert _1 * _2 - _3 == 0
+    Cmp(CmpKind, ValueId, ValueId, ValueId), // _1 = _2 `cmp` _3
+    BinaryArithOp(BinaryArithOpKind, ValueId, ValueId, ValueId), // _1 = _2 `op` _3
+    Cast(ValueId, ValueId, CastTarget), // _1 = cast _2 to _3
+    Truncate(ValueId, ValueId, usize, usize), // _1 = truncate _2 from _4 bits to _3 bits
+    Not(ValueId, ValueId), // _1 = ~_2 (bitwise negation)
+    MkSeq(ValueId, Vec<ValueId>, SeqType, Type<V>),   // _1 = [_2, _3, ...]: seqType<type>
+    Alloc(ValueId, Type<V>, V),              // _1 = alloc(Type)
+    Store(ValueId, ValueId),                 // *_1 = _2
+    Load(ValueId, ValueId),                  // _1 = *_2
+    AssertEq(ValueId, ValueId),              // assert _1 == _2
+    AssertR1C(ValueId, ValueId, ValueId),    // assert _1 * _2 - _3 == 0
     Call(Vec<ValueId>, FunctionId, Vec<ValueId>), // _1, ... = call function(_2, _3, ...)
-    ArrayGet(ValueId, ValueId, ValueId),          // _1 = _2[_3]
-    Select(ValueId, ValueId, ValueId, ValueId),   // _1 = _2 ? _3 : _4
+    ArrayGet(ValueId, ValueId, ValueId),     // _1 = _2[_3]
+    ArraySet(ValueId, ValueId, ValueId, ValueId), // _1 = _2[_3] = _4
+    Select(ValueId, ValueId, ValueId, ValueId), // _1 = _2 ? _3 : _4
+    ToBits(ValueId, ValueId, Endianness, usize), // _1 = to_bits _2 (endianness, output_size)
 
     // Phase 2
     WriteWitness(Option<ValueId>, ValueId, V), // _1 = as_witness(_2)
@@ -779,41 +943,37 @@ impl<V: Display> OpCode<V> {
             }
         }
         match self {
-            OpCode::Eq(result, lhs, rhs) => format!(
-                "v{}{} = v{} == v{}",
-                result.0,
-                annotate(value_annotator, *result),
-                lhs.0,
-                rhs.0
-            ),
-            OpCode::Add(result, lhs, rhs) => format!(
-                "v{}{} = v{} + v{}",
-                result.0,
-                annotate(value_annotator, *result),
-                lhs.0,
-                rhs.0
-            ),
-            OpCode::Mul(result, lhs, rhs) => format!(
-                "v{}{} = v{} * v{}",
-                result.0,
-                annotate(value_annotator, *result),
-                lhs.0,
-                rhs.0
-            ),
-            OpCode::And(result, lhs, rhs) => format!(
-                "v{}{} = v{} & v{}",
-                result.0,
-                annotate(value_annotator, *result),
-                lhs.0,
-                rhs.0
-            ),
-            OpCode::Lt(result, lhs, rhs) => format!(
-                "v{}{} = v{} < v{}",
-                result.0,
-                annotate(value_annotator, *result),
-                lhs.0,
-                rhs.0
-            ),
+            OpCode::Cmp(kind, result, lhs, rhs) => {
+                let op_str = match kind {
+                    CmpKind::Lt => "<",
+                    CmpKind::Eq => "==",
+                };
+                format!(
+                    "v{}{} = v{} {} v{}",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    lhs.0,
+                    op_str,
+                    rhs.0
+                )
+            }
+            OpCode::BinaryArithOp(kind, result, lhs, rhs) => {
+                let op_str = match kind {
+                    BinaryArithOpKind::Add => "+",
+                    BinaryArithOpKind::Sub => "-",
+                    BinaryArithOpKind::Mul => "*",
+                    BinaryArithOpKind::Div => "/",
+                    BinaryArithOpKind::And => "&",
+                };
+                format!(
+                    "v{}{} = v{} {} v{}",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    lhs.0,
+                    op_str,
+                    rhs.0
+                )
+            }
             OpCode::Alloc(result, typ, annotation) => format!(
                 "v{}{} = alloc({} as {})",
                 result.0,
@@ -856,6 +1016,16 @@ impl<V: Display> OpCode<V> {
                     index.0
                 )
             }
+            OpCode::ArraySet(result, array, index, element) => {
+                format!(
+                    "v{}{} = (v{}[v{}] = v{})",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    array.0,
+                    index.0,
+                    element.0
+                )
+            }
             OpCode::Select(result, cond, then, otherwise) => {
                 format!(
                     "v{}{} = v{} ? v{} : v{}",
@@ -866,7 +1036,7 @@ impl<V: Display> OpCode<V> {
                     otherwise.0
                 )
             }
-            OpCode::WriteWitness(result, value, _) => {
+            OpCode::WriteWitness(result, value, _annotation) => {
                 let r_str = if let Some(result) = result {
                     format!("v{}{} = ", result.0, annotate(value_annotator, *result))
                 } else {
@@ -877,18 +1047,61 @@ impl<V: Display> OpCode<V> {
             OpCode::Constrain(a, b, c) => {
                 format!("constrain_r1c(v{} * v{} - v{} == 0)", a.0, b.0, c.0)
             }
+            OpCode::MkSeq(result, values, seq_type, typ) => {
+                let values_str = values.iter().map(|v| format!("v{}", v.0)).join(", ");
+                format!(
+                    "v{}{} = [{}] : {} of {}",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    values_str,
+                    seq_type,
+                    typ
+                )
+            }
+            OpCode::Cast(result, value, target) => {
+                format!(
+                    "v{}{} = cast v{} to {}",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    value.0,
+                    target
+                )
+            }
+            OpCode::Truncate(result, value, out_bits, in_bits) => {
+                format!(
+                    "v{}{} = truncate v{} from {} bits to {} bits",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    value.0,
+                    in_bits,
+                    out_bits
+                )
+            }
+            OpCode::Not(result, value) => {
+                format!("v{}{} = ~v{}", result.0, annotate(value_annotator, *result), value.0)
+            }
+            OpCode::ToBits(result, value, endianness, output_size) => {
+                format!(
+                    "v{}{} = to_bits v{} (endianness: {}, size: {})",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    value.0,
+                    endianness,
+                    output_size
+                )
+            }
         }
     }
 }
 
-impl<V: CommutativeSemigroup + Display + Clone + Eq> OpCode<V> {
+impl<V: CommutativeMonoid + Display + Clone + Eq> OpCode<V> {
     pub fn typecheck(
         &self,
         type_assignments: &mut HashMap<ValueId, Type<V>>,
         function_types: &HashMap<FunctionId, (Vec<Type<V>>, Vec<Type<V>>)>,
     ) -> Result<(), String> {
         match self {
-            Self::Eq(result, lhs, rhs) => {
+            Self::Cmp(_kind, result, lhs, rhs) => {
                 let lhs_type = type_assignments.get(lhs).ok_or_else(|| {
                     format!(
                         "Left-hand side value {:?} not found in type assignments",
@@ -903,62 +1116,11 @@ impl<V: CommutativeSemigroup + Display + Clone + Eq> OpCode<V> {
                 })?;
                 type_assignments.insert(
                     *result,
-                    Type::bool(lhs_type.get_annotation().op(rhs_type.get_annotation())),
+                    Type::u(1, lhs_type.get_annotation().op(rhs_type.get_annotation())),
                 );
                 Ok(())
             }
-            Self::Add(result, lhs, rhs) => {
-                let lhs_type = type_assignments.get(lhs).ok_or_else(|| {
-                    format!(
-                        "Left-hand side value {:?} not found in type assignments",
-                        lhs
-                    )
-                })?;
-                let rhs_type = type_assignments.get(rhs).ok_or_else(|| {
-                    format!(
-                        "Right-hand side value {:?} not found in type assignments",
-                        rhs
-                    )
-                })?;
-                type_assignments.insert(*result, lhs_type.get_arithmetic_result_type(rhs_type));
-                Ok(())
-            }
-            Self::Mul(result, lhs, rhs) => {
-                let lhs_type = type_assignments.get(lhs).ok_or_else(|| {
-                    format!(
-                        "Left-hand side value {:?} not found in type assignments",
-                        lhs
-                    )
-                })?;
-                let rhs_type = type_assignments.get(rhs).ok_or_else(|| {
-                    format!(
-                        "Right-hand side value {:?} not found in type assignments",
-                        rhs
-                    )
-                })?;
-                type_assignments.insert(*result, lhs_type.get_arithmetic_result_type(rhs_type));
-                Ok(())
-            }
-            Self::Lt(result, lhs, rhs) => {
-                let lhs_type = type_assignments.get(lhs).ok_or_else(|| {
-                    format!(
-                        "Left-hand side value {:?} not found in type assignments",
-                        lhs
-                    )
-                })?;
-                let rhs_type = type_assignments.get(rhs).ok_or_else(|| {
-                    format!(
-                        "Right-hand side value {:?} not found in type assignments",
-                        rhs
-                    )
-                })?;
-                type_assignments.insert(
-                    *result,
-                    Type::bool(lhs_type.get_annotation().op(rhs_type.get_annotation())),
-                );
-                Ok(())
-            }
-            Self::And(result, lhs, rhs) => {
+            Self::BinaryArithOp(_kind, result, lhs, rhs) => {
                 let lhs_type = type_assignments.get(lhs).ok_or_else(|| {
                     format!(
                         "Left-hand side value {:?} not found in type assignments",
@@ -1028,7 +1190,7 @@ impl<V: CommutativeSemigroup + Display + Clone + Eq> OpCode<V> {
                 }
                 Ok(())
             }
-            Self::ArrayGet(result, array, _) => {
+            Self::ArrayGet(result, array, storage) => {
                 let array_type = type_assignments.get(array).ok_or_else(|| {
                     format!("Array value {:?} not found in type assignments", array)
                 })?;
@@ -1038,6 +1200,14 @@ impl<V: CommutativeSemigroup + Display + Clone + Eq> OpCode<V> {
                     *result,
                     element_type.combine_with_annotation(array_type.get_annotation()),
                 );
+                Ok(())
+            }
+            Self::ArraySet(result, array, _, _) => {
+                let array_type = type_assignments.get(array).ok_or_else(|| {
+                    format!("Array value {:?} not found in type assignments", array)
+                })?;
+
+                type_assignments.insert(*result, array_type.clone());
                 Ok(())
             }
             Self::Select(result, _cond, then, otherwise) => {
@@ -1070,6 +1240,48 @@ impl<V: CommutativeSemigroup + Display + Clone + Eq> OpCode<V> {
                 Ok(())
             }
             Self::Constrain(_, _, _) => Ok(()),
+            Self::MkSeq(r, _, top_tp, t) => {
+                type_assignments.insert(*r, top_tp.of(t.clone()));
+                Ok(())
+            }
+            Self::Cast(result, value, target) => {
+                let value_type = type_assignments.get(value).ok_or_else(|| {
+                    format!("Value {:?} not found in type assignments", value)
+                })?;
+                
+                let result_type = match target {
+                    CastTarget::Field => Type::field(value_type.get_annotation().clone()),
+                    CastTarget::U(size) => Type::u(*size, value_type.get_annotation().clone()),
+                };
+                
+                type_assignments.insert(*result, result_type);
+                Ok(())
+            }
+            Self::Truncate(result, value, _, _) => {
+                let value_type = type_assignments.get(value).ok_or_else(|| {
+                    format!("Value {:?} not found in type assignments", value)
+                })?;
+                
+                type_assignments.insert(*result, value_type.clone());
+                Ok(())
+            }
+            Self::Not(result, value) => {
+                let value_type = type_assignments.get(value).ok_or_else(|| {
+                    format!("Value {:?} not found in type assignments", value)
+                })?;
+                type_assignments.insert(*result, value_type.clone());
+                Ok(())
+            }
+            Self::ToBits(result, value, _, output_size) => {
+                let value_type = type_assignments.get(value).ok_or_else(|| {
+                    format!("Value {:?} not found in type assignments", value)
+                })?;
+                // Return an array of U(1) values with the same annotation as the input
+                let bit_type = Type::u(1, value_type.get_annotation().clone());
+                let result_type = Type::array_of(bit_type, *output_size, V::empty());
+                type_assignments.insert(*result, result_type);
+                Ok(())
+            }
         }
     }
 }
@@ -1078,18 +1290,16 @@ impl<V> OpCode<V> {
     pub fn get_operands_mut(&mut self) -> impl Iterator<Item = &mut ValueId> {
         match self {
             Self::Alloc(r, _, _) => vec![r].into_iter(),
-            Self::Eq(a, b, c)
-            | Self::Add(a, b, c)
-            | Self::Mul(a, b, c)
-            | Self::Lt(a, b, c)
-            | Self::ArrayGet(a, b, c)
-            | Self::And(a, b, c)
-            | Self::AssertR1C(a, b, c)
+            Self::Cmp(_, a, b, c)
+            | Self::BinaryArithOp(_, a, b, c)
+            | Self::ArrayGet(a, b, c) => vec![a, b, c].into_iter(),
+            Self::Cast(a, b, _) => vec![a, b].into_iter(),
+            Self::Truncate(a, b, _, _) => vec![a, b].into_iter(),
+            Self::ArraySet(a, b, c, d) => vec![a, b, c, d].into_iter(),
+            Self::AssertR1C(a, b, c)
             | Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
-            Self::Store(a, b)
-            | Self::Load(a, b)
-            | Self::AssertEq(a, b) => vec![a, b].into_iter(),
-            | Self::WriteWitness(a, b, _) => {
+            Self::Store(a, b) | Self::Load(a, b) | Self::AssertEq(a, b) => vec![a, b].into_iter(),
+            Self::WriteWitness(a, b, _) => {
                 let mut ret_vec = a.iter_mut().collect::<Vec<_>>();
                 ret_vec.push(b);
                 ret_vec.into_iter()
@@ -1100,60 +1310,70 @@ impl<V> OpCode<V> {
                 ret_vec.extend(args_vec);
                 ret_vec.into_iter()
             }
+            Self::MkSeq(r, inputs, _, _) => {
+                let mut ret_vec = vec![r];
+                ret_vec.extend(inputs);
+                ret_vec.into_iter()
+            }
             Self::Select(a, b, c, d) => vec![a, b, c, d].into_iter(),
+            Self::Not(r, v) => vec![r, v].into_iter(),
+            Self::ToBits(r, v, _, _) => vec![r, v].into_iter(),
         }
     }
 
     pub fn get_inputs_mut(&mut self) -> impl Iterator<Item = &mut ValueId> {
         match self {
             Self::Alloc(_, _, _) => vec![].into_iter(),
-            Self::Eq(_, b, c)
-            | Self::Add(_, b, c)
-            | Self::And(_, b, c)
-            | Self::Mul(_, b, c)
-            | Self::Lt(_, b, c)
-            | Self::ArrayGet(_, b, c)
-            | Self::AssertEq(b, c)
+            Self::Cmp(_, _, b, c)
+            | Self::BinaryArithOp(_, _, b, c)
+            | Self::ArrayGet(_, b, c) => vec![b, c].into_iter(),
+            Self::ArraySet(_, b, c, d) => vec![b, c, d].into_iter(),
+            Self::AssertEq(b, c)
             | Self::Store(b, c) => vec![b, c].into_iter(),
-            Self::Load(_, c) | Self::WriteWitness(_, c, _) => vec![c].into_iter(),
+            Self::Load(_, c) | Self::WriteWitness(_, c, _) | Self::Cast(_, c, _) | Self::Truncate(_, c, _, _) => vec![c].into_iter(),
             Self::Call(_, _, a) => a.iter_mut().collect::<Vec<_>>().into_iter(),
+            Self::MkSeq(_, inputs, _, _) => inputs.iter_mut().collect::<Vec<_>>().into_iter(),
             Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) | Self::Constrain(b, c, d) => {
                 vec![b, c, d].into_iter()
             }
+            Self::Not(_, v) => vec![v].into_iter(),
+            Self::ToBits(_, v, _, _) => vec![v].into_iter(),
         }
     }
 
     pub fn get_inputs(&self) -> impl Iterator<Item = &ValueId> {
         match self {
             Self::Alloc(_, _, _) => vec![].into_iter(),
-            Self::Eq(_, b, c)
-            | Self::And(_, b, c)
-            | Self::Add(_, b, c)
-            | Self::Mul(_, b, c)
-            | Self::Lt(_, b, c)
-            | Self::ArrayGet(_, b, c)
-            | Self::AssertEq(b, c)
+            Self::Cmp(_, _, b, c)
+            | Self::BinaryArithOp(_, _, b, c)
+            | Self::ArrayGet(_, b, c) => vec![b, c].into_iter(),
+            Self::ArraySet(_, b, c, d) => vec![b, c, d].into_iter(),
+            Self::AssertEq(b, c)
             | Self::Store(b, c) => vec![b, c].into_iter(),
-            Self::Load(_, c) | Self::WriteWitness(_, c, _) => vec![c].into_iter(),
+            Self::Load(_, c) | Self::WriteWitness(_, c, _) | Self::Cast(_, c, _) | Self::Truncate(_, c, _, _) => vec![c].into_iter(),
             Self::Call(_, _, a) => a.iter().collect::<Vec<_>>().into_iter(),
+            Self::MkSeq(_, inputs, _, _) => inputs.iter().collect::<Vec<_>>().into_iter(),
             Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) | Self::Constrain(b, c, d) => {
                 vec![b, c, d].into_iter()
             }
+            Self::Not(_, v) => vec![v].into_iter(),
+            Self::ToBits(_, v, _, _) => vec![v].into_iter(),
         }
     }
 
     pub fn get_results(&self) -> impl Iterator<Item = &ValueId> {
         match self {
             Self::Alloc(r, _, _)
-            | Self::Eq(r, _, _)
-            | Self::Add(r, _, _)
-            | Self::And(r, _, _)
-            | Self::Mul(r, _, _)
-            | Self::Lt(r, _, _)
+            | Self::Cmp(_, r, _, _)
+            | Self::BinaryArithOp(_, r, _, _)
             | Self::ArrayGet(r, _, _)
+            | Self::ArraySet(r, _, _, _)
             | Self::Load(r, _)
-            | Self::Select(r, _, _, _) => vec![r].into_iter(),  
-            | Self::WriteWitness(r, _, _) => {
+            | Self::MkSeq(r, _, _, _)
+            | Self::Select(r, _, _, _)
+            | Self::Cast(r, _, _)
+            | Self::Truncate(r, _, _, _) => vec![r].into_iter(),
+            Self::WriteWitness(r, _, _) => {
                 let ret_vec = r.iter().collect::<Vec<_>>();
                 ret_vec.into_iter()
             }
@@ -1162,6 +1382,8 @@ impl<V> OpCode<V> {
             | Self::Store(_, _)
             | Self::AssertEq(_, _)
             | Self::AssertR1C(_, _, _) => vec![].into_iter(),
+            Self::Not(r, _) => vec![r].into_iter(),
+            Self::ToBits(r, _, _, _) => vec![r].into_iter(),
         }
     }
 }

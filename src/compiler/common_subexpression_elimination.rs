@@ -6,22 +6,24 @@ use std::{
 use crate::compiler::{
     fix_double_jumps::ValueReplacements,
     flow_analysis::{CFG, FlowAnalysis},
-    ssa::{BlockId, Const, Function, OpCode, SSA, ValueId},
+    ssa::{BinaryArithOpKind, BlockId, Const, CmpKind, Function, OpCode, SSA, ValueId},
 };
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Expr {
     Add(Vec<Expr>),
     Mul(Vec<Expr>),
+    Div(Box<Expr>, Box<Expr>),
+    Sub(Box<Expr>, Box<Expr>),
     FConst(ark_bn254::Fr),
-    BConst(bool),
-    UConst(u32),
+    UConst(usize, u128),
     Variable(u64),
     Eq(Box<Expr>, Box<Expr>),
     Lt(Box<Expr>, Box<Expr>),
     And(Vec<Expr>),
     Select(Box<Expr>, Box<Expr>, Box<Expr>),
     ArrayGet(Box<Expr>, Box<Expr>),
+    Not(Box<Expr>),
 }
 
 impl Expr {
@@ -64,21 +66,21 @@ impl Expr {
         Self::Mul(muls)
     }
 
+    pub fn div(&self, other: &Self) -> Self {
+        Self::Div(Box::new(self.clone()), Box::new(other.clone()))
+    }
+
+    pub fn sub(&self, other: &Self) -> Self {
+        Self::Sub(Box::new(self.clone()), Box::new(other.clone()))
+    }
+
     pub fn and(&self, other: &Self) -> Self {
         let mut ands = self.get_ands();
         ands.extend(other.get_ands());
         ands.sort();
         Self::And(ands)
     }
-
-    pub fn bconst(value: bool) -> Self {
-        Self::BConst(value)
-    }
-
-    pub fn uconst(value: u32) -> Self {
-        Self::UConst(value)
-    }
-
+    
     pub fn fconst(value: ark_bn254::Fr) -> Self {
         Self::FConst(value)
     }
@@ -97,6 +99,10 @@ impl Expr {
 
     pub fn select(&self, then: &Self, otherwise: &Self) -> Self {
         Self::Select(Box::new(self.clone()), Box::new(then.clone()), Box::new(otherwise.clone()))
+    }
+
+    pub fn not(&self) -> Self {
+        Self::Not(Box::new(self.clone()))
     }
 }
 
@@ -121,9 +127,10 @@ impl Display for Expr {
                     .collect::<Vec<_>>()
                     .join(" * ")
             ),
+            Self::Div(lhs, rhs) => write!(f, "({} / {})", lhs, rhs),
+            Self::Sub(lhs, rhs) => write!(f, "({} - {})", lhs, rhs),
             Self::FConst(value) => write!(f, "{}", value),
-            Self::BConst(value) => write!(f, "{}", value),
-            Self::UConst(value) => write!(f, "{}", value),
+            Self::UConst(size, value) => write!(f, "u{}({})", size, value),
             Self::Variable(value) => write!(f, "v{}", value),
             Self::Eq(lhs, rhs) => write!(f, "({} == {})", lhs, rhs),
             Self::Lt(lhs, rhs) => write!(f, "({} < {})", lhs, rhs),
@@ -138,6 +145,7 @@ impl Display for Expr {
             ),
             Self::Select(cond, then, otherwise) => write!(f, "({} ? {} : {})", cond, then, otherwise),
             Self::ArrayGet(array, index) => write!(f, "{}[{}]", array, index),
+            Self::Not(value) => write!(f, "(~{})", value),
         }
     }
 }
@@ -242,8 +250,7 @@ impl CSE {
 
         for (value_id, const_) in ssa.iter_consts() {
             match const_ {
-                Const::Bool(value) => exprs.insert(*value_id, Expr::bconst(*value)),
-                Const::U32(value) => exprs.insert(*value_id, Expr::uconst(*value)),
+                Const::U(size, value) => exprs.insert(*value_id, Expr::UConst(*size, *value)),
                 Const::Field(value) => exprs.insert(*value_id, Expr::fconst(*value)),
             };
         }
@@ -260,7 +267,7 @@ impl CSE {
 
             for (instruction_idx, instruction) in block.get_instructions().enumerate() {
                 match instruction {
-                    OpCode::Add(r, lhs, rhs) => {
+                    OpCode::BinaryArithOp(BinaryArithOpKind::Add, r, lhs, rhs) => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.add(&rhs_expr);
@@ -271,7 +278,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::Mul(r, lhs, rhs) => {
+                    OpCode::BinaryArithOp(BinaryArithOpKind::Mul, r, lhs, rhs) => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.mul(&rhs_expr);
@@ -282,7 +289,29 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::Eq(r, lhs, rhs) => {
+                    OpCode::BinaryArithOp(BinaryArithOpKind::Div, r, lhs, rhs) => {
+                        let lhs_expr = get_expr(&exprs, lhs);
+                        let rhs_expr = get_expr(&exprs, rhs);
+                        let result_expr = lhs_expr.div(&rhs_expr);
+                        exprs.insert(*r, result_expr.clone());
+                        result.entry(result_expr).or_default().push((
+                            block_id,
+                            instruction_idx,
+                            *r,
+                        ));
+                    }
+                    OpCode::BinaryArithOp(BinaryArithOpKind::Sub, r, lhs, rhs) => {
+                        let lhs_expr = get_expr(&exprs, lhs);
+                        let rhs_expr = get_expr(&exprs, rhs);
+                        let result_expr = lhs_expr.sub(&rhs_expr);
+                        exprs.insert(*r, result_expr.clone());
+                        result.entry(result_expr).or_default().push((
+                            block_id,
+                            instruction_idx,
+                            *r,
+                        ));
+                    }
+                    OpCode::Cmp(CmpKind::Eq, r, lhs, rhs) => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.eq(&rhs_expr);
@@ -293,7 +322,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::Lt(r, lhs, rhs) => {
+                    OpCode::Cmp(CmpKind::Lt, r, lhs, rhs) => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.lt(&rhs_expr);
@@ -304,7 +333,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::And(r, lhs, rhs) => {
+                    OpCode::BinaryArithOp(BinaryArithOpKind::And, r, lhs, rhs) => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.and(&rhs_expr);
@@ -345,7 +374,22 @@ impl CSE {
                     | OpCode::Load { .. }
                     | OpCode::AssertEq { .. }
                     | OpCode::AssertR1C { .. }
-                    | OpCode::Call { .. } => {}
+                    | OpCode::Call { .. }
+                    | OpCode::MkSeq { .. }
+                    | OpCode::ArraySet { .. }
+                    | OpCode::Cast { .. }
+                    | OpCode::Truncate { .. }
+                    | OpCode::ToBits { .. } => {}
+                    OpCode::Not(r, value) => {
+                        let value_expr = get_expr(&exprs, value);
+                        let result_expr = value_expr.not();
+                        exprs.insert(*r, result_expr.clone());
+                        result.entry(result_expr).or_default().push((
+                            block_id,
+                            instruction_idx,
+                            *r,
+                        ));
+                    }
                 }
             }
         }

@@ -16,6 +16,7 @@ impl Mem2Reg {
 
     pub fn run<V: Clone>(&mut self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
+            println!("Running mem2reg for function: {:?}", function_id);
             if !self.escape_safe(function) {
                 continue;
             }
@@ -93,10 +94,10 @@ impl Mem2Reg {
                 }
                 Terminator::JmpIf(_, t1, t2) => {
                     if phi_map.contains_key(t1) {
-                        panic!("ICE: JmpIf with phi parameter");
+                        panic!("ICE: JmpIf with phi parameter {:?}", phi_map.get(t1));
                     }
                     if phi_map.contains_key(t2) {
-                        panic!("ICE: JmpIf with phi parameter");
+                        panic!("ICE: JmpIf with phi parameter {:?}", phi_map.get(t2));
                     }
                 }
                 _ => {}

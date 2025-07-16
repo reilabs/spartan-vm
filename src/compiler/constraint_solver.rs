@@ -82,7 +82,9 @@ impl ConstraintSolver {
         // println!("Number of judgements: {}", self.num_judgements());
 
         if self.num_judgements() > 0 {
+            println!("About to fail:\n{}", self.judgements_string());
             panic!("Failed to solve constraints");
+        
         }
 
         // self.unify_cycles();

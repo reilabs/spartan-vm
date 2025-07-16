@@ -91,14 +91,17 @@ impl DCE {
                             }
                         }
                         OpCode::Load { .. }
-                        | OpCode::Add { .. }
-                        | OpCode::Mul { .. }
-                        | OpCode::Eq { .. }
+                        | OpCode::BinaryArithOp { .. }
+                        | OpCode::Cmp { .. }
                         | OpCode::Alloc { .. }
-                        | OpCode::Lt { .. }
-                        | OpCode::And { .. }
                         | OpCode::Select { .. }
-                        | OpCode::ArrayGet { .. } => {}
+                        | OpCode::ArrayGet { .. }
+                        | OpCode::ArraySet { .. }
+                        | OpCode::MkSeq { .. }
+                        | OpCode::Cast { .. }
+                        | OpCode::Truncate { .. }
+                        | OpCode::Not { .. }
+                        | OpCode::ToBits { .. } => {}
                     }
                 }
 

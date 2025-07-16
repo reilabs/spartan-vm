@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
-    ssa::{OpCode, SSA, ValueId},
+    ssa::{BinaryArithOpKind, OpCode, SSA, ValueId},
     taint_analysis::ConstantTaint,
 };
 
@@ -83,7 +83,7 @@ impl PullIntoAssert {
         match def {
             // TODO: we should also pull further, skipping pure multiplications and shoving 
             // them into the constants or R1CS constraints
-            OpCode::Mul(_, lhs, rhs) => Some(PulledProduct {
+            OpCode::BinaryArithOp(BinaryArithOpKind::Mul, _, lhs, rhs) => Some(PulledProduct {
                 lhs: *lhs,
                 rhs: *rhs,
             }),

@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display, Formatter};
 
-pub trait CommutativeSemigroup {
+pub trait CommutativeMonoid {
     fn empty() -> Self;
     fn op(&self, other: &Self) -> Self;
 }
@@ -8,7 +8,7 @@ pub trait CommutativeSemigroup {
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub struct Empty;
 
-impl CommutativeSemigroup for Empty {
+impl CommutativeMonoid for Empty {
     fn empty() -> Self {
         Empty
     }
@@ -26,21 +26,23 @@ impl Display for Empty {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeExpr<V> {
-    Bool,
     Field,
-    U32,
+    U(usize),
     Array(Box<Type<V>>, usize),
+    Slice(Box<Type<V>>),
     Ref(Box<Type<V>>),
 }
 
 impl<V> TypeExpr<V> {
     pub fn equal_up_to_annotation(&self, other: &Self) -> bool {
         match (self, other) {
-            (TypeExpr::Bool, TypeExpr::Bool) => true,
             (TypeExpr::Field, TypeExpr::Field) => true,
-            (TypeExpr::U32, TypeExpr::U32) => true,
+            (TypeExpr::U(size1), TypeExpr::U(size2)) => size1 == size2,
             (TypeExpr::Array(inner1, size1), TypeExpr::Array(inner2, size2)) => {
                 inner1.equal_up_to_annotation(inner2) && size1 == size2
+            }
+            (TypeExpr::Slice(inner1), TypeExpr::Slice(inner2)) => {
+                inner1.equal_up_to_annotation(inner2)
             }
             (TypeExpr::Ref(inner1), TypeExpr::Ref(inner2)) => inner1.equal_up_to_annotation(inner2),
             _ => false,
@@ -66,15 +68,20 @@ impl<V: Display> Display for Type<V> {
         }
 
         match &self.expr {
-            TypeExpr::Bool => write!(f, "bool{}", format_annotation(&self.annotation)),
             TypeExpr::Field => write!(f, "Field{}", format_annotation(&self.annotation)),
-            TypeExpr::U32 => write!(f, "u32{}", format_annotation(&self.annotation)),
+            TypeExpr::U(size) => write!(f, "u{}{}", size, format_annotation(&self.annotation)),
             TypeExpr::Array(inner, size) => write!(
                 f,
                 "Array{}<{}, {}>",
                 format_annotation(&self.annotation),
                 inner,
                 size,
+            ),
+            TypeExpr::Slice(inner) => write!(
+                f,
+                "Slice{}<{}>",
+                format_annotation(&self.annotation),
+                inner,
             ),
             TypeExpr::Ref(inner) => {
                 write!(f, "Ref{}<{}>", format_annotation(&self.annotation), inner)
@@ -83,17 +90,14 @@ impl<V: Display> Display for Type<V> {
     }
 }
 
-impl<V: CommutativeSemigroup + Display> Type<V> {
+impl<V: CommutativeMonoid + Display> Type<V> {
     pub fn get_arithmetic_result_type(&self, other: &Self) -> Self {
         match (&self.expr, &other.expr) {
             (TypeExpr::Field, _) | (_, TypeExpr::Field) => {
                 Type::field(self.annotation.op(&other.annotation))
             }
-            (TypeExpr::U32, _) | (_, TypeExpr::U32) => {
-                Type::u32(self.annotation.op(&other.annotation))
-            }
-            (TypeExpr::Bool, _) | (_, TypeExpr::Bool) => {
-                Type::bool(self.annotation.op(&other.annotation))
+            (TypeExpr::U(size1), TypeExpr::U(size2)) => {
+                Type::u(*size1.max(size2), self.annotation.op(&other.annotation))
             }
             _ => panic!("Cannot perform arithmetic on types {} and {}", self, other),
         }
@@ -111,6 +115,7 @@ impl<V: Clone> Type<V> {
     pub fn get_array_element(&self) -> Self {
         match &self.expr {
             TypeExpr::Array(inner, _) => *inner.clone(),
+            TypeExpr::Slice(inner) => *inner.clone(),
             _ => panic!("Type is not an array"),
         }
     }
@@ -130,7 +135,7 @@ impl<V> Type<V> {
 
     pub fn bool(annotation: V) -> Self {
         Type {
-            expr: TypeExpr::Bool,
+            expr: TypeExpr::U(1),
             annotation,
         }
     }
@@ -142,16 +147,27 @@ impl<V> Type<V> {
         }
     }
 
-    pub fn u32(annotation: V) -> Self {
+    pub fn u(size: usize, annotation: V) -> Self {
         Type {
-            expr: TypeExpr::U32,
+            expr: TypeExpr::U(size),
             annotation,
         }
+    }
+
+    pub fn u32(annotation: V) -> Self {
+        Type::u(32, annotation)
     }
 
     pub fn array_of(self, size: usize, annotation: V) -> Self {
         Type {
             expr: TypeExpr::Array(Box::new(self), size),
+            annotation,
+        }
+    }
+
+    pub fn slice_of(self, annotation: V) -> Self {
+        Type {
+            expr: TypeExpr::Slice(Box::new(self)),
             annotation,
         }
     }
@@ -164,19 +180,27 @@ impl<V> Type<V> {
     }
 
     pub fn is_numeric(&self) -> bool {
-        matches!(self.expr, TypeExpr::U32 | TypeExpr::Field | TypeExpr::Bool)
+        matches!(self.expr, TypeExpr::U(_) | TypeExpr::Field)
     }
 
     pub fn is_array(&self) -> bool {
         matches!(self.expr, TypeExpr::Array(_, _))
     }
 
+    pub fn is_slice(&self) -> bool {
+        matches!(self.expr, TypeExpr::Slice(_))
+    }
+
+    pub fn is_u(&self) -> bool {
+        matches!(self.expr, TypeExpr::U(_))
+    }
+
     pub fn is_u32(&self) -> bool {
-        matches!(self.expr, TypeExpr::U32)
+        matches!(self.expr, TypeExpr::U(32))
     }
 
     pub fn has_eq(&self) -> bool {
-        matches!(self.expr, TypeExpr::Field | TypeExpr::U32 | TypeExpr::Bool)
+        matches!(self.expr, TypeExpr::Field | TypeExpr::U(_))
     }
 
     pub fn is_ref(&self) -> bool {
@@ -195,6 +219,14 @@ impl<V> Type<V> {
         match &self.expr {
             TypeExpr::Ref(inner) => inner.as_ref(),
             _ => panic!("Type is not a reference"),
+        }
+    }
+
+    pub fn get_bit_size(&self) -> usize {
+        match &self.expr {
+            TypeExpr::U(size) => *size,
+            TypeExpr::Field => 254, // TODO: parametrize
+            _ => panic!("Type is not a u"),
         }
     }
 }
