@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::compiler::{
-    ir::r#type::{Empty, Type, TypeExpr},
+    ir::r#type::{Type, TypeExpr},
     ssa::{BlockId, Const, Function, FunctionId, OpCode, SSA, Terminator, ValueId},
 };
 use ark_ff::{AdditiveGroup, Field, PrimeField};
@@ -227,10 +227,11 @@ impl WitnessGen {
                     }
                     OpCode::WriteWitness(result, v, _) => {
                         let v = scope.get(v).unwrap().clone();
-                        scope.insert(*result, v.clone());
+                        if let Some(result) = result {
+                            scope.insert(*result, v.clone());
+                        }
                         self.witness.push(v.expect_fp());
                     }
-
                     OpCode::Call(ret, tgt, args) => {
                         let args = args
                             .iter()

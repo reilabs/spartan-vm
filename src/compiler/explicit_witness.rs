@@ -42,7 +42,7 @@ impl ExplicitWitness {
                             // witness-witness mul
                             let mul_witness = function.fresh_value();
                             new_instructions.push(OpCode::Mul(mul_witness, l, r));
-                            new_instructions.push(OpCode::WriteWitness(res, mul_witness, ConstantTaint::Witness));
+                            new_instructions.push(OpCode::WriteWitness(Some(res), mul_witness, ConstantTaint::Witness));
                             new_instructions.push(OpCode::Constrain(l, r, res));
                         }
                         OpCode::And {..} => todo!(),
@@ -96,7 +96,7 @@ impl ExplicitWitness {
                             }
                             let select_witness = function.fresh_value();
                             new_instructions.push(OpCode::Select(select_witness, cond, l, r));
-                            new_instructions.push(OpCode::WriteWitness(res, select_witness, ConstantTaint::Witness));
+                            new_instructions.push(OpCode::WriteWitness(Some(res), select_witness, ConstantTaint::Witness));
                             // Goal is to assert 0 = cond * l + (1 - cond) * r - res
                             // This is equivalent to 0 = cond * (l - r) + r - res = cond * (l - r) - (res - r)
                             let neg_one = function.push_field_const(ark_ff::Fp::from(-1));

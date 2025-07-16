@@ -306,7 +306,9 @@ impl R1CGen {
                         self.result.push(R1C { a: a, b: b, c: c });
                     }
                     OpCode::WriteWitness(result, _, _) => {
-                        scope.insert(*result, Value::WitnessVar(self.next_witness()));
+                        if let Some(result) = result {
+                            scope.insert(*result, Value::WitnessVar(self.next_witness()));
+                        }
                     }
 
                     OpCode::Call(ret, tgt, args) => {

@@ -764,8 +764,8 @@ pub enum OpCode<V> {
     Select(ValueId, ValueId, ValueId, ValueId),   // _1 = _2 ? _3 : _4
 
     // Phase 2
-    WriteWitness(ValueId, ValueId, V),    // _1 = as_witness(_2)
-    Constrain(ValueId, ValueId, ValueId), // assert(_1 * _2 - _3 == 0)
+    WriteWitness(Option<ValueId>, ValueId, V), // _1 = as_witness(_2)
+    Constrain(ValueId, ValueId, ValueId),      // assert(_1 * _2 - _3 == 0)
 }
 
 impl<V: Display> OpCode<V> {
@@ -867,12 +867,12 @@ impl<V: Display> OpCode<V> {
                 )
             }
             OpCode::WriteWitness(result, value, _) => {
-                format!(
-                    "v{}{} = witness(v{})",
-                    result.0,
-                    annotate(value_annotator, *result),
-                    value.0
-                )
+                let r_str = if let Some(result) = result {
+                    format!("v{}{} = ", result.0, annotate(value_annotator, *result))
+                } else {
+                    "".to_string()
+                };
+                format!("{}write_witness(v{})", r_str, value.0)
             }
             OpCode::Constrain(a, b, c) => {
                 format!("constrain_r1c(v{} * v{} - v{} == 0)", a.0, b.0, c.0)
@@ -1057,6 +1057,9 @@ impl<V: CommutativeSemigroup + Display + Clone + Eq> OpCode<V> {
                 Ok(())
             }
             Self::WriteWitness(result, value, annotation) => {
+                let Some(result) = result else {
+                    return Ok(());
+                };
                 let witness_type = type_assignments.get(value).ok_or_else(|| {
                     format!("Witness value {:?} not found in type assignments", value)
                 })?;
@@ -1085,8 +1088,12 @@ impl<V> OpCode<V> {
             | Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
             Self::Store(a, b)
             | Self::Load(a, b)
-            | Self::AssertEq(a, b)
-            | Self::WriteWitness(a, b, _) => vec![a, b].into_iter(),
+            | Self::AssertEq(a, b) => vec![a, b].into_iter(),
+            | Self::WriteWitness(a, b, _) => {
+                let mut ret_vec = a.iter_mut().collect::<Vec<_>>();
+                ret_vec.push(b);
+                ret_vec.into_iter()
+            }
             Self::Call(r, _, a) => {
                 let mut ret_vec = r.iter_mut().collect::<Vec<_>>();
                 let args_vec = a.iter_mut().collect::<Vec<_>>();
@@ -1145,8 +1152,11 @@ impl<V> OpCode<V> {
             | Self::Lt(r, _, _)
             | Self::ArrayGet(r, _, _)
             | Self::Load(r, _)
-            | Self::WriteWitness(r, _, _)
-            | Self::Select(r, _, _, _) => vec![r].into_iter(),
+            | Self::Select(r, _, _, _) => vec![r].into_iter(),  
+            | Self::WriteWitness(r, _, _) => {
+                let ret_vec = r.iter().collect::<Vec<_>>();
+                ret_vec.into_iter()
+            }
             Self::Call(r, _, _) => r.iter().collect::<Vec<_>>().into_iter(),
             Self::Constrain { .. }
             | Self::Store(_, _)

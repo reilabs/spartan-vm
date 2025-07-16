@@ -10,6 +10,7 @@ pub mod ir;
 pub mod mem2reg;
 pub mod monomorphization;
 pub mod pull_into_assert;
+pub mod r1cs_cleanup;
 pub mod r1cs_gen;
 pub mod ssa;
 pub mod ssa_gen;

@@ -8,6 +8,7 @@ use crate::compiler::explicit_witness::ExplicitWitness;
 use crate::compiler::fix_double_jumps::FixDoubleJumps;
 use crate::compiler::mem2reg::Mem2Reg;
 use crate::compiler::pull_into_assert::PullIntoAssert;
+use crate::compiler::r1cs_cleanup::R1CSCleanup;
 use crate::compiler::r1cs_gen::R1CGen;
 use crate::compiler::untaint_control_flow::UntaintControlFlow;
 use crate::compiler::flow_analysis::FlowAnalysis;
@@ -101,10 +102,10 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
                 "Brillig Array Get and Set Optimizations",
             ),
             // // We need a DIE pass to populate `used_globals`, otherwise it will panic later.
-            SsaPass::new(
-                Ssa::dead_instruction_elimination,
-                "Dead Instruction Elimination",
-            ),
+            // SsaPass::new(
+            //     Ssa::dead_instruction_elimination,
+            //     "Dead Instruction Elimination",
+            // ),
         ];
 
         let ssa = ssa.run_passes(&&passes).unwrap();
@@ -298,6 +299,15 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
                 .collect::<Vec<_>>()
                 .join("\n")
         );
+
+        let r1cs_cleanup = R1CSCleanup::new();
+        r1cs_cleanup.run(&mut custom_ssa);
+
+        println!(
+            "After R1CS cleanup SSA:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
+        custom_ssa.typecheck(&flow_analysis);
 
         let mut witness_gen = WitnessGen::new(public_witness);
         witness_gen.run(&custom_ssa);
