@@ -1,8 +1,10 @@
-use std::collections::{HashMap, HashSet};
 use petgraph::Direction;
 use petgraph::algo::dominators::{self, Dominators};
-use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::graph::{DiGraph, EdgeIndex, NodeIndex};
 use petgraph::visit::{Bfs, DfsPostOrder, EdgeRef, Walker};
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::PathBuf;
 
 use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SSA, Terminator};
 
@@ -339,6 +341,131 @@ impl CFG {
             panic!("ICE: block has no post-dominator");
         }
     }
+
+    fn is_loop_backedge(&self, edge: EdgeIndex) -> bool {
+        let (source, target) = self.cfg.cfg.edge_endpoints(edge).unwrap();
+        self.cfg.dominates(target, source)
+    }
+}
+
+impl CFG {
+    pub fn generate_image<V>(
+        &self,
+        output_path: PathBuf,
+        function: &crate::compiler::ssa::Function<V>,
+        func_id: FunctionId,
+        label: String,
+    ) -> Result<(), Box<dyn std::error::Error>>
+    where
+        V: Clone + std::fmt::Display,
+    {
+        use std::fs;
+        use std::process::Command;
+
+        // Generate DOT content
+        let mut dot_content = String::new();
+        dot_content.push_str("digraph CFG {\n");
+        dot_content.push_str("  rankdir=TB;\n");
+        dot_content.push_str(&format!("  label=\"{}\";\n", label));
+        dot_content.push_str("  labelloc=t;\n");
+        dot_content.push_str("  node [shape=box, fontname=\"monospace\"];\n\n");
+
+        // Add special nodes (entry and return)
+        dot_content.push_str(
+            "  entry [label=\"ENTRY\", shape=ellipse, style=filled, fillcolor=lightgreen];\n",
+        );
+        dot_content.push_str(
+            "  return [label=\"RETURN\", shape=ellipse, style=filled, fillcolor=lightcoral];\n\n",
+        );
+
+        // Add nodes with block content
+        for (_, block_id) in &self.node_to_block {
+            let block = function.get_block(*block_id);
+            let block_content = block.to_string(
+                func_id,
+                *block_id,
+                &crate::compiler::ssa::DefaultSsaAnnotator,
+            );
+
+            // Escape special characters for DOT
+            let escaped_content = block_content
+                .replace("\"", "\\\"")
+                .replace("\n", "\\l")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+
+            dot_content.push_str(&format!(
+                "  block_{} [label=\"{}\\l\"];\n",
+                block_id.0, escaped_content
+            ));
+        }
+
+        dot_content.push_str("\n");
+
+        // Add edges with different colors for different jump types
+        for edge in self.cfg.cfg.edge_indices() {
+            let (source, target) = self.cfg.cfg.edge_endpoints(edge).unwrap();
+            let edge_weight = &self.cfg.cfg[edge];
+
+            // Handle special nodes (entry and return)
+            let source_name = if source == self.entry_node {
+                "entry".to_string()
+            } else if source == self._return_node {
+                "return".to_string()
+            } else {
+                let source_block = self.node_to_block[&source];
+                format!("block_{}", source_block.0)
+            };
+
+            let target_name = if target == self.entry_node {
+                "entry".to_string()
+            } else if target == self._return_node {
+                "return".to_string()
+            } else {
+                let target_block = self.node_to_block[&target];
+                format!("block_{}", target_block.0)
+            };
+
+            let edge_style = match edge_weight {
+                crate::compiler::flow_analysis::JumpType::Jmp => {
+                    if self.is_loop_backedge(edge) {
+                        "[color=blue, constraint=false]"
+                    } else {
+                        "[color=black]"
+                    }
+                }
+                crate::compiler::flow_analysis::JumpType::JmpIf => "[color=red]",
+                crate::compiler::flow_analysis::JumpType::Entry => "[color=green, style=dashed]",
+                crate::compiler::flow_analysis::JumpType::Return => "[color=orange, style=dashed]",
+            };
+
+            dot_content.push_str(&format!(
+                "  {} -> {} {};\n",
+                source_name, target_name, edge_style
+            ));
+        }
+
+        dot_content.push_str("}\n");
+
+        // Write DOT content to a temporary file
+        let temp_dot_path = format!("temp_cfg_{}.dot", func_id.0);
+        fs::write(&temp_dot_path, dot_content)?;
+
+        // Use system dot command to generate PNG
+        let output = Command::new("dot")
+            .args(&["-Tpng", &temp_dot_path, "-o", output_path.to_str().unwrap()])
+            .output()?;
+
+        // Clean up temporary file
+        let _ = fs::remove_file(&temp_dot_path);
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Graphviz dot command failed: {}", error_msg).into())
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -387,6 +514,70 @@ impl CallGraph {
         DfsPostOrder::new(&self.call_graph, self.func_to_node[&main_fn_id])
             .iter(&self.call_graph)
             .filter_map(|node| self.node_to_func.get(&node).cloned())
+    }
+}
+
+impl CallGraph {
+    pub fn generate_image<V>(
+        &self,
+        output_path: PathBuf,
+        ssa: &SSA<V>,
+    ) -> Result<(), Box<dyn std::error::Error>>
+    where
+        V: Clone,
+    {
+        use std::fs;
+        use std::process::Command;
+
+        // Generate DOT content
+        let mut dot_content = String::new();
+        dot_content.push_str("digraph CallGraph {\n");
+        dot_content.push_str("  rankdir=TB;\n");
+        dot_content.push_str("  node [shape=box];\n\n");
+
+        // Add nodes with function_name@function_id labels
+        for (_, func_id) in &self.node_to_func {
+            let function = ssa.get_function(*func_id);
+            let function_name = function.get_name();
+            dot_content.push_str(&format!(
+                "  func_{} [label=\"{}@{}\"];\n",
+                func_id.0, function_name, func_id.0
+            ));
+        }
+
+        dot_content.push_str("\n");
+
+        // Add edges
+        for edge in self.call_graph.edge_indices() {
+            let (source, target) = self.call_graph.edge_endpoints(edge).unwrap();
+            let source_func = self.node_to_func[&source];
+            let target_func = self.node_to_func[&target];
+            dot_content.push_str(&format!(
+                "  func_{} -> func_{};\n",
+                source_func.0, target_func.0
+            ));
+        }
+
+        dot_content.push_str("}\n");
+
+        // Write DOT content to a temporary file
+        let temp_dot_path = "temp_call_graph.dot";
+        fs::write(temp_dot_path, dot_content)?;
+
+        // Use system dot command to generate PNG
+        let output = Command::new("dot")
+            .args(&["-Tpng", temp_dot_path, "-o", output_path.to_str().unwrap()])
+            .output()?;
+
+        // Clean up temporary file
+        let _ = fs::remove_file(temp_dot_path);
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Graphviz dot command failed: {}", error_msg).into())
+        }
     }
 }
 
@@ -455,170 +646,33 @@ impl FlowAnalysis {
         &self.function_cfgs[&function_id]
     }
 
-    // pub fn get_post_dominator_tree(&self, function_id: FunctionId) -> Dominators<NodeIndex<u32>> {
-    //     let cfg = self.function_cfgs.get(&function_id).unwrap();
-
-    //     let cached = cfg.post_dominator_tree.borrow();
-    //     if let Some(ref post_dominator_tree) = *cached {
-    //         return post_dominator_tree.clone();
-    //     }
-    //     drop(cached);
-
-    //     let mut rev_graph = cfg.cfg.clone();
-    //     rev_graph.reverse();
-    //     let post_dominator_tree = dominators::simple_fast(&rev_graph, cfg.return_node);
-
-    //     let mut cache = cfg.post_dominator_tree.borrow_mut();
-    //     *cache = Some(post_dominator_tree.clone());
-
-    //     post_dominator_tree
-    // }
-
-    // pub fn get_dominator_tree(&self, function_id: FunctionId) -> Dominators<NodeIndex<u32>> {
-    //     let cfg = self.function_cfgs.get(&function_id).unwrap();
-    //     let cached = cfg.dominator_tree.borrow();
-    //     if let Some(ref dominator_tree) = *cached {
-    //         return dominator_tree.clone();
-    //     }
-    //     drop(cached);
-    //     let dominator_tree = dominators::simple_fast(&cfg.cfg, cfg.entry_node);
-    //     let mut cache = cfg.dominator_tree.borrow_mut();
-    //     *cache = Some(dominator_tree.clone());
-    //     dominator_tree
-    // }
-
-    // fn compute_merge_point(
-    //     post_dom: &Dominators<NodeIndex<u32>>,
-    //     mut blk1: NodeIndex<u32>,
-    //     mut blk2: NodeIndex<u32>,
-    // ) -> NodeIndex<u32> {
-    //     let mut depth1 = Self::get_depth_in_post_dominator_tree(&post_dom, blk1);
-    //     let mut depth2 = Self::get_depth_in_post_dominator_tree(&post_dom, blk2);
-    //     if depth1 > depth2 {
-    //         std::mem::swap(&mut blk1, &mut blk2);
-    //         std::mem::swap(&mut depth1, &mut depth2);
-    //     }
-    //     let mut cur2 = Self::get_ancestor_in_post_dominator_tree(&post_dom, blk2, depth2 - depth1);
-    //     let mut cur1 = blk1;
-    //     while cur1 != cur2 {
-    //         cur1 = post_dom.immediate_dominator(cur1).unwrap();
-    //         cur2 = post_dom.immediate_dominator(cur2).unwrap();
-    //     }
-    //     cur1
-    // }
-
-    // pub fn initialize_jump_info(&mut self, function_id: FunctionId) {
-    //     let dom = self.get_dominator_tree(function_id);
-    //     let post_dom = self.get_post_dominator_tree(function_id);
-    //     let cfg = self.function_cfgs.get_mut(&function_id).unwrap();
-
-    //     for node in cfg.cfg.node_indices() {
-    //         if node == cfg.entry_node || node == cfg.return_node {
-    //             continue;
-    //         }
-    //         for edge in cfg.cfg.edges_directed(node, Direction::Outgoing) {
-    //             if let Some(mut doms) = dom.dominators(node) {
-    //                 if doms.any(|dom| dom == edge.target()) {
-    //                     cfg.loop_entrys.push(cfg.node_to_block[&edge.target()]);
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     for node in cfg.cfg.node_indices() {
-    //         if node == cfg.entry_node || node == cfg.return_node {
-    //             continue;
-    //         }
-    //         if cfg.loop_entrys.contains(&cfg.node_to_block[&node]) {
-    //             continue;
-    //         }
-    //         let outgoing_edges = cfg
-    //             .cfg
-    //             .edges_directed(node, Direction::Outgoing)
-    //             .collect::<Vec<_>>();
-    //         if outgoing_edges
-    //             .iter()
-    //             .any(|edge| edge.weight() == &JumpType::JmpIf)
-    //         {
-    //             assert!(outgoing_edges.len() == 2);
-    //             let t1 = outgoing_edges[0].target();
-    //             let t2 = outgoing_edges[1].target();
-    //             let merge_point = Self::compute_merge_point(&post_dom, t1, t2);
-    //             cfg.if_merge_points
-    //                 .insert(cfg.node_to_block[&node], cfg.node_to_block[&merge_point]);
-    //         }
-    //     }
-    // }
-
-    // pub fn is_loop_entry(&self, function_id: FunctionId, block_id: BlockId) -> bool {
-    //     let cfg = self.function_cfgs.get(&function_id).unwrap();
-    //     cfg.loop_entrys.contains(&block_id)
-    // }
-
-    // pub fn get_merge_point(&self, function_id: FunctionId, block_id: BlockId) -> BlockId {
-    //     let cfg = self.function_cfgs.get(&function_id).unwrap();
-    //     *cfg.if_merge_points.get(&block_id).unwrap()
-    // }
-
-    // pub fn get_if_body(&self, function_id: FunctionId, entry_id: BlockId) -> Vec<BlockId> {
-    //     // The body of an if contains all blocks that are dominated by the entry
-    //     // and post-dominated by the merge point.
-    //     let cfg = self.function_cfgs.get(&function_id).unwrap();
-    //     let post_dom = self.get_post_dominator_tree(function_id);
-    //     let dom = self.get_dominator_tree(function_id);
-    //     let mut result = Vec::new();
-    //     let merge_point = cfg.block_to_node[&cfg.if_merge_points.get(&entry_id).unwrap()];
-    //     let entry_node = cfg.block_to_node[&entry_id];
-    //     for node in cfg.cfg.node_indices() {
-    //         if node == entry_node || node == merge_point {
-    //             continue;
-    //         }
-    //         let Some(mut post_doms) = post_dom.dominators(node) else {
-    //             continue;
-    //         };
-    //         let Some(mut doms) = dom.dominators(node) else {
-    //             continue;
-    //         };
-    //         if doms.any(|dom| dom == entry_node)
-    //             && post_doms.any(|post_dom| post_dom == merge_point)
-    //         {
-    //             result.push(cfg.node_to_block[&node]);
-    //         }
-    //     }
-    //     result
-    // }
-
-    // fn get_depth_in_post_dominator_tree(
-    //     post_dom: &Dominators<NodeIndex<u32>>,
-    //     node: NodeIndex<u32>,
-    // ) -> u32 {
-    //     let mut depth = 0;
-    //     let mut current = node;
-    //     while let Some(parent) = post_dom.immediate_dominator(current) {
-    //         depth += 1;
-    //         current = parent;
-    //     }
-    //     depth
-    // }
-
-    // fn get_ancestor_in_post_dominator_tree(
-    //     post_dom: &Dominators<NodeIndex<u32>>,
-    //     node: NodeIndex<u32>,
-    //     depth: u32,
-    // ) -> NodeIndex<u32> {
-    //     let mut current = node;
-    //     for _ in 0..depth {
-    //         current = post_dom.immediate_dominator(current).unwrap();
-    //     }
-    //     current
-    // }
-
-    // pub fn get_blocks_bfs(&self, function_id: FunctionId) -> impl Iterator<Item = BlockId> {
-    //     let cfg = self.function_cfgs.get(&function_id).unwrap();
-    //     Bfs::new(&cfg.cfg, cfg.entry_node)
-    //         .iter(&cfg.cfg)
-    //         .filter_map(|node| cfg.node_to_block.get(&node).cloned())
-    // }
+    pub fn generate_images<V: Clone + std::fmt::Display>(
+        &self,
+        debug_output_dir: PathBuf,
+        ssa: &SSA<V>,
+        phase_label: String,
+    ) {
+        if !debug_output_dir.exists() {
+            fs::create_dir(&debug_output_dir).unwrap();
+        }
+        self.call_graph
+            .generate_image(debug_output_dir.join("call_graph.png"), ssa)
+            .unwrap();
+        for (func_id, _cfg) in &self.function_cfgs {
+            self.function_cfgs[func_id]
+                .generate_image(
+                    debug_output_dir.join(format!(
+                        "cfg_{}@{}.png",
+                        ssa.get_function(*func_id).get_name(),
+                        func_id.0
+                    )),
+                    ssa.get_function(*func_id),
+                    *func_id,
+                    format!("CFG for {} {}", ssa.get_function(*func_id).get_name(), phase_label)
+                )
+                .unwrap();
+        }
+    }
 
     // pub fn to_graphviz(&self) -> String {
     //     let mut dot = String::new();

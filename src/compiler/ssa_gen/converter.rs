@@ -27,8 +27,11 @@ impl SsaConverter {
                 self.function_mapper
                     .insert(*noir_function_id, custom_ssa.get_main_id());
             } else {
-                self.function_mapper
-                    .insert(*noir_function_id, custom_ssa.add_function());
+                self.function_mapper.insert(
+                    *noir_function_id,
+                    custom_ssa
+                        .add_function(noir_ssa.functions[noir_function_id].name().to_string()),
+                );
             };
         }
 

@@ -1,20 +1,31 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::compiler::{
-    fix_double_jumps::ValueReplacements,
-    flow_analysis::{CFG, FlowAnalysis},
-    ir::r#type::{Type, TypeExpr},
-    ssa::{BlockId, Function, OpCode, SSA, Terminator, ValueId},
+    fix_double_jumps::ValueReplacements, flow_analysis::{FlowAnalysis, CFG}, ir::r#type::{Type, TypeExpr}, pass_manager::{DataPoint, Pass, PassInfo, PassManager}, ssa::{BlockId, Function, OpCode, Terminator, ValueId, SSA}
 };
 
 pub struct Mem2Reg {}
+
+impl <V: Clone> Pass<V> for Mem2Reg {
+    fn run(&self, ssa: &mut SSA<V>, pass_manager: &PassManager<V>) {
+        self.do_run(ssa, pass_manager.get_cfg());
+    }
+
+    fn pass_info(&self) -> PassInfo {
+        PassInfo {
+            name: "mem2reg",
+            invalidates: vec![DataPoint::CFG, DataPoint::Types],
+            needs: vec![DataPoint::CFG, DataPoint::Types],
+        }
+    }
+}
 
 impl Mem2Reg {
     pub fn new() -> Self {
         Self {}
     }
 
-    pub fn run<V: Clone>(&mut self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
+    pub fn do_run<V: Clone>(&self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             println!("Running mem2reg for function: {:?}", function_id);
             if !self.escape_safe(function) {

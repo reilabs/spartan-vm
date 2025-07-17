@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
-    flow_analysis::FlowAnalysis,
-    ssa::{BlockId, OpCode, SSA, Terminator, ValueId},
+    flow_analysis::FlowAnalysis, pass_manager::{DataPoint, Pass, PassInfo, PassManager}, ssa::{BlockId, OpCode, Terminator, ValueId, SSA}
 };
 
 pub struct ValueReplacements {
@@ -60,12 +59,27 @@ impl ValueReplacements {
 
 pub struct FixDoubleJumps {}
 
+impl <V: Clone> Pass<V> for FixDoubleJumps {
+    fn run(&self, ssa: &mut SSA<V>, pass_manager: &PassManager<V>) {
+        let flow_analysis = pass_manager.get_cfg();
+        self.do_run(ssa, flow_analysis);
+    }
+
+    fn pass_info(&self) -> PassInfo {
+        PassInfo {
+            name: "fix_double_jumps",
+            invalidates: vec![DataPoint::CFG],
+            needs: vec![DataPoint::CFG],
+        }
+    }
+}
+
 impl FixDoubleJumps {
     pub fn new() -> Self {
         Self {}
     }
 
-    pub fn run<V: Clone>(&mut self, ssa: &mut SSA<V>, flow_analysis: &FlowAnalysis) {
+    pub fn do_run<V: Clone>(&self, ssa: &mut SSA<V>, flow_analysis: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             let cfg = flow_analysis.get_function_cfg(*function_id);
             let jumps = cfg.find_redundant_jumps();

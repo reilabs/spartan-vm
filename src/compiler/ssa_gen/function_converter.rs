@@ -35,7 +35,7 @@ impl FunctionConverter {
         noir_function: &NoirFunction,
         function_mapper: &HashMap<NoirFunctionId, FunctionId>,
     ) -> Function<Empty> {
-        let mut custom_function = Function::empty();
+        let mut custom_function = Function::empty(noir_function.name().to_string());
         let entry_block_id = custom_function.get_entry_id();
 
         for return_val in noir_function.returns().iter() {

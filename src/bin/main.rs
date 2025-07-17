@@ -34,6 +34,9 @@ pub struct ProgramOptions {
 fn main() -> ExitCode {
     // Parse args and hand-off immediately.
     let args = ProgramOptions::parse();
+
+    tracing_forest::init();
+
     run(&args).unwrap_or_else(|err| {
         eprintln!("Error Encountered: {err:?}");
         ExitCode::FAILURE

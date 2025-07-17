@@ -59,7 +59,7 @@ where
     V: Clone,
 {
     pub fn new() -> Self {
-        let main_function = Function::empty();
+        let main_function = Function::empty("main".to_string());
         let main_id = FunctionId(0_u64);
         let mut functions = HashMap::new();
         functions.insert(main_id, main_function);
@@ -124,10 +124,10 @@ where
         self.functions.insert(id, function);
     }
 
-    pub fn add_function(&mut self) -> FunctionId {
+    pub fn add_function(&mut self, name: String) -> FunctionId {
         let new_id = FunctionId(self.next_function_id);
         self.next_function_id += 1;
-        let function = Function::empty();
+        let function = Function::empty(name);
         self.functions.insert(new_id, function);
         new_id
     }
@@ -189,6 +189,7 @@ pub enum Const {
 pub struct Function<V> {
     entry_block: BlockId,
     blocks: HashMap<BlockId, Block<V>>,
+    name: String,
     returns: Vec<Type<V>>,
     next_block: u64,
     value_info: HashMap<ValueId, Type<V>>,
@@ -200,7 +201,8 @@ pub struct Function<V> {
 impl<V: Display> Function<V> {
     pub fn to_string(&self, id: FunctionId, value_annotator: &dyn SsaAnnotator) -> String {
         let header = format!(
-            "fn_{}@block_{} -> {} [{}] {{",
+            "fn {}@{}(block {}) -> {} [{}] {{",
+            self.name,
             id.0,
             self.entry_block.0,
             self.returns.iter().map(|t| format!("{}", t)).join(", "),
@@ -223,7 +225,7 @@ impl<V: Display> Function<V> {
 }
 
 impl<V: Clone> Function<V> {
-    pub fn empty() -> Self {
+    pub fn empty(name: String) -> Self {
         let entry = Block::empty();
         let entry_id = BlockId(0);
         let mut blocks = HashMap::new();
@@ -231,6 +233,7 @@ impl<V: Clone> Function<V> {
         Function {
             entry_block: BlockId(0),
             blocks,
+            name,
             next_block: 1,
             returns: Vec::new(),
             value_info: HashMap::new(),
@@ -246,6 +249,7 @@ impl<V: Clone> Function<V> {
                 entry_block: self.entry_block,
                 blocks: HashMap::new(),
                 next_block: self.next_block,
+                name: self.name,
                 returns: vec![],
                 value_info: HashMap::new(),
                 next_value: self.next_value,
@@ -257,17 +261,8 @@ impl<V: Clone> Function<V> {
         )
     }
 
-    pub fn unsafe_empty() -> Self {
-        Function {
-            entry_block: BlockId(0),
-            blocks: HashMap::new(),
-            next_block: 0,
-            returns: Vec::new(),
-            value_info: HashMap::new(),
-            next_value: 0,
-            consts: HashMap::new(),
-            consts_to_val: HashMap::new(),
-        }
+    pub fn get_name(&self) -> &str {
+        &self.name
     }
 
     pub fn get_entry_mut(&mut self) -> &mut Block<V> {
@@ -727,7 +722,7 @@ pub struct Block<V> {
 }
 
 impl<V: Display> Block<V> {
-    fn to_string(
+    pub fn to_string(
         &self,
         func_id: FunctionId,
         id: BlockId,
@@ -1190,7 +1185,7 @@ impl<V: CommutativeMonoid + Display + Clone + Eq> OpCode<V> {
                 }
                 Ok(())
             }
-            Self::ArrayGet(result, array, storage) => {
+            Self::ArrayGet(result, array, _) => {
                 let array_type = type_assignments.get(array).ok_or_else(|| {
                     format!("Array value {:?} not found in type assignments", array)
                 })?;
