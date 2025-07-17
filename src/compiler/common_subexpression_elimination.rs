@@ -3,10 +3,10 @@ use std::{
     fmt::{Debug, Display},
 };
 
+use crate::compiler::passes::fix_double_jumps::ValueReplacements;
 use crate::compiler::{
-    fix_double_jumps::ValueReplacements,
     flow_analysis::{CFG, FlowAnalysis},
-    ssa::{BinaryArithOpKind, BlockId, Const, CmpKind, Function, OpCode, SSA, ValueId},
+    ssa::{BinaryArithOpKind, BlockId, CmpKind, Const, Function, OpCode, SSA, ValueId},
 };
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -80,7 +80,7 @@ impl Expr {
         ands.sort();
         Self::And(ands)
     }
-    
+
     pub fn fconst(value: ark_bn254::Fr) -> Self {
         Self::FConst(value)
     }
@@ -98,7 +98,11 @@ impl Expr {
     }
 
     pub fn select(&self, then: &Self, otherwise: &Self) -> Self {
-        Self::Select(Box::new(self.clone()), Box::new(then.clone()), Box::new(otherwise.clone()))
+        Self::Select(
+            Box::new(self.clone()),
+            Box::new(then.clone()),
+            Box::new(otherwise.clone()),
+        )
     }
 
     pub fn not(&self) -> Self {
@@ -143,7 +147,9 @@ impl Display for Expr {
                     .collect::<Vec<_>>()
                     .join(" & ")
             ),
-            Self::Select(cond, then, otherwise) => write!(f, "({} ? {} : {})", cond, then, otherwise),
+            Self::Select(cond, then, otherwise) => {
+                write!(f, "({} ? {} : {})", cond, then, otherwise)
+            }
             Self::ArrayGet(array, index) => write!(f, "{}[{}]", array, index),
             Self::Not(value) => write!(f, "(~{})", value),
         }

@@ -1,7 +1,7 @@
 use crate::compiler::{
-    fix_double_jumps::ValueReplacements,
     flow_analysis::FlowAnalysis,
-    ssa::{BlockId, Terminator, ValueId, SSA},
+    passes::fix_double_jumps::ValueReplacements,
+    ssa::{BlockId, SSA, Terminator, ValueId},
 };
 
 pub struct ConditionPropagation {}
@@ -13,8 +13,7 @@ impl ConditionPropagation {
 
     pub fn run<V: Clone>(&mut self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
-
-            let mut replaces: Vec<(BlockId, ValueId, bool)> = vec![]; 
+            let mut replaces: Vec<(BlockId, ValueId, bool)> = vec![];
 
             for (_, block) in function.get_blocks() {
                 match block.get_terminator() {
@@ -30,8 +29,10 @@ impl ConditionPropagation {
 
             for block_id in cfg.get_domination_pre_order() {
                 let mut replacements = ValueReplacements::new();
-                let replaces = replaces.iter().filter(|(cond_block, _, _)| cfg.dominates(*cond_block, block_id));
-                
+                let replaces = replaces
+                    .iter()
+                    .filter(|(cond_block, _, _)| cfg.dominates(*cond_block, block_id));
+
                 for (_, vid, value) in replaces {
                     let const_id = function.push_u_const(1, if *value { 1 } else { 0 });
                     replacements.insert(*vid, const_id);
@@ -43,7 +44,6 @@ impl ConditionPropagation {
                 }
                 replacements.replace_terminator(block.get_terminator_mut());
             }
-
         }
     }
 }

@@ -1,12 +1,18 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use tracing::{debug, instrument};
+
+use crate::compiler::passes::fix_double_jumps::ValueReplacements;
 use crate::compiler::{
-    fix_double_jumps::ValueReplacements, flow_analysis::{FlowAnalysis, CFG}, ir::r#type::{Type, TypeExpr}, pass_manager::{DataPoint, Pass, PassInfo, PassManager}, ssa::{BlockId, Function, OpCode, Terminator, ValueId, SSA}
+    flow_analysis::{CFG, FlowAnalysis},
+    ir::r#type::{Type, TypeExpr},
+    pass_manager::{DataPoint, Pass, PassInfo, PassManager},
+    ssa::{BlockId, Function, OpCode, SSA, Terminator, ValueId},
 };
 
 pub struct Mem2Reg {}
 
-impl <V: Clone> Pass<V> for Mem2Reg {
+impl<V: Clone> Pass<V> for Mem2Reg {
     fn run(&self, ssa: &mut SSA<V>, pass_manager: &PassManager<V>) {
         self.do_run(ssa, pass_manager.get_cfg());
     }
@@ -27,16 +33,23 @@ impl Mem2Reg {
 
     pub fn do_run<V: Clone>(&self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
-            println!("Running mem2reg for function: {:?}", function_id);
-            if !self.escape_safe(function) {
-                continue;
+            if self.escape_safe(function) {
+                self.run_function(function, cfg.get_function_cfg(*function_id));
+            } else {
+                debug!(
+                    "Skipping mem2reg for function: {:?} because it failed escape analysis",
+                    function.get_name()
+                );
             }
-            let cfg = cfg.get_function_cfg(*function_id);
-            let writes = self.find_pointer_writes(function);
-            let phi_blocks = self.find_phi_blocks(&writes, cfg);
-            let phi_args = self.initialize_phis(function, &phi_blocks);
-            self.remove_ptrs(function, cfg, &phi_args);
         }
+    }
+
+    #[instrument(skip_all, fields(function = %function.get_name()))]
+    fn run_function<V: Clone>(&self, function: &mut Function<V>, cfg: &CFG) {
+        let (writes, defs) = self.find_pointer_writes_and_defs(function);
+        let phi_blocks = self.find_phi_blocks(&writes, &defs, cfg);
+        let phi_args = self.initialize_phis(function, &phi_blocks);
+        self.remove_ptrs(function, cfg, &phi_args);
     }
 
     fn remove_ptrs<V: Clone>(
@@ -100,15 +113,44 @@ impl Mem2Reg {
                     let tmp = vec![];
                     let additional_params = phi_map.get(tgt).unwrap_or(&tmp);
                     for (_, val) in additional_params {
-                        params.push(values[val]);
+                        params.push(*values.get(val).expect(&format!(
+                            "ICE: block {} has no value for v{}",
+                            block_id.0, val.0
+                        )));
                     }
                 }
-                Terminator::JmpIf(_, t1, t2) => {
+                Terminator::JmpIf(cond, t1, t2) => {
                     if phi_map.contains_key(t1) {
-                        panic!("ICE: JmpIf with phi parameter {:?}", phi_map.get(t1));
+                        let jumper = function.add_block();
+                        let params = phi_map
+                            .get(t1)
+                            .unwrap()
+                            .iter()
+                            .map(|(_, val)| {
+                                *values.get(val).expect(&format!(
+                                    "ICE: block {} has no value for v{}",
+                                    block_id.0, val.0
+                                ))
+                            })
+                            .collect::<Vec<_>>();
+                        function.terminate_block_with_jmp(jumper, *t1, params);
+                        *t1 = jumper;
                     }
                     if phi_map.contains_key(t2) {
-                        panic!("ICE: JmpIf with phi parameter {:?}", phi_map.get(t2));
+                        let jumper = function.add_block();
+                        let params = phi_map
+                            .get(t2)
+                            .unwrap()
+                            .iter()
+                            .map(|(_, val)| {
+                                *values.get(val).expect(&format!(
+                                    "ICE: block {} has no value for v{}",
+                                    block_id.0, val.0
+                                ))
+                            })
+                            .collect::<Vec<_>>();
+                        function.terminate_block_with_jmp(jumper, *t2, params);
+                        *t2 = jumper;
                     }
                 }
                 _ => {}
@@ -138,27 +180,32 @@ impl Mem2Reg {
         result
     }
 
-    fn find_pointer_writes<V: Clone>(
+    fn find_pointer_writes_and_defs<V: Clone>(
         &self,
         function: &Function<V>,
-    ) -> HashMap<ValueId, HashSet<BlockId>> {
+    ) -> (HashMap<ValueId, HashSet<BlockId>>, HashMap<ValueId, BlockId>) {
         let mut writes: HashMap<ValueId, HashSet<BlockId>> = HashMap::new();
+        let mut defs: HashMap<ValueId, BlockId> = HashMap::new();
         for (block_id, block) in function.get_blocks() {
             for instruction in block.get_instructions() {
                 match instruction {
                     OpCode::Store(lhs, _) => {
                         writes.entry(*lhs).or_default().insert(*block_id);
                     }
+                    OpCode::Alloc(lhs, _, _) => {
+                        defs.insert(*lhs, *block_id);
+                    }
                     _ => {}
                 }
             }
         }
-        writes
+        (writes, defs)
     }
 
     fn find_phi_blocks(
         &self,
         writes: &HashMap<ValueId, HashSet<BlockId>>,
+        defs: &HashMap<ValueId, BlockId>,
         cfg: &CFG,
     ) -> HashMap<ValueId, HashSet<BlockId>> {
         let mut result: HashMap<ValueId, HashSet<BlockId>> = HashMap::new();
@@ -174,9 +221,16 @@ impl Mem2Reg {
                 }
                 visited.insert(block);
 
-                for block in cfg.get_dominance_frontier(block) {
-                    result.entry(*var).or_default().insert(block);
-                    queue.push_back(block);
+                for new_block in cfg.get_dominance_frontier(block) {
+                    if !cfg.dominates(*defs.get(var).unwrap(), new_block) {
+                        continue; // If the pointer is not defined here, there's no need for a phi.
+                    }
+                    debug!(
+                        "Block {}\tneeds phi for v{}\tbecause it's in the dominance frontier of {}\twhich contains a write",
+                        new_block.0, var.0, block.0
+                    );
+                    result.entry(*var).or_default().insert(new_block);
+                    queue.push_back(new_block);
                 }
             }
         }

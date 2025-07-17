@@ -57,6 +57,7 @@ impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
             self.run_pass(ssa, pass.as_ref(), i);
         }
         self.passes = passes;
+        self.output_final_debug_info(ssa);
     }
 
     #[tracing::instrument(skip_all, fields(pass = pass.pass_info().name))]
@@ -80,6 +81,18 @@ impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
                     format!("before {}: {}", pass_index, pass_info.name),
                 );
             }
+        }
+    }
+
+    fn output_final_debug_info(&mut self, ssa: &SSA<V>) {
+        let Some(debug_output_dir) = &self.debug_output_dir else {
+            return;
+        };
+        if self.cfg.is_none() {
+            self.cfg = Some(FlowAnalysis::run(ssa));
+        }
+        if let Some(cfg) = &self.cfg {
+            cfg.generate_images(debug_output_dir.join("final_result"), ssa, "final result".to_string());
         }
     }
 

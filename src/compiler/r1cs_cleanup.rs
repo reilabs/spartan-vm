@@ -1,4 +1,8 @@
-use crate::compiler::{fix_double_jumps::ValueReplacements, ssa::{OpCode, SSA}, taint_analysis::ConstantTaint};
+use crate::compiler::{
+    passes::fix_double_jumps::ValueReplacements,
+    ssa::{OpCode, SSA},
+    taint_analysis::ConstantTaint,
+};
 
 pub struct R1CSCleanup {}
 
@@ -19,7 +23,6 @@ impl R1CSCleanup {
                                 replacements.insert(*r, *b);
                             }
                             *r = None;
-
                         }
                         _ => {}
                     }

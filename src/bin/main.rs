@@ -15,6 +15,8 @@ use std::{fs, path::PathBuf, process::ExitCode, str::FromStr};
 
 use clap::Parser;
 use spartan_vm::{Error, Project};
+use tracing_forest::ForestLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
 
 /// The default Noir project path for the CLI to extract from.
 const DEFAULT_NOIR_PROJECT_PATH: &str = "./";
@@ -35,7 +37,7 @@ fn main() -> ExitCode {
     // Parse args and hand-off immediately.
     let args = ProgramOptions::parse();
 
-    tracing_forest::init();
+    Registry::default().with(ForestLayer::default()).with(EnvFilter::from_default_env()).init();
 
     run(&args).unwrap_or_else(|err| {
         eprintln!("Error Encountered: {err:?}");
