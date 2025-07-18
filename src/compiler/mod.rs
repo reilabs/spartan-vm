@@ -1,15 +1,9 @@
-pub mod common_subexpression_elimination;
-pub mod condition_propagation;
 pub mod constraint_solver;
-pub mod dead_code_elimination;
-pub mod deduplicate_phis;
-pub mod explicit_witness;
 pub mod flow_analysis;
 pub mod ir;
 pub mod monomorphization;
 pub mod pass_manager;
 pub mod passes;
-pub mod pull_into_assert;
 pub mod r1cs_cleanup;
 pub mod r1cs_gen;
 pub mod ssa;

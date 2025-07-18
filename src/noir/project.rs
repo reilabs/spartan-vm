@@ -1,21 +1,21 @@
 //! Functionality for working with projects of Noir sources.
 
-use crate::compiler::common_subexpression_elimination::CSE;
-use crate::compiler::condition_propagation::ConditionPropagation;
-use crate::compiler::dead_code_elimination::{self, DCE};
-use crate::compiler::deduplicate_phis::DeduplicatePhis;
-use crate::compiler::explicit_witness::ExplicitWitness;
-use crate::compiler::passes::fix_double_jumps::FixDoubleJumps;
-use crate::compiler::passes::mem2reg::Mem2Reg;
-use crate::compiler::pass_manager::PassManager;
-use crate::compiler::pull_into_assert::PullIntoAssert;
-use crate::compiler::r1cs_cleanup::R1CSCleanup;
-use crate::compiler::r1cs_gen::R1CGen;
-use crate::compiler::untaint_control_flow::UntaintControlFlow;
 use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::monomorphization::Monomorphization;
+use crate::compiler::pass_manager::PassManager;
+use crate::compiler::passes::common_subexpression_elimination::CSE;
+use crate::compiler::passes::condition_propagation::ConditionPropagation;
+use crate::compiler::passes::dead_code_elimination::{self, DCE};
+use crate::compiler::passes::deduplicate_phis::DeduplicatePhis;
+use crate::compiler::passes::explicit_witness::ExplicitWitness;
+use crate::compiler::passes::fix_double_jumps::FixDoubleJumps;
+use crate::compiler::passes::mem2reg::Mem2Reg;
+use crate::compiler::passes::pull_into_assert::PullIntoAssert;
+use crate::compiler::r1cs_cleanup::R1CSCleanup;
+use crate::compiler::r1cs_gen::R1CGen;
 use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
 use crate::compiler::taint_analysis::{ConstantTaint, TaintAnalysis};
+use crate::compiler::untaint_control_flow::UntaintControlFlow;
 use crate::compiler::witness_generation::WitnessGen;
 use crate::noir::error::compilation::{Error as CompileError, Result as CompileResult};
 use fm::FileManager;
@@ -28,6 +28,7 @@ use noirc_evaluator::ssa::ssa_gen::Ssa;
 use noirc_evaluator::ssa::{SsaBuilder, SsaLogging, SsaPass};
 use noirc_frontend::hir::ParsedFiles;
 use noirc_frontend::monomorphization::monomorphize;
+use tracing::info;
 
 /// A manager for source files for the Noir project that we intend to extract.
 #[derive(Clone)]
@@ -113,7 +114,10 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         // Convert to custom SSA
         let mut custom_ssa = SSA::from_noir(&ssa.ssa);
-        println!("Converted SSA Before TC:\n{}", custom_ssa.to_string(&DefaultSsaAnnotator));
+        println!(
+            "Converted SSA Before TC:\n{}",
+            custom_ssa.to_string(&DefaultSsaAnnotator)
+        );
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         custom_ssa.typecheck(&flow_analysis);
@@ -175,143 +179,26 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let mut pass_manager = PassManager::<ConstantTaint>::new(vec![
             Box::new(FixDoubleJumps::new()),
             Box::new(Mem2Reg::new()),
+            Box::new(CSE::new()),
+            Box::new(ConditionPropagation::new()),
+            Box::new(CSE::new()),
+            Box::new(DeduplicatePhis::new()),
+            Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
+            Box::new(FixDoubleJumps::new()),
+            Box::new(PullIntoAssert::new()),
+            Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
+            Box::new(ExplicitWitness::new()),
         ]);
 
-        pass_manager.set_debug_output_dir(package.root_dir.join("spartan_vm_debug"));
+        // pass_manager.set_debug_output_dir(package.root_dir.join("spartan_vm_debug"));
         pass_manager.run(&mut custom_ssa);
 
-        // println!(
-        //     "After pass manager SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-        // drop(flow_analysis);
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-
-        // custom_ssa.typecheck(&flow_analysis);
-
-        // println!(
-        //     "After untaint control flow SSA (TC):\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-
-        // let mut fix_double_jumps = FixDoubleJumps::new();
-        // fix_double_jumps.run(&mut custom_ssa, &flow_analysis);
-
-        // println!(
-        //     "After fix double jumps SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-
-        // drop(flow_analysis);
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        // custom_ssa.typecheck(&flow_analysis);
-
-        // let mut mem2reg = Mem2Reg::new();
-        // mem2reg.run(&mut custom_ssa, &flow_analysis);
-
-        // println!(
-        //     "After mem2reg SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-
-        // let cse = CSE::new();
-        // cse.run(&mut custom_ssa, &flow_analysis);
-
-        // println!(
-        //     "After CSE SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-
-        // let mut condition_propagation = ConditionPropagation::new();
-        // condition_propagation.run(&mut custom_ssa, &flow_analysis);
-
-        // println!(
-        //     "After condition propagation SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-
-        // // // Running a second CSE to unify spurious constants from condition propagation
-        // cse.run(&mut custom_ssa, &flow_analysis);
-
-        // println!(
-        //     "After CSE SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-
-        // let deduplicate_phis = DeduplicatePhis::new();
-        // deduplicate_phis.run(&mut custom_ssa);
-
-        // println!(
-        //     "After deduplicate phis SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-
-        // drop(flow_analysis);
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-
-        // let mut dce = DCE::new(dead_code_elimination::Config::pre_r1c());
-        // dce.run(&mut custom_ssa, &flow_analysis);
-
-        // println!(
-        //     "After DCE SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-        // drop(flow_analysis);
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-
-        // let mut fix_double_jumps = FixDoubleJumps::new();
-        // fix_double_jumps.run(&mut custom_ssa, &flow_analysis);
-
-        // println!(
-        //     "After fix double jumps SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-
-        // drop(flow_analysis);
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        // custom_ssa.typecheck(&flow_analysis);
-
-        // let mut pull_into_assert = PullIntoAssert::new();
-        // pull_into_assert.run(&mut custom_ssa);
-
-        // println!(
-        //     "After pull into assert SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-
-        // // DCE to clean up unused multiplications after pulls
-        // let mut dce = DCE::new(dead_code_elimination::Config::pre_r1c());
-        // dce.run(&mut custom_ssa, &flow_analysis);
-
-        // println!(
-        //     "After DCE SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-        // drop(flow_analysis);
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-
-        // custom_ssa.typecheck(&flow_analysis);
-
-        // let mut explicit_witness = ExplicitWitness::new();
-        // explicit_witness.run(&mut custom_ssa);
-
-        // println!(
-        //     "After explicit witness SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-
-        // let mut r1cs_gen = R1CGen::new();
-        // r1cs_gen.run(&custom_ssa);
-        // let r1cs = r1cs_gen.clone().get_r1cs();
-        // println!(
-        //     "R1CS (constraints = {}) (witness_size = {}):\n{}",
-        //     r1cs.len(),
-        //     r1cs_gen.get_witness_size(),
-        //     r1cs.iter()
-        //         .map(|r1c| r1c.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n")
-        // );
+        let mut r1cs_gen = R1CGen::new();
+        r1cs_gen.run(&custom_ssa);
+        let r1cs = r1cs_gen.clone().get_r1cs();
+        info!(
+            name: "R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
+        );
 
         // let r1cs_cleanup = R1CSCleanup::new();
         // r1cs_cleanup.run(&mut custom_ssa);

@@ -1,17 +1,31 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
-    ssa::{BlockId, SSA, Terminator, ValueId},
+    pass_manager::Pass, ssa::{BlockId, Terminator, ValueId, SSA}
 };
 
 pub struct DeduplicatePhis {}
+
+impl <V: Clone> Pass<V> for DeduplicatePhis {
+    fn run(&self, ssa: &mut SSA<V>, pass_manager: &crate::compiler::pass_manager::PassManager<V>) {
+        self.do_run(ssa);
+    }
+
+    fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
+        crate::compiler::pass_manager::PassInfo {
+            name: "deduplicate_phis",
+            invalidates: vec![crate::compiler::pass_manager::DataPoint::CFG],
+            needs: vec![crate::compiler::pass_manager::DataPoint::CFG],
+        }
+    }
+}
 
 impl DeduplicatePhis {
     pub fn new() -> Self {
         Self {}
     }
 
-    pub fn run<V: Clone>(&self, ssa: &mut SSA<V>) {
+    pub fn do_run<V: Clone>(&self, ssa: &mut SSA<V>) {
         for (_, function) in ssa.iter_functions_mut() {
             let mut unifications: HashMap<(BlockId, Vec<ValueId>), Vec<BlockId>> = HashMap::new();
             for (block_id, block) in function.get_blocks() {

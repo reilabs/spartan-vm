@@ -340,8 +340,12 @@ impl R1CGen {
                         scope.insert(*result, Value::Array(new_array));
                     }
 
-                    OpCode::AssertEq(_, _) => {
-                        todo!();
+                    OpCode::AssertEq(l, r) => {
+                        let l = scope.get(l).unwrap().expect_constant();
+                        let r = scope.get(r).unwrap().expect_constant();
+                        if l != r {
+                            panic!("assertion failed: {} != {}", l, r);
+                        }
                     }
 
                     OpCode::AssertR1C(_, _, _) => {

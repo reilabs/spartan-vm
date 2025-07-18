@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use crate::compiler::passes::fix_double_jumps::ValueReplacements;
+use crate::compiler::{pass_manager::Pass, passes::fix_double_jumps::ValueReplacements};
 use crate::compiler::{
     flow_analysis::{CFG, FlowAnalysis},
     ssa::{BinaryArithOpKind, BlockId, CmpKind, Const, Function, OpCode, SSA, ValueId},
@@ -164,12 +164,26 @@ impl Debug for Expr {
 
 pub struct CSE {}
 
+impl <V: Clone> Pass<V> for CSE {
+    fn run(&self, ssa: &mut SSA<V>, pass_manager: &crate::compiler::pass_manager::PassManager<V>) {
+        self.do_run(ssa, pass_manager.get_cfg());
+    }
+
+    fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
+        crate::compiler::pass_manager::PassInfo {
+            name: "CSE",
+            invalidates: vec![crate::compiler::pass_manager::DataPoint::Types],
+            needs: vec![crate::compiler::pass_manager::DataPoint::CFG],
+        }
+    }
+}
+
 impl CSE {
     pub fn new() -> Self {
         Self {}
     }
 
-    pub fn run<V: Clone>(&self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
+    pub fn do_run<V: Clone>(&self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             let cfg = cfg.get_function_cfg(*function_id);
             let exprs = self.gather_expressions(function, cfg);

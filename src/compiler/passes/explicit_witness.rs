@@ -1,18 +1,37 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
+    pass_manager::{DataPoint, Pass},
     ssa::{BinaryArithOpKind, Block, BlockId, OpCode, SSA},
     taint_analysis::ConstantTaint,
 };
 
 pub struct ExplicitWitness {}
 
+impl Pass<ConstantTaint> for ExplicitWitness {
+    fn run(
+        &self,
+        ssa: &mut SSA<ConstantTaint>,
+        _pass_manager: &crate::compiler::pass_manager::PassManager<ConstantTaint>,
+    ) {
+        self.do_run(ssa);
+    }
+
+    fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
+        crate::compiler::pass_manager::PassInfo {
+            name: "explicit_witness",
+            invalidates: vec![DataPoint::Types],
+            needs: vec![],
+        }
+    }
+}
+
 impl ExplicitWitness {
     pub fn new() -> Self {
         Self {}
     }
 
-    pub fn run(&mut self, ssa: &mut SSA<ConstantTaint>) {
+    pub fn do_run(&self, ssa: &mut SSA<ConstantTaint>) {
         for (_, function) in ssa.iter_functions_mut() {
             let mut new_blocks = HashMap::<BlockId, Block<ConstantTaint>>::new();
             for (bid, mut block) in function.take_blocks().into_iter() {
@@ -25,7 +44,10 @@ impl ExplicitWitness {
                         OpCode::BinaryArithOp(BinaryArithOpKind::Sub, ..) => {
                             new_instructions.push(instruction);
                         }
-                        OpCode::Alloc { .. } | OpCode::Call { .. } | OpCode::Constrain { .. } | OpCode::WriteWitness { .. } => {
+                        OpCode::Alloc { .. }
+                        | OpCode::Call { .. }
+                        | OpCode::Constrain { .. }
+                        | OpCode::WriteWitness { .. } => {
                             new_instructions.push(instruction);
                         }
                         OpCode::Cmp(_, r, l, _) => {
@@ -47,11 +69,20 @@ impl ExplicitWitness {
 
                             // witness-witness mul
                             let mul_witness = function.fresh_value();
-                            new_instructions.push(OpCode::BinaryArithOp(BinaryArithOpKind::Mul, mul_witness, l, r));
-                            new_instructions.push(OpCode::WriteWitness(Some(res), mul_witness, ConstantTaint::Witness));
+                            new_instructions.push(OpCode::BinaryArithOp(
+                                BinaryArithOpKind::Mul,
+                                mul_witness,
+                                l,
+                                r,
+                            ));
+                            new_instructions.push(OpCode::WriteWitness(
+                                Some(res),
+                                mul_witness,
+                                ConstantTaint::Witness,
+                            ));
                             new_instructions.push(OpCode::Constrain(l, r, res));
                         }
-                        OpCode::BinaryArithOp(BinaryArithOpKind::Div, res, l, r) => {
+                        OpCode::BinaryArithOp(BinaryArithOpKind::Div, _, l, r) => {
                             let l_taint = function.get_value_type(l).unwrap().get_annotation();
                             let r_taint = function.get_value_type(r).unwrap().get_annotation();
                             assert!(l_taint.is_pure());
@@ -68,7 +99,7 @@ impl ExplicitWitness {
                             let ptr_taint = function.get_value_type(ptr).unwrap().get_annotation();
                             assert!(ptr_taint.is_pure());
                             new_instructions.push(instruction);
-                        },
+                        }
                         OpCode::AssertEq(l, r) => {
                             let l_taint = function.get_value_type(l).unwrap().get_annotation();
                             let r_taint = function.get_value_type(r).unwrap().get_annotation();
@@ -104,7 +135,8 @@ impl ExplicitWitness {
                             new_instructions.push(instruction);
                         }
                         OpCode::Select(res, cond, l, r) => {
-                            let cond_taint = function.get_value_type(cond).unwrap().get_annotation();
+                            let cond_taint =
+                                function.get_value_type(cond).unwrap().get_annotation();
                             let l_taint = function.get_value_type(l).unwrap().get_annotation();
                             let r_taint = function.get_value_type(r).unwrap().get_annotation();
                             // The result is cond * l + (1 - cond) * r
@@ -116,16 +148,35 @@ impl ExplicitWitness {
                             }
                             let select_witness = function.fresh_value();
                             new_instructions.push(OpCode::Select(select_witness, cond, l, r));
-                            new_instructions.push(OpCode::WriteWitness(Some(res), select_witness, ConstantTaint::Witness));
+                            new_instructions.push(OpCode::WriteWitness(
+                                Some(res),
+                                select_witness,
+                                ConstantTaint::Witness,
+                            ));
                             // Goal is to assert 0 = cond * l + (1 - cond) * r - res
                             // This is equivalent to 0 = cond * (l - r) + r - res = cond * (l - r) - (res - r)
                             let neg_one = function.push_field_const(ark_ff::Fp::from(-1));
                             let neg_r = function.fresh_value();
-                            new_instructions.push(OpCode::BinaryArithOp(BinaryArithOpKind::Mul, neg_r, r, neg_one));
+                            new_instructions.push(OpCode::BinaryArithOp(
+                                BinaryArithOpKind::Mul,
+                                neg_r,
+                                r,
+                                neg_one,
+                            ));
                             let l_sub_r = function.fresh_value();
-                            new_instructions.push(OpCode::BinaryArithOp(BinaryArithOpKind::Add, l_sub_r, l, neg_r));
+                            new_instructions.push(OpCode::BinaryArithOp(
+                                BinaryArithOpKind::Add,
+                                l_sub_r,
+                                l,
+                                neg_r,
+                            ));
                             let res_sub_r = function.fresh_value();
-                            new_instructions.push(OpCode::BinaryArithOp(BinaryArithOpKind::Add, res_sub_r, res, neg_r));
+                            new_instructions.push(OpCode::BinaryArithOp(
+                                BinaryArithOpKind::Add,
+                                res_sub_r,
+                                res,
+                                neg_r,
+                            ));
                             new_instructions.push(OpCode::Constrain(cond, l_sub_r, res_sub_r));
                         }
 
@@ -150,7 +201,6 @@ impl ExplicitWitness {
                             assert!(i_taint.is_pure()); // Only handle pure input case for now
                             new_instructions.push(instruction);
                         }
-
                     }
                 }
                 block.put_instructions(new_instructions);

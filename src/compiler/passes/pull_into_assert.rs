@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
+    pass_manager::Pass,
     ssa::{BinaryArithOpKind, OpCode, SSA, ValueId},
     taint_analysis::ConstantTaint,
 };
@@ -12,12 +13,30 @@ pub struct PulledProduct {
     rhs: ValueId,
 }
 
+impl Pass<ConstantTaint> for PullIntoAssert {
+    fn run(
+        &self,
+        ssa: &mut SSA<ConstantTaint>,
+        _pass_manager: &crate::compiler::pass_manager::PassManager<ConstantTaint>,
+    ) {
+        self.do_run(ssa);
+    }
+
+    fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
+        crate::compiler::pass_manager::PassInfo {
+            name: "pull_into_assert",
+            invalidates: vec![],
+            needs: vec![],
+        }
+    }
+}
+
 impl PullIntoAssert {
     pub fn new() -> Self {
         Self {}
     }
 
-    pub fn run(&mut self, ssa: &mut SSA<ConstantTaint>) {
+    pub fn do_run(&self, ssa: &mut SSA<ConstantTaint>) {
         for (_, function) in ssa.iter_functions_mut() {
             let mut uses: HashMap<ValueId, usize> = HashMap::new();
             let mut defs: HashMap<ValueId, OpCode<ConstantTaint>> = HashMap::new();
@@ -81,7 +100,7 @@ impl PullIntoAssert {
         }
         let def = defs.get(&value)?;
         match def {
-            // TODO: we should also pull further, skipping pure multiplications and shoving 
+            // TODO: we should also pull further, skipping pure multiplications and shoving
             // them into the constants or R1CS constraints
             OpCode::BinaryArithOp(BinaryArithOpKind::Mul, _, lhs, rhs) => Some(PulledProduct {
                 lhs: *lhs,

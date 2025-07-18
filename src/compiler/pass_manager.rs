@@ -60,7 +60,7 @@ impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
         self.output_final_debug_info(ssa);
     }
 
-    #[tracing::instrument(skip_all, fields(pass = pass.pass_info().name))]
+    #[tracing::instrument(skip_all, fields(pass = %pass.pass_info().name))]
     fn run_pass(&mut self, ssa: &mut SSA<V>, pass: &dyn Pass<V>, pass_index: usize) {
         self.initialize_pass_data(ssa, &pass.pass_info());
         self.output_debug_info(ssa, pass_index, &pass.pass_info());

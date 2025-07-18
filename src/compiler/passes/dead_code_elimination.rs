@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::{
-    flow_analysis::{CFG, FlowAnalysis},
-    ssa::{BlockId, Function, OpCode, SSA, Terminator, ValueId},
+    flow_analysis::{FlowAnalysis, CFG}, pass_manager::Pass, ssa::{BlockId, Function, OpCode, Terminator, ValueId, SSA}
 };
 
 pub struct DCE {
@@ -40,12 +39,26 @@ impl Config {
     }
 }
 
+impl <V: Clone> Pass<V> for DCE {
+    fn run(&self, ssa: &mut SSA<V>, pass_manager: &crate::compiler::pass_manager::PassManager<V>) {
+        self.do_run(ssa, pass_manager.get_cfg());
+    }
+
+    fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
+        crate::compiler::pass_manager::PassInfo {
+            name: "dce",
+            invalidates: vec![crate::compiler::pass_manager::DataPoint::CFG],
+            needs: vec![crate::compiler::pass_manager::DataPoint::CFG],
+        }
+    }
+}
+
 impl DCE {
     pub fn new(config: Config) -> Self {
         Self { config }
     }
 
-    pub fn run<V: Clone>(&mut self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
+    pub fn do_run<V: Clone>(&self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
         for (function_id, function) in ssa.iter_functions_mut() {
             let cfg = cfg.get_function_cfg(*function_id);
             let definitions = self.generate_definitions(function);
