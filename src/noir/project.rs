@@ -1,5 +1,6 @@
 //! Functionality for working with projects of Noir sources.
 
+use crate::compiler::analysis::instrumenter::CostEstimator;
 use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::monomorphization::Monomorphization;
 use crate::compiler::pass_manager::PassManager;
@@ -187,18 +188,23 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             Box::new(FixDoubleJumps::new()),
             Box::new(PullIntoAssert::new()),
             Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
-            Box::new(ExplicitWitness::new()),
+            // Box::new(ExplicitWitness::new()),
         ]);
 
         // pass_manager.set_debug_output_dir(package.root_dir.join("spartan_vm_debug"));
         pass_manager.run(&mut custom_ssa);
 
-        let mut r1cs_gen = R1CGen::new();
-        r1cs_gen.run(&custom_ssa);
-        let r1cs = r1cs_gen.clone().get_r1cs();
-        info!(
-            name: "R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
-        );
+        let cost_estimator = CostEstimator::new();
+        let cost_analysis = cost_estimator.run(&custom_ssa);
+        println!("Cost analysis:\n{}", cost_analysis.pretty_print(&custom_ssa));
+        println!("Summary:\n{}", cost_analysis.summarize().pretty_print(&custom_ssa));
+
+        // let mut r1cs_gen = R1CGen::new();
+        // r1cs_gen.run(&custom_ssa);
+        // let r1cs = r1cs_gen.clone().get_r1cs();
+        // info!(
+        //     name: "R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
+        // );
 
         // let r1cs_cleanup = R1CSCleanup::new();
         // r1cs_cleanup.run(&mut custom_ssa);

@@ -84,13 +84,16 @@ impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
         }
     }
 
-    fn output_final_debug_info(&mut self, ssa: &SSA<V>) {
-        let Some(debug_output_dir) = &self.debug_output_dir else {
-            return;
-        };
+    fn output_final_debug_info(&mut self, ssa: &mut SSA<V>) {
         if self.cfg.is_none() {
             self.cfg = Some(FlowAnalysis::run(ssa));
         }
+        if self.types_valid {
+            ssa.typecheck(&self.get_cfg());
+        }
+        let Some(debug_output_dir) = &self.debug_output_dir else {
+            return;
+        };
         if let Some(cfg) = &self.cfg {
             cfg.generate_images(debug_output_dir.join("final_result"), ssa, "final result".to_string());
         }

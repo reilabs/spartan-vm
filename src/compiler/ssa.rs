@@ -265,6 +265,10 @@ impl<V: Clone> Function<V> {
         &self.name
     }
 
+    pub fn get_var_num_bound(&self) -> usize {
+        return self.next_value as usize;
+    }
+
     pub fn get_entry_mut(&mut self) -> &mut Block<V> {
         self.blocks
             .get_mut(&self.entry_block)
@@ -315,6 +319,10 @@ impl<V: Clone> Function<V> {
             .iter()
             .map(|(_, typ)| typ.clone())
             .collect()
+    }
+
+    pub fn iter_consts(&self) -> impl Iterator<Item = (&ValueId, &Const)> {
+        self.consts.iter()
     }
 
     pub fn get_returns(&self) -> &[Type<V>] {
@@ -666,11 +674,7 @@ impl<V: Clone> Function<V> {
         self.next_value += 1;
         value_id
     }
-
-    pub fn iter_consts(&self) -> impl Iterator<Item = (&ValueId, &Const)> {
-        self.consts.iter()
-    }
-
+    
     pub fn remove_const(&mut self, value_id: ValueId) {
         let v = self.consts.remove(&value_id);
         self.consts_to_val.remove(&v.unwrap());
@@ -861,7 +865,7 @@ pub enum CastTarget {
     U(usize),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endianness {
     Big,
     Little,
