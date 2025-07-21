@@ -222,16 +222,21 @@ impl WitnessGen {
                         scope.insert(*result, r);
                     }
 
-                    OpCode::AssertEq(_, _) => {
-                        todo!();
+                    OpCode::AssertEq(lhs, rhs) => {
+                        let lhs = scope.get(lhs).unwrap();
+                        let rhs = scope.get(rhs).unwrap();
+                        assert_eq!(lhs.expect_fp(), rhs.expect_fp());
                     }
 
                     OpCode::AssertR1C(_, _, _) => {
                         todo!();
                     }
 
-                    OpCode::BinaryArithOp(BinaryArithOpKind::And, _, _, _) => {
-                        todo!();
+                    OpCode::BinaryArithOp(BinaryArithOpKind::And, r, lhs, rhs) => {
+                        let lhs = scope.get(lhs).unwrap().expect_u32();
+                        let rhs = scope.get(rhs).unwrap().expect_u32();
+                        let res = lhs & rhs;
+                        scope.insert(*r, Value::Fp(ark_bn254::Fr::from(res)));
                     }
                     OpCode::Select(res_slot, cond, a, b) => {
                         let cond = scope.get(cond).unwrap();

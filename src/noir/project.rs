@@ -32,7 +32,7 @@ use noirc_evaluator::ssa::ssa_gen::Ssa;
 use noirc_evaluator::ssa::{SsaBuilder, SsaLogging, SsaPass};
 use noirc_frontend::hir::ParsedFiles;
 use noirc_frontend::monomorphization::monomorphize;
-use tracing::info;
+use tracing::{info, warn};
 
 /// A manager for source files for the Noir project that we intend to extract.
 #[derive(Clone)]
@@ -196,7 +196,9 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             Box::new(ExplicitWitness::new()),
         ]);
 
-        pass_manager.set_debug_output_dir(package.root_dir.join("spartan_vm_debug"));
+        let debug_output_dir = package.root_dir.join("spartan_vm_debug");
+
+        // pass_manager.set_debug_output_dir(debug_output_dir);
         pass_manager.run(&mut custom_ssa);
 
         let mut r1cs_gen = R1CGen::new();
@@ -207,8 +209,9 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         );
 
         fs::write(
-            package.root_dir.join("spartan_vm_debug").join("r1cs.txt"),
+            debug_output_dir.join("r1cs.txt"),
             r1cs_gen
+                .clone()
                 .get_r1cs()
                 .iter()
                 .map(|r1c| r1c.to_string())
@@ -217,55 +220,61 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         )
         .unwrap();
 
-        // let r1cs_cleanup = R1CSCleanup::new();
-        // r1cs_cleanup.run(&mut custom_ssa);
+        let r1cs_cleanup = R1CSCleanup::new();
+        r1cs_cleanup.run(&mut custom_ssa);
 
-        // println!(
-        //     "After R1CS cleanup SSA:\n{}",
-        //     custom_ssa.to_string(&DefaultSsaAnnotator)
-        // );
-        // custom_ssa.typecheck(&flow_analysis);
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        custom_ssa.typecheck(&flow_analysis);
 
-        // let mut witness_gen = WitnessGen::new(public_witness);
-        // witness_gen.run(&custom_ssa);
-        // let witness = witness_gen.get_witness();
-        // println!(
-        //     "Witness:\n{}",
-        //     witness
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
-        // println!(
-        //     "A:\n{}",
-        //     witness_gen
-        //         .get_a()
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
-        // println!(
-        //     "B:\n{}",
-        //     witness_gen
-        //         .get_b()
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
-        // println!(
-        //     "C:\n{}",
-        //     witness_gen
-        //         .get_c()
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // );
+        let mut witness_gen = WitnessGen::new(public_witness);
+        witness_gen.run(&custom_ssa);
+        let witness = witness_gen.get_witness();
+        fs::write(
+            debug_output_dir.join("witness.txt"),
+            witness
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("a.txt"),
+            witness_gen
+                .get_a()
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("b.txt"),
+            witness_gen
+                .get_b()
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("c.txt"),
+            witness_gen
+                .get_c()
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
 
-        // r1cs_gen.verify(&witness);
+        let success = r1cs_gen.verify(&witness);
+        if success {
+            info!(message = %"R1CS verification succeeded");
+        } else {
+            warn!(message = %"R1CS verification failed");
+        }
 
         Ok(())
     }

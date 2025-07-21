@@ -9,6 +9,7 @@ use crate::compiler::{
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
 use itertools::Itertools;
+use tracing::{info, warn};
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -208,7 +209,7 @@ impl R1CGen {
     }
 
     pub fn verify(&self, witness: &[ark_bn254::Fr]) -> bool {
-        for r1c in &self.result {
+        for (i, r1c) in self.result.iter().enumerate() {
             let a = r1c
                 .a
                 .iter()
@@ -224,8 +225,10 @@ impl R1CGen {
                 .iter()
                 .map(|(i, c)| c * &witness[*i])
                 .sum::<ark_bn254::Fr>();
-            let success_emoji = if a * b == c { "✅" } else { "❌" };
-            println!("VERIFIER {}: a: {}, b: {}, c: {}", success_emoji, a, b, c);
+            if a * b != c {
+                warn!(message = %"R1CS constraint failed to verify", index = i);
+                return false;
+            }
         }
         return true;
     }
