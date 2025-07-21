@@ -6,6 +6,7 @@ use tracing::{Level, instrument};
 
 use crate::compiler::{
     Field,
+    analysis::symbolic_executor::{self, SymbolicExecutor},
     ir::r#type::{Type, TypeExpr},
     ssa::{BinaryArithOpKind, CastTarget, CmpKind, Const, Endianness, FunctionId, SSA, Terminator},
     taint_analysis::ConstantTaint,
@@ -306,7 +307,7 @@ impl Value {
         &self,
         endianness: &crate::compiler::ssa::Endianness,
         size: usize,
-        instrumenter: &mut dyn OpInstrumenter,
+        _instrumenter: &mut dyn OpInstrumenter,
     ) -> Value {
         match self {
             Value::U(_, v) => {
@@ -340,6 +341,13 @@ impl Value {
             _ => panic!("Cannot perform not operation on {:?}", self),
         }
     }
+
+    fn ptr_read(&self, tp: &Type<ConstantTaint>, _instrumenter: &mut dyn OpInstrumenter) -> Value {
+        match self {
+            Value::Pointer(val) => val.borrow().clone(),
+            _ => panic!("Cannot read from {:?}", self),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -349,38 +357,57 @@ pub struct SpecSplitValue {
 }
 
 impl SpecSplitValue {
-    fn cmp_op(
+    fn blind_unspecialized_from(&mut self, tp: &Type<ConstantTaint>) {
+        self.unspecialized.blind_from(tp);
+    }
+
+    fn blind_from(&mut self, tp: &Type<ConstantTaint>) {
+        self.unspecialized.blind_from(tp);
+        self.specialized.blind_from(tp);
+    }
+
+    fn make_unspecialized_sig(&self, tp: &Type<ConstantTaint>) -> ValueSignature {
+        self.unspecialized.make_unspecialized_sig(tp)
+    }
+}
+
+impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
+    fn cmp(
         &self,
         b: &SpecSplitValue,
-        cmp_kind: &crate::compiler::ssa::CmpKind,
-        instrumenter: &mut dyn FunctionInstrumenter,
+        cmp_kind: CmpKind,
+        _tp: &Type<ConstantTaint>,
+        instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
-        let unspecialized =
-            self.unspecialized
-                .cmp_op(&b.unspecialized, cmp_kind, instrumenter.get_unspecialized());
+        let unspecialized = self.unspecialized.cmp_op(
+            &b.unspecialized,
+            &cmp_kind,
+            instrumenter.get_unspecialized(),
+        );
         let specialized =
             self.specialized
-                .cmp_op(&b.specialized, cmp_kind, instrumenter.get_specialized());
+                .cmp_op(&b.specialized, &cmp_kind, instrumenter.get_specialized());
         SpecSplitValue {
             unspecialized,
             specialized,
         }
     }
 
-    fn binary_arith_op(
+    fn arith(
         &self,
         b: &SpecSplitValue,
-        binary_arith_op_kind: &crate::compiler::ssa::BinaryArithOpKind,
-        instrumenter: &mut dyn FunctionInstrumenter,
+        binary_arith_op_kind: BinaryArithOpKind,
+        _tp: &Type<ConstantTaint>,
+        instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
         let unspecialized = self.unspecialized.binary_arith_op(
             &b.unspecialized,
-            binary_arith_op_kind,
+            &binary_arith_op_kind,
             instrumenter.get_unspecialized(),
         );
         let specialized = self.specialized.binary_arith_op(
             &b.specialized,
-            binary_arith_op_kind,
+            &binary_arith_op_kind,
             instrumenter.get_specialized(),
         );
         SpecSplitValue {
@@ -389,10 +416,11 @@ impl SpecSplitValue {
         }
     }
 
-    fn cast_op(
+    fn cast(
         &self,
         cast_target: &crate::compiler::ssa::CastTarget,
-        instrumenter: &mut dyn FunctionInstrumenter,
+        _tp: &Type<ConstantTaint>,
+        instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
         SpecSplitValue {
             unspecialized: self
@@ -404,11 +432,12 @@ impl SpecSplitValue {
         }
     }
 
-    fn truncate_op(
+    fn truncate(
         &self,
         from: usize,
         to: usize,
-        instrumenter: &mut dyn FunctionInstrumenter,
+        _tp: &Type<ConstantTaint>,
+        instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
         SpecSplitValue {
             unspecialized: self.unspecialized.truncate_op(
@@ -422,19 +451,24 @@ impl SpecSplitValue {
         }
     }
 
-    fn not_op(&self, instrumenter: &mut dyn FunctionInstrumenter) -> SpecSplitValue {
+    fn not(&self, _tp: &Type<ConstantTaint>, instrumenter: &mut CostAnalysis) -> SpecSplitValue {
         SpecSplitValue {
             unspecialized: self.unspecialized.not_op(instrumenter.get_unspecialized()),
             specialized: self.specialized.not_op(instrumenter.get_specialized()),
         }
     }
 
-    fn ptr_write(&self, val: SpecSplitValue, instrumenter: &mut dyn FunctionInstrumenter) {
+    fn ptr_write(&self, _val: &SpecSplitValue, _instrumenter: &mut CostAnalysis) {
         todo!()
     }
 
-    fn ptr_read(&self, instrumenter: &mut dyn FunctionInstrumenter) -> SpecSplitValue {
-        todo!()
+    fn ptr_read(&self, tp: &Type<ConstantTaint>, ctx: &mut CostAnalysis) -> SpecSplitValue {
+        let mut res = SpecSplitValue {
+            unspecialized: self.unspecialized.ptr_read(tp, ctx.get_unspecialized()),
+            specialized: self.specialized.ptr_read(tp, ctx.get_specialized()),
+        };
+        res.blind_unspecialized_from(tp);
+        res
     }
 
     fn mk_array(values: Vec<SpecSplitValue>) -> SpecSplitValue {
@@ -448,44 +482,39 @@ impl SpecSplitValue {
         }
     }
 
-    fn blind_unspecialized_from(&mut self, tp: &Type<ConstantTaint>) {
-        self.unspecialized.blind_from(tp);
-    }
-
-    fn blind_from(&mut self, tp: &Type<ConstantTaint>) {
-        self.unspecialized.blind_from(tp);
-        self.specialized.blind_from(tp);
-    }
-
     fn assert_r1c(
-        a: SpecSplitValue,
-        b: SpecSplitValue,
-        c: SpecSplitValue,
-        instrumenter: &mut dyn FunctionInstrumenter,
+        _a: &SpecSplitValue,
+        _b: &SpecSplitValue,
+        _c: &SpecSplitValue,
+        _ctx: &mut CostAnalysis,
     ) {
         todo!()
     }
 
     fn array_get(
         &self,
-        i: SpecSplitValue,
-        instrumenter: &mut dyn FunctionInstrumenter,
+        i: &SpecSplitValue,
+        tp: &Type<ConstantTaint>,
+        instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
-        SpecSplitValue {
+        let mut res = SpecSplitValue {
             unspecialized: self
                 .unspecialized
                 .array_get(&i.unspecialized, instrumenter.get_unspecialized()),
             specialized: self
                 .specialized
                 .array_get(&i.specialized, instrumenter.get_specialized()),
-        }
+        };
+        res.blind_unspecialized_from(tp);
+        res
     }
 
     fn array_set(
         &self,
-        i: SpecSplitValue,
-        v: SpecSplitValue,
-        instrumenter: &mut dyn FunctionInstrumenter,
+        i: &SpecSplitValue,
+        v: &SpecSplitValue,
+        _tp: &Type<ConstantTaint>,
+        instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
         SpecSplitValue {
             unspecialized: self.unspecialized.array_set(
@@ -503,18 +532,19 @@ impl SpecSplitValue {
 
     fn select(
         &self,
-        if_t: SpecSplitValue,
-        if_f: SpecSplitValue,
-        instrumenter: &mut dyn FunctionInstrumenter,
+        _if_t: &SpecSplitValue,
+        _if_f: &SpecSplitValue,
+        _tp: &Type<ConstantTaint>,
+        _instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
         todo!()
     }
 
     fn constrain(
-        a: SpecSplitValue,
-        b: SpecSplitValue,
-        c: SpecSplitValue,
-        instrumenter: &mut dyn FunctionInstrumenter,
+        a: &SpecSplitValue,
+        b: &SpecSplitValue,
+        c: &SpecSplitValue,
+        instrumenter: &mut CostAnalysis,
     ) {
         Value::constrain(
             &a.unspecialized,
@@ -530,37 +560,32 @@ impl SpecSplitValue {
         );
     }
 
-    fn assert_eq(
-        a: SpecSplitValue,
-        b: SpecSplitValue,
-        instrumenter: &mut dyn FunctionInstrumenter,
-    ) {
-        a.specialized
+    fn assert_eq(&self, b: &SpecSplitValue, instrumenter: &mut CostAnalysis) {
+        self.specialized
             .assert_eq(&b.specialized, instrumenter.get_specialized());
-        a.unspecialized
+        self.unspecialized
             .assert_eq(&b.unspecialized, instrumenter.get_unspecialized());
     }
 
     fn to_bits(
         &self,
-        endianness: &crate::compiler::ssa::Endianness,
+        endianness: Endianness,
         size: usize,
-        instrumenter: &mut dyn FunctionInstrumenter,
+        _tp: &Type<ConstantTaint>,
+        instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
         SpecSplitValue {
             unspecialized: self.unspecialized.to_bits(
-                endianness,
+                &endianness,
                 size,
                 instrumenter.get_unspecialized(),
             ),
-            specialized: self
-                .specialized
-                .to_bits(endianness, size, instrumenter.get_specialized()),
+            specialized: self.specialized.to_bits(
+                &endianness,
+                size,
+                instrumenter.get_specialized(),
+            ),
         }
-    }
-
-    fn make_unspecialized_sig(&self, tp: &Type<ConstantTaint>) -> ValueSignature {
-        self.unspecialized.make_unspecialized_sig(tp)
     }
 
     fn expect_constant_bool(&self) -> bool {
@@ -573,6 +598,38 @@ impl SpecSplitValue {
                 "Expected constant bool, got {:?} and {:?}",
                 self.unspecialized, self.specialized
             ),
+        }
+    }
+
+    fn of_u(s: usize, v: u128) -> Self {
+        Self {
+            unspecialized: Value::U(s, v),
+            specialized: Value::U(s, v),
+        }
+    }
+
+    fn of_field(f: Field) -> Self {
+        Self {
+            unspecialized: Value::Field(f),
+            specialized: Value::Field(f),
+        }
+    }
+
+    fn alloc(_ctx: &mut CostAnalysis) -> Self {
+        Self {
+            unspecialized: Value::FWitness,
+            specialized: Value::FWitness,
+        }
+    }
+
+    fn write_witness(&self, tp: Option<&Type<ConstantTaint>>, _ctx: &mut CostAnalysis) -> Self {
+        match tp {
+            Some(tp) => {
+                let mut res = self.clone();
+                res.blind_unspecialized_from(tp);
+                res
+            }
+            None => self.clone(),
         }
     }
 }
@@ -672,6 +729,47 @@ pub struct CostAnalysis {
     stack: Vec<(FunctionSignature, Box<dyn FunctionInstrumenter>)>,
 }
 
+impl symbolic_executor::Context<SpecSplitValue, ConstantTaint> for CostAnalysis {
+    fn on_call(
+        &mut self,
+        func: FunctionId,
+        params: &mut [SpecSplitValue],
+        param_types: &[&Type<ConstantTaint>],
+    ) {
+        let mut inputs_sig = vec![];
+        for (pval, ptype) in params.iter_mut().zip(param_types.iter()) {
+            pval.blind_from(ptype);
+            inputs_sig.push(pval.make_unspecialized_sig(ptype));
+        }
+
+        let sig = FunctionSignature {
+            id: func,
+            params: inputs_sig,
+        };
+
+        self.enter_call(sig);
+    }
+
+    fn on_return(&mut self, returns: &mut [SpecSplitValue], return_types: &[Type<ConstantTaint>]) {
+        for (rval, rtype) in returns.iter_mut().zip(return_types.iter()) {
+            rval.blind_from(rtype);
+        }
+
+        self.exit_call();
+    }
+
+    fn on_jmp(
+        &mut self,
+        _target: crate::compiler::ssa::BlockId,
+        params: &mut [SpecSplitValue],
+        param_types: &[&Type<ConstantTaint>],
+    ) {
+        for (pval, ptype) in params.iter_mut().zip(param_types.iter()) {
+            pval.blind_unspecialized_from(ptype);
+        }
+    }
+}
+
 pub struct SpecializationSummary {
     calls: usize,
     raw_constraints: usize,
@@ -694,7 +792,12 @@ impl Summary {
             self.total_savings_to_make,
             self.total_savings_to_make as f64 / self.total_constraints as f64 * 100.0
         );
-        for (sig, summary) in self.functions.iter().sorted_by_key(|(_, s)| s.specialization_total_savings).rev() {
+        for (sig, summary) in self
+            .functions
+            .iter()
+            .sorted_by_key(|(_, s)| s.specialization_total_savings)
+            .rev()
+        {
             r += &format!("Function {}\n", sig.pretty_print(ssa));
             r += &format!("  Called times: {}\n", summary.calls);
             r += &format!("  Raw constraints: {}\n", summary.raw_constraints);
@@ -741,8 +844,17 @@ impl CostAnalysis {
         }
     }
 
-    fn get_instrumenter(&mut self) -> &mut dyn FunctionInstrumenter {
-        self.stack.last_mut().unwrap().1.as_mut()
+    fn get_specialized(&mut self) -> &mut dyn OpInstrumenter {
+        self.stack.last_mut().unwrap().1.as_mut().get_specialized()
+    }
+
+    fn get_unspecialized(&mut self) -> &mut dyn OpInstrumenter {
+        self.stack
+            .last_mut()
+            .unwrap()
+            .1
+            .as_mut()
+            .get_unspecialized()
     }
 
     pub fn seal(self) -> HashMap<FunctionSignature, FunctionCost> {
@@ -830,7 +942,7 @@ impl CostEstimator {
         sig: FunctionSignature,
         costs: &mut CostAnalysis,
     ) {
-        let inputs = sig
+        let inputs: Vec<SpecSplitValue> = sig
             .params
             .iter()
             .map(|param| SpecSplitValue {
@@ -839,203 +951,7 @@ impl CostEstimator {
                 specialized: param.to_value(),
             })
             .collect();
-        self.run_fn(ssa, sig.id, inputs, costs);
-    }
-
-    #[instrument(skip_all, level = Level::DEBUG, fields(function = %ssa.get_function(fn_id).get_name()))]
-    fn run_fn(
-        &self,
-        ssa: &SSA<ConstantTaint>,
-        fn_id: FunctionId,
-        inputs: Vec<SpecSplitValue>,
-        costs: &mut CostAnalysis,
-    ) -> Vec<SpecSplitValue> {
-        let fn_body = ssa.get_function(fn_id);
-        let entry = fn_body.get_entry();
-        let mut scope = vec![
-            SpecSplitValue {
-                unspecialized: Value::FWitness,
-                specialized: Value::FWitness,
-            };
-            fn_body.get_var_num_bound()
-        ];
-        let mut inputs_sig = vec![];
-        for (i, val) in entry.get_parameter_values().enumerate() {
-            let tp = fn_body.get_value_type(*val).unwrap();
-            scope[val.0 as usize] = inputs[i].clone();
-            scope[val.0 as usize].blind_from(tp);
-            inputs_sig.push(scope[val.0 as usize].make_unspecialized_sig(tp));
-        }
-        let sig = FunctionSignature {
-            id: fn_id,
-            params: inputs_sig,
-        };
-
-        for (val, cst) in fn_body.iter_consts() {
-            let v = match cst {
-                Const::U(s, v) => Value::U(*s, *v),
-                Const::Field(f) => Value::Field(f.clone()),
-            };
-            scope[val.0 as usize] = SpecSplitValue {
-                unspecialized: v.clone(),
-                specialized: v.clone(),
-            };
-        }
-
-        costs.enter_call(sig);
-        let mut current = Some(entry);
-
-        while let Some(block) = current {
-            for instr in block.get_instructions() {
-                match instr {
-                    crate::compiler::ssa::OpCode::Cmp(cmp_kind, r, a, b) => {
-                        let a = scope[a.0 as usize].clone();
-                        let b = scope[b.0 as usize].clone();
-                        scope[r.0 as usize] = a.cmp_op(&b, cmp_kind, costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::BinaryArithOp(binary_arith_op_kind, r, a, b) => {
-                        let a = scope[a.0 as usize].clone();
-                        let b = scope[b.0 as usize].clone();
-                        scope[r.0 as usize] =
-                            a.binary_arith_op(&b, binary_arith_op_kind, costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::Cast(r, a, cast_target) => {
-                        let a = scope[a.0 as usize].clone();
-                        scope[r.0 as usize] = a.cast_op(cast_target, costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::Truncate(r, a, from, to) => {
-                        let a = scope[a.0 as usize].clone();
-                        scope[r.0 as usize] = a.truncate_op(*from, *to, costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::Not(r, a) => {
-                        let a = scope[a.0 as usize].clone();
-                        scope[r.0 as usize] = a.not_op(costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::MkSeq(r, a, seq_type, _) => {
-                        let a = a
-                            .iter()
-                            .map(|id| scope[id.0 as usize].clone())
-                            .collect::<Vec<_>>();
-                        scope[r.0 as usize] = SpecSplitValue::mk_array(a);
-                    }
-                    crate::compiler::ssa::OpCode::Alloc(r, _, _) => {
-                        // The inner value is not important here, it will be overwritten by a consecutive write
-                        scope[r.0 as usize].specialized =
-                            Value::Pointer(Rc::new(RefCell::new(Value::FWitness)));
-                        scope[r.0 as usize].unspecialized =
-                            Value::Pointer(Rc::new(RefCell::new(Value::FWitness)));
-                    }
-                    crate::compiler::ssa::OpCode::Store(ptr, val) => {
-                        let ptr = scope[ptr.0 as usize].clone();
-                        let val = scope[val.0 as usize].clone();
-                        ptr.ptr_write(val, costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::Load(r, ptr) => {
-                        let ptr = scope[ptr.0 as usize].clone();
-                        let result_type = fn_body.get_value_type(*r).unwrap();
-                        scope[r.0 as usize] = ptr.ptr_read(costs.get_instrumenter());
-                        scope[r.0 as usize].blind_unspecialized_from(result_type);
-                    }
-                    crate::compiler::ssa::OpCode::AssertR1C(a, b, c) => {
-                        let a = scope[a.0 as usize].clone();
-                        let b = scope[b.0 as usize].clone();
-                        let c = scope[c.0 as usize].clone();
-                        SpecSplitValue::assert_r1c(a, b, c, costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::Call(returns, function_id, arguments) => {
-                        let params = arguments
-                            .iter()
-                            .map(|id| scope[id.0 as usize].clone())
-                            .collect::<Vec<_>>();
-                        let outputs = self.run_fn(ssa, *function_id, params, costs);
-                        for (i, val) in returns.iter().enumerate() {
-                            scope[val.0 as usize] = outputs[i].clone();
-                        }
-                    }
-                    crate::compiler::ssa::OpCode::ArrayGet(r, a, i) => {
-                        let a = scope[a.0 as usize].clone();
-                        let i: SpecSplitValue = scope[i.0 as usize].clone();
-                        scope[r.0 as usize] = a.array_get(i, costs.get_instrumenter());
-                        let result_type = fn_body.get_value_type(*r).unwrap();
-                        scope[r.0 as usize].blind_unspecialized_from(result_type);
-                    }
-                    crate::compiler::ssa::OpCode::ArraySet(r, arr, i, v) => {
-                        let a = scope[arr.0 as usize].clone();
-                        let i = scope[i.0 as usize].clone();
-                        let v = scope[v.0 as usize].clone();
-                        scope[r.0 as usize] = a.array_set(i, v, costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::Select(r, cond, if_t, if_f) => {
-                        let cond = scope[cond.0 as usize].clone();
-                        let if_t = scope[if_t.0 as usize].clone();
-                        let if_f = scope[if_f.0 as usize].clone();
-                        scope[r.0 as usize] = cond.select(if_t, if_f, costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::ToBits(r, a, endianness, size) => {
-                        let a = scope[a.0 as usize].clone();
-                        scope[r.0 as usize] =
-                            a.to_bits(endianness, *size, costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::WriteWitness(r, a, _) => {
-                        let a = scope[a.0 as usize].clone();
-                        if let Some(r) = r {
-                            let tp = fn_body.get_value_type(*r).unwrap();
-                            scope[r.0 as usize] = a;
-                            scope[r.0 as usize].blind_unspecialized_from(tp);
-                        }
-                    }
-                    crate::compiler::ssa::OpCode::Constrain(a, b, c) => {
-                        let a = scope[a.0 as usize].clone();
-                        let b = scope[b.0 as usize].clone();
-                        let c = scope[c.0 as usize].clone();
-                        SpecSplitValue::constrain(a, b, c, costs.get_instrumenter());
-                    }
-                    crate::compiler::ssa::OpCode::AssertEq(a, b) => {
-                        let a = scope[a.0 as usize].clone();
-                        let b = scope[b.0 as usize].clone();
-                        SpecSplitValue::assert_eq(a, b, costs.get_instrumenter());
-                    }
-                }
-            }
-
-            match block.get_terminator().unwrap() {
-                Terminator::Return(returns) => {
-                    let mut outputs = returns
-                        .iter()
-                        .map(|id| scope[id.0 as usize].clone())
-                        .collect::<Vec<_>>();
-                    for (i, val) in outputs.iter_mut().enumerate() {
-                        val.blind_from(fn_body.get_value_type(returns[i]).unwrap());
-                    }
-                    costs.exit_call();
-                    return outputs;
-                }
-                Terminator::Jmp(target, params) => {
-                    let mut params = params
-                        .iter()
-                        .map(|id| scope[id.0 as usize].clone())
-                        .collect::<Vec<_>>();
-                    let target_block = fn_body.get_block(*target);
-                    let target_params = target_block.get_parameter_values();
-                    for (param, val) in params.iter_mut().zip(target_params) {
-                        let declared_tp = fn_body.get_value_type(*val).unwrap();
-                        param.blind_unspecialized_from(declared_tp);
-                        scope[val.0 as usize] = param.clone();
-                    }
-                    current = Some(target_block);
-                }
-                Terminator::JmpIf(cond, if_true, if_false) => {
-                    let cond = scope[cond.0 as usize].clone();
-                    if cond.expect_constant_bool() {
-                        current = Some(fn_body.get_block(*if_true));
-                    } else {
-                        current = Some(fn_body.get_block(*if_false));
-                    }
-                }
-            }
-        }
-
-        panic!("ICE: Unreachable, function did not return");
+        SymbolicExecutor::new().run(ssa, sig.id, inputs, costs);
     }
 
     fn make_main_sig(&self, ssa: &SSA<ConstantTaint>) -> FunctionSignature {

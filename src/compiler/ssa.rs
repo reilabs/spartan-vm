@@ -838,7 +838,7 @@ impl<V> Block<V> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinaryArithOpKind {
     Add,
     Mul,
@@ -847,25 +847,25 @@ pub enum BinaryArithOpKind {
     And,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum CmpKind {
     Lt,
     Eq,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum SeqType {
     Array(usize),
     Slice,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum CastTarget {
     Field,
     U(usize),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Endianness {
     Big,
     Little,
