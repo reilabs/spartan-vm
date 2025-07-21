@@ -352,6 +352,7 @@ impl CFG {
     pub fn generate_image<V>(
         &self,
         output_path: PathBuf,
+        ssa: &crate::compiler::ssa::SSA<V>,
         function: &crate::compiler::ssa::Function<V>,
         func_id: FunctionId,
         label: String,
@@ -386,6 +387,7 @@ impl CFG {
         for (_, block_id) in &self.node_to_block {
             let block = function.get_block(*block_id);
             let block_content = block.to_string(
+                ssa,
                 func_id,
                 *block_id,
                 &crate::compiler::ssa::DefaultSsaAnnotator,
@@ -670,9 +672,10 @@ impl FlowAnalysis {
                         ssa.get_function(*func_id).get_name(),
                         func_id.0
                     )),
+                    ssa,
                     ssa.get_function(*func_id),
                     *func_id,
-                    format!("CFG for {} {}", ssa.get_function(*func_id).get_name(), phase_label)
+                    format!("CFG for {} {}", ssa.get_function(*func_id).get_name(), phase_label),
                 )
                 .unwrap();
         }

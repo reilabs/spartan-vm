@@ -12,6 +12,7 @@ use crate::compiler::passes::explicit_witness::ExplicitWitness;
 use crate::compiler::passes::fix_double_jumps::FixDoubleJumps;
 use crate::compiler::passes::mem2reg::Mem2Reg;
 use crate::compiler::passes::pull_into_assert::PullIntoAssert;
+use crate::compiler::passes::specializer::Specializer;
 use crate::compiler::r1cs_cleanup::R1CSCleanup;
 use crate::compiler::r1cs_gen::R1CGen;
 use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
@@ -196,9 +197,18 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let cost_estimator = CostEstimator::new();
         let cost_analysis = cost_estimator.run(&custom_ssa);
-        println!("Cost analysis:\n{}", cost_analysis.pretty_print(&custom_ssa));
-        println!("Summary:\n{}", cost_analysis.summarize().pretty_print(&custom_ssa));
-
+        let summary = cost_analysis.summarize();
+        let mut specializer = Specializer {
+            savings_to_code_ratio: 5.0,
+        };
+        for (sig, summary) in summary.functions.iter() {
+            if summary.specialization_total_savings > 0 {
+                specializer.run(&mut custom_ssa, summary, sig.clone());
+            }
+        }
+        
+        let cfg = FlowAnalysis::run(&custom_ssa);
+        cfg.generate_images(package.root_dir.join("spartan_vm_debug").join("specialized"), &custom_ssa, "specialized".to_string());
         // let mut r1cs_gen = R1CGen::new();
         // r1cs_gen.run(&custom_ssa);
         // let r1cs = r1cs_gen.clone().get_r1cs();

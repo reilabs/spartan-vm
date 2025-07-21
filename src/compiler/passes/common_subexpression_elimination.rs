@@ -171,7 +171,7 @@ impl <V: Clone> Pass<V> for CSE {
 
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
         crate::compiler::pass_manager::PassInfo {
-            name: "CSE",
+            name: "cse",
             invalidates: vec![crate::compiler::pass_manager::DataPoint::Types],
             needs: vec![crate::compiler::pass_manager::DataPoint::CFG],
         }

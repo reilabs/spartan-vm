@@ -1,0 +1,543 @@
+use std::collections::HashMap;
+
+use ark_ff::{AdditiveGroup, BigInt, BigInteger, PrimeField};
+use noirc_frontend::ast::BinaryOpKind;
+use tracing::{info, instrument};
+
+use crate::compiler::{
+    Field,
+    analysis::{
+        instrumenter::{FunctionSignature, SpecializationSummary, Summary, ValueSignature},
+        symbolic_executor::{self, SymbolicExecutor},
+    },
+    ir::r#type::{CommutativeMonoid, Type},
+    ssa::{
+        BinaryArithOpKind, CastTarget, DefaultSsaAnnotator, Endianness, Function, FunctionId, SSA,
+        SeqType, ValueId,
+    },
+    taint_analysis::ConstantTaint,
+};
+
+pub struct Specializer {
+    pub savings_to_code_ratio: f64,
+}
+
+#[derive(Debug)]
+enum ConstVal {
+    U(usize, u128),
+    Field(Field),
+    Array(Vec<ValueId>),
+    BitsOf(Box<ValueId>, usize, Endianness),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct Val(ValueId);
+
+struct SpecializationState {
+    function: Function<ConstantTaint>,
+    const_vals: HashMap<ValueId, ConstVal>,
+}
+
+impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
+    fn cmp(
+        &self,
+        b: &Self,
+        cmp_kind: crate::compiler::ssa::CmpKind,
+        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        let l_const = ctx.const_vals.get(&self.0).unwrap(); // TODO: no unwrap here
+        let r_const = ctx.const_vals.get(&b.0).unwrap(); // TODO: no unwrap here
+        match (l_const, r_const) {
+            (ConstVal::U(_, l_val), ConstVal::U(_, r_val)) => match cmp_kind {
+                crate::compiler::ssa::CmpKind::Lt => {
+                    let res_u = if l_val < r_val { 1 } else { 0 };
+                    let res = ctx.function.push_u_const(1, res_u);
+                    ctx.const_vals.insert(res, ConstVal::U(1, res_u));
+                    Self(res)
+                }
+                _ => todo!(),
+            },
+            _ => todo!(),
+        }
+    }
+
+    fn arith(
+        &self,
+        b: &Self,
+        binary_arith_op_kind: crate::compiler::ssa::BinaryArithOpKind,
+        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        let a_const = ctx.const_vals.get(&self.0);
+        let b_const = ctx.const_vals.get(&b.0);
+        match (binary_arith_op_kind, a_const, b_const) {
+            (BinaryArithOpKind::Add, Some(ConstVal::U(s, a_val)), Some(ConstVal::U(_, b_val))) => {
+                let res = a_val + b_val;
+                let res_v = ctx.function.push_u_const(*s, res);
+                ctx.const_vals.insert(res_v, ConstVal::U(*s, res));
+                Self(res_v)
+            }
+            (BinaryArithOpKind::Sub, Some(ConstVal::U(s, a_val)), Some(ConstVal::U(_, b_val))) => {
+                let res = a_val - b_val;
+                let res_v = ctx.function.push_u_const(*s, res);
+                ctx.const_vals.insert(res_v, ConstVal::U(*s, res));
+                Self(res_v)
+            }
+            (
+                BinaryArithOpKind::Mul,
+                Some(ConstVal::Field(l_val)),
+                Some(ConstVal::Field(r_val)),
+            ) => {
+                let res = l_val * r_val;
+                let res_v = ctx.function.push_field_const(res);
+                ctx.const_vals.insert(res_v, ConstVal::Field(res));
+                Self(res_v)
+            }
+            (BinaryArithOpKind::Sub, Some(ConstVal::Field(f)), Some(ConstVal::Field(f2))) => {
+                let res = f - f2;
+                let res_v = ctx.function.push_field_const(res);
+                ctx.const_vals.insert(res_v, ConstVal::Field(res));
+                Self(res_v)
+            }
+            (BinaryArithOpKind::Add, Some(ConstVal::Field(f)), Some(ConstVal::Field(f2))) => {
+                let res = f + f2;
+                let res_v = ctx.function.push_field_const(res);
+                ctx.const_vals.insert(res_v, ConstVal::Field(res));
+                Self(res_v)
+            }
+
+            (BinaryArithOpKind::Mul, Some(ConstVal::Field(f)), _) if *f == ark_ff::Field::ONE => *b,
+            (BinaryArithOpKind::Mul, _, Some(ConstVal::Field(f))) if *f == ark_ff::Field::ONE => {
+                *self
+            }
+            (BinaryArithOpKind::Mul, Some(ConstVal::Field(f)), _) if *f == Field::ZERO => *self,
+            (BinaryArithOpKind::Mul, _, Some(ConstVal::Field(f))) if *f == Field::ZERO => *b,
+
+            (BinaryArithOpKind::Mul, None, None) => {
+                let res = ctx
+                    .function
+                    .push_mul(ctx.function.get_entry_id(), self.0, b.0);
+                Self(res)
+            }
+
+            (BinaryArithOpKind::Add, Some(ConstVal::Field(f)), _) if *f == Field::ZERO => *b,
+            (BinaryArithOpKind::Add, _, Some(ConstVal::Field(f))) if *f == Field::ZERO => *self,
+
+            _ => panic!(
+                "Not yet implemented {:?} {:?}",
+                binary_arith_op_kind,
+                (a_const, b_const)
+            ),
+        }
+    }
+
+    fn assert_eq(&self, other: &Self, ctx: &mut SpecializationState) {
+        let l_const = ctx.const_vals.get(&self.0).unwrap();
+        let r_const = ctx.const_vals.get(&other.0).unwrap();
+        match (l_const, r_const) {
+            (ConstVal::U(_, l_val), ConstVal::U(_, r_val)) => {
+                assert_eq!(l_val, r_val);
+            }
+            _ => panic!("Not yet implemented {:?}", (l_const, r_const)),
+        }
+    }
+
+    fn assert_r1c(a: &Self, b: &Self, c: &Self, ctx: &mut SpecializationState) {
+        todo!()
+    }
+
+    fn array_get(
+        &self,
+        index: &Self,
+        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        let a_const = ctx.const_vals.get(&self.0).unwrap();
+        let index_const = ctx.const_vals.get(&index.0).unwrap();
+        match (a_const, index_const) {
+            (ConstVal::Array(a), ConstVal::U(_, index)) => {
+                let res = a[*index as usize];
+                Self(res)
+            }
+            (ConstVal::BitsOf(v, size, endianness), ConstVal::U(_, index)) => {
+                let v_const = ctx.const_vals.get(v.as_ref());
+                match v_const {
+                    Some(ConstVal::Field(f)) => {
+                        let r = f.into_bigint().to_bits_le();
+                        let ix = match endianness {
+                            Endianness::Little => *index as usize,
+                            Endianness::Big => size - *index as usize - 1,
+                        };
+                        let res = if r[ix] { 1 } else { 0 };
+                        let res_v = ctx.function.push_u_const(1, res);
+                        ctx.const_vals.insert(res_v, ConstVal::U(1, res));
+                        Self(res_v)
+                    }
+                    _ => panic!("Not yet implemented {:?}", (v_const, endianness)),
+                }
+            }
+            _ => panic!("Not yet implemented {:?}", (a_const, index_const)),
+        }
+    }
+
+    fn array_set(
+        &self,
+        index: &Self,
+        value: &Self,
+        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        todo!()
+    }
+
+    fn truncate(
+        &self,
+        _from: usize,
+        to: usize,
+        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        todo!()
+    }
+
+    fn cast(
+        &self,
+        cast_target: &crate::compiler::ssa::CastTarget,
+        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        let self_const = ctx.const_vals.get(&self.0);
+        match self_const {
+            Some(ConstVal::U(s, v)) => match cast_target {
+                CastTarget::U(s) => {
+                    let res = v & ((1 << *s) - 1);
+                    let res_v = ctx.function.push_u_const(*s, res);
+                    ctx.const_vals.insert(res_v, ConstVal::U(*s, res));
+                    Self(res_v)
+                }
+                CastTarget::Field => {
+                    let res = Field::from(*v);
+                    let res_v = ctx.function.push_field_const(res);
+                    ctx.const_vals.insert(res_v, ConstVal::Field(res));
+                    Self(res_v)
+                }
+            },
+            _ => todo!(),
+        }
+    }
+
+    fn constrain(a: &Self, b: &Self, c: &Self, ctx: &mut SpecializationState) {
+        todo!()
+    }
+
+    fn to_bits(
+        &self,
+        endianness: Endianness,
+        size: usize,
+        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        let val = ctx
+            .function
+            .push_to_bits(ctx.function.get_entry_id(), self.0, endianness, size);
+        ctx.const_vals
+            .insert(val, ConstVal::BitsOf(Box::new(self.0), size, endianness));
+        Self(val)
+    }
+
+    fn not(
+        &self,
+        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        let const_val = ctx.const_vals.get(&self.0).unwrap();
+        match const_val {
+            ConstVal::U(s, v) => {
+                let res = !v & ((1 << s) - 1);
+                let res_v = ctx.function.push_u_const(*s, res);
+                ctx.const_vals.insert(res_v, ConstVal::U(*s, res));
+                Self(res_v)
+            }
+            _ => todo!(),
+        }
+    }
+
+    fn of_u(s: usize, v: u128, ctx: &mut SpecializationState) -> Self {
+        let val = ctx.function.push_u_const(s, v);
+        ctx.const_vals.insert(val, ConstVal::U(s, v));
+        Self(val)
+    }
+
+    fn of_field(f: Field, ctx: &mut SpecializationState) -> Self {
+        let val = ctx.function.push_field_const(f);
+        ctx.const_vals.insert(val, ConstVal::Field(f));
+        Self(val)
+    }
+
+    fn mk_array(
+        a: Vec<Self>,
+        ctx: &mut SpecializationState,
+        seq_type: SeqType,
+        elem_type: &Type<ConstantTaint>,
+    ) -> Self {
+        let a = a.into_iter().map(|v| v.0).collect::<Vec<_>>();
+        let val = ctx.function.push_mk_array(
+            ctx.function.get_entry_id(),
+            a.clone(),
+            seq_type,
+            elem_type.clone(),
+        );
+        ctx.const_vals.insert(val, ConstVal::Array(a));
+        Self(val)
+    }
+
+    fn alloc(ctx: &mut SpecializationState) -> Self {
+        todo!()
+    }
+
+    fn ptr_write(&self, val: &Self, ctx: &mut SpecializationState) {
+        todo!()
+    }
+
+    fn ptr_read(
+        &self,
+        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        todo!()
+    }
+
+    fn expect_constant_bool(&self, ctx: &mut SpecializationState) -> bool {
+        let val = ctx.const_vals.get(&self.0).unwrap();
+        match val {
+            ConstVal::U(_, v) => *v == 1,
+            _ => todo!(),
+        }
+    }
+
+    fn select(
+        &self,
+        if_t: &Self,
+        if_f: &Self,
+        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        todo!()
+    }
+
+    fn write_witness(
+        &self,
+        tp: Option<&crate::compiler::ir::r#type::Type<ConstantTaint>>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        todo!()
+    }
+}
+
+impl<T> symbolic_executor::Context<Val, T> for SpecializationState {
+    fn on_call(
+        &mut self,
+        func: crate::compiler::ssa::FunctionId,
+        params: &mut [Val],
+        param_types: &[&crate::compiler::ir::r#type::Type<T>],
+    ) -> Option<Vec<Val>> {
+        None
+    }
+
+    fn on_return(
+        &mut self,
+        returns: &mut [Val],
+        return_types: &[crate::compiler::ir::r#type::Type<T>],
+    ) {
+        self.function.terminate_block_with_return(
+            self.function.get_entry_id(),
+            returns.iter().map(|v| v.0).collect(),
+        );
+    }
+
+    fn on_jmp(
+        &mut self,
+        target: crate::compiler::ssa::BlockId,
+        params: &mut [Val],
+        param_types: &[&crate::compiler::ir::r#type::Type<T>],
+    ) {
+    }
+}
+
+impl Specializer {
+    #[instrument(skip_all, name = "Specializer::run", fields(function = %signature.pretty_print(ssa, true)))]
+    pub fn run(
+        &mut self,
+        ssa: &mut SSA<ConstantTaint>,
+        summary: &SpecializationSummary,
+        signature: FunctionSignature,
+    ) {
+        let name = signature.pretty_print(ssa, true);
+
+        info!(message = %"Trying specialization", specialization = %name, saved_constraints = summary.specialization_total_savings);
+
+        let original_fn = ssa.get_function(signature.get_fun_id());
+
+        let mut state = SpecializationState {
+            function: Function::<ConstantTaint>::empty(name),
+            const_vals: HashMap::new(),
+        };
+
+        let mut call_params: Vec<Val> = vec![];
+
+        for (param, sig) in original_fn
+            .get_param_types()
+            .iter()
+            .zip(signature.get_params().iter())
+        {
+            match sig {
+                ValueSignature::PointerTo(_) => {
+                    info!("TODO: Aborting specialization on a pointer value");
+                    return;
+                }
+                ValueSignature::Array(_) => {
+                    info!("TODO: Aborting specialization on an array value");
+                    return;
+                }
+                ValueSignature::UWitness(_) => {
+                    call_params.push(Val(state
+                        .function
+                        .add_parameter(state.function.get_entry_id(), param.clone())));
+                }
+                ValueSignature::FWitness => {
+                    call_params.push(Val(state
+                        .function
+                        .add_parameter(state.function.get_entry_id(), param.clone())));
+                }
+                ValueSignature::Field(f) => {
+                    let val = state.function.push_field_const(*f);
+                    call_params.push(Val(val));
+                    state.const_vals.insert(val, ConstVal::Field(*f));
+                }
+                ValueSignature::U(size, v) => {
+                    let val = state.function.push_u_const(*size, *v);
+                    call_params.push(Val(val));
+                    state.const_vals.insert(val, ConstVal::U(*size, *v));
+                }
+            }
+        }
+
+        for ret in original_fn.get_returns() {
+            state.function.add_return_type(ret.clone());
+        }
+
+        SymbolicExecutor::new().run(ssa, signature.get_fun_id(), call_params, &mut state);
+
+        let code_bloat = state.function.code_size();
+        let savings_to_code_ratio = summary.specialization_total_savings as f64 / code_bloat as f64;
+
+        if savings_to_code_ratio > self.savings_to_code_ratio {
+            info!(message = %"Specialization accepted", code_bloat = code_bloat,  savings_to_code_ratio = savings_to_code_ratio, threshold_ratio = self.savings_to_code_ratio);
+            let original_fn = ssa.take_function(signature.get_fun_id());
+            let new_fn_id = ssa.add_function("".to_string());
+            let new_original_id = ssa.add_function("".to_string()); // Temporary
+
+            let original_params = original_fn.get_param_types();
+            let original_returns = original_fn.get_returns().to_vec();
+
+            let dispatcher = self.build_dispatcher_for(
+                original_params,
+                original_returns,
+                &signature,
+                original_fn.get_name().to_string() + "#specialized",
+                new_fn_id,
+                new_original_id,
+            );
+            ssa.put_function(new_original_id, original_fn);
+            ssa.put_function(signature.get_fun_id(), dispatcher);
+            ssa.put_function(new_fn_id, state.function);
+        } else {
+            // TODO: run some passes to see if it decreases
+            info!(message = %"Specialization rejected", code_bloat = code_bloat,  savings_to_code_ratio = savings_to_code_ratio, threshold_ratio = self.savings_to_code_ratio);
+        }
+    }
+
+    fn build_dispatcher_for(
+        &self,
+        params: Vec<Type<ConstantTaint>>,
+        returns: Vec<Type<ConstantTaint>>,
+        signature: &FunctionSignature,
+        fn_name: String,
+        specialized_id: FunctionId,
+        unspecialized_id: FunctionId,
+    ) -> Function<ConstantTaint> {
+        let mut dispatcher = Function::<ConstantTaint>::empty(fn_name);
+        let mut dispatcher_params = vec![];
+        for param in params {
+            dispatcher_params.push(dispatcher.add_parameter(dispatcher.get_entry_id(), param));
+        }
+
+        for return_type in returns.iter() {
+            dispatcher.add_return_type(return_type.clone());
+        }
+
+        let mut specialized_params = vec![];
+
+        let entry_block = dispatcher.get_entry_id();
+        let mut should_call_spec = dispatcher.push_u_const(1, 1);
+
+        for (pval, psig) in dispatcher_params.iter().zip(signature.get_params().iter()) {
+            match psig {
+                ValueSignature::PointerTo(_) => {
+                    todo!();
+                }
+                ValueSignature::Array(_) => {
+                    todo!();
+                }
+                ValueSignature::UWitness(_) | ValueSignature::FWitness => {
+                    specialized_params.push(*pval);
+                }
+                ValueSignature::Field(v) => {
+                    let cst = dispatcher.push_field_const(*v);
+                    let is_eq = dispatcher.push_eq(entry_block, *pval, cst);
+                    should_call_spec = dispatcher.push_and(entry_block, should_call_spec, is_eq);
+                }
+                ValueSignature::U(s, v) => {
+                    let cst = dispatcher.push_u_const(*s, *v);
+                    let is_eq = dispatcher.push_eq(entry_block, *pval, cst);
+                    should_call_spec = dispatcher.push_and(entry_block, should_call_spec, is_eq);
+                }
+            }
+        }
+
+        let specialized_caller = dispatcher.add_block();
+        let unspecialized_caller = dispatcher.add_block();
+        let return_block = dispatcher.add_block();
+
+        let mut return_values = vec![];
+        for ret in returns {
+            return_values.push(dispatcher.add_parameter(return_block, ret));
+        }
+        dispatcher.terminate_block_with_return(return_block, return_values.clone());
+
+        let unspecialized_returns = dispatcher.push_call(
+            unspecialized_caller,
+            unspecialized_id,
+            dispatcher_params,
+            return_values.len(),
+        );
+        dispatcher.terminate_block_with_jmp(unspecialized_caller, return_block, unspecialized_returns);
+
+        let specialized_returns = dispatcher.push_call(
+            specialized_caller,
+            specialized_id,
+            specialized_params,
+            return_values.len(),
+        );
+        dispatcher.terminate_block_with_jmp(specialized_caller, return_block, specialized_returns);
+
+
+        dispatcher.terminate_block_with_jmp_if(entry_block, should_call_spec, specialized_caller, unspecialized_caller);
+
+
+        // dispatcher.terminate_block_with_return(dispatcher.get_entry_id(), vec![Val(unspecialized_id)]);
+
+        dispatcher
+    }
+}

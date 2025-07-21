@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, Level};
 
 use crate::compiler::passes::fix_double_jumps::ValueReplacements;
 use crate::compiler::{
@@ -44,7 +44,7 @@ impl Mem2Reg {
         }
     }
 
-    #[instrument(skip_all, fields(function = %function.get_name()))]
+    #[instrument(skip_all, level = Level::DEBUG, fields(function = %function.get_name()))]
     fn run_function<V: Clone>(&self, function: &mut Function<V>, cfg: &CFG) {
         let (writes, defs) = self.find_pointer_writes_and_defs(function);
         let phi_blocks = self.find_phi_blocks(&writes, &defs, cfg);

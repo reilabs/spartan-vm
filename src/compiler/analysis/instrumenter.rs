@@ -5,11 +5,7 @@ use itertools::Itertools;
 use tracing::{Level, instrument};
 
 use crate::compiler::{
-    Field,
-    analysis::symbolic_executor::{self, SymbolicExecutor},
-    ir::r#type::{Type, TypeExpr},
-    ssa::{BinaryArithOpKind, CastTarget, CmpKind, Const, Endianness, FunctionId, SSA, Terminator},
-    taint_analysis::ConstantTaint,
+    analysis::symbolic_executor::{self, SymbolicExecutor}, ir::r#type::{Type, TypeExpr}, ssa::{BinaryArithOpKind, CastTarget, CmpKind, Const, Endianness, FunctionId, SeqType, Terminator, SSA}, taint_analysis::ConstantTaint, Field
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -36,12 +32,19 @@ impl ValueSignature {
         }
     }
 
-    pub fn pretty_print(&self) -> String {
+    pub fn pretty_print(&self, full: bool) -> String {
         match self {
             ValueSignature::U(_, v) => format!("{v}"),
             ValueSignature::Field(f) => format!("{}", f),
-            ValueSignature::Array(_) => "[...]".to_string(),
-            ValueSignature::PointerTo(p) => format!("&({})", p.as_ref().pretty_print()),
+            ValueSignature::Array(items) => {
+                if full {
+                    let items = items.iter().map(|v| v.pretty_print(full)).join(", ");
+                    format!("[{items}]")
+                } else {
+                    format!("[...]")
+                }
+            }
+            ValueSignature::PointerTo(p) => format!("&({})", p.as_ref().pretty_print(full)),
             ValueSignature::FWitness => "W".to_string(),
             ValueSignature::UWitness(_) => "W".to_string(),
         }
@@ -471,7 +474,7 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         res
     }
 
-    fn mk_array(values: Vec<SpecSplitValue>) -> SpecSplitValue {
+    fn mk_array(values: Vec<SpecSplitValue>, _ctx: &mut CostAnalysis, _seq_type: SeqType, _elem_type: &Type<ConstantTaint>) -> SpecSplitValue {
         let (uns, spec) = values
             .into_iter()
             .map(|v| (v.unspecialized, v.specialized))
@@ -588,7 +591,7 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         }
     }
 
-    fn expect_constant_bool(&self) -> bool {
+    fn expect_constant_bool(&self, _ctx: &mut CostAnalysis) -> bool {
         match (&self.unspecialized, &self.specialized) {
             (Value::U(1, v), Value::U(1, v2)) => {
                 assert_eq!(*v, *v2);
@@ -601,14 +604,14 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         }
     }
 
-    fn of_u(s: usize, v: u128) -> Self {
+    fn of_u(s: usize, v: u128, _ctx: &mut CostAnalysis) -> Self {
         Self {
             unspecialized: Value::U(s, v),
             specialized: Value::U(s, v),
         }
     }
 
-    fn of_field(f: Field) -> Self {
+    fn of_field(f: Field, _ctx: &mut CostAnalysis) -> Self {
         Self {
             unspecialized: Value::Field(f),
             specialized: Value::Field(f),
@@ -641,16 +644,24 @@ pub struct FunctionSignature {
 }
 
 impl FunctionSignature {
-    pub fn pretty_print(&self, ssa: &SSA<ConstantTaint>) -> String {
+    pub fn pretty_print(&self, ssa: &SSA<ConstantTaint>, all_params: bool) -> String {
         let fn_body = ssa.get_function(self.id);
         let name = fn_body.get_name();
         let params = self
             .params
             .iter()
-            .map(ValueSignature::pretty_print)
+            .map(|v| v.pretty_print(all_params))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("{}({})", name, params)
+        format!("{}#[{}]", name, params)
+    }
+
+    pub fn get_fun_id(&self) -> FunctionId {
+        self.id
+    }
+
+    pub fn get_params(&self) -> &[ValueSignature] {
+        &self.params
     }
 }
 
@@ -797,16 +808,16 @@ impl symbolic_executor::Context<SpecSplitValue, ConstantTaint> for CostAnalysis 
 }
 
 pub struct SpecializationSummary {
-    calls: usize,
-    raw_constraints: usize,
-    specialized_constraints: usize,
-    specialization_total_savings: usize,
+    pub calls: usize,
+    pub raw_constraints: usize,
+    pub specialized_constraints: usize,
+    pub specialization_total_savings: usize,
 }
 
 pub struct Summary {
     total_constraints: usize,
     total_savings_to_make: usize,
-    functions: HashMap<FunctionSignature, SpecializationSummary>,
+    pub functions: HashMap<FunctionSignature, SpecializationSummary>,
 }
 
 impl Summary {
@@ -824,7 +835,7 @@ impl Summary {
             .sorted_by_key(|(_, s)| s.specialization_total_savings)
             .rev()
         {
-            r += &format!("Function {}\n", sig.pretty_print(ssa));
+            r += &format!("Function {}\n", sig.pretty_print(ssa, false));
             r += &format!("  Called times: {}\n", summary.calls);
             r += &format!("  Raw constraints: {}\n", summary.raw_constraints);
             r += &format!(
@@ -899,10 +910,10 @@ impl CostAnalysis {
     pub fn pretty_print(&self, ssa: &SSA<ConstantTaint>) -> String {
         let mut r = String::new();
         for (sig, cost) in self.functions.iter() {
-            r += &format!("Function {}\n", sig.pretty_print(ssa));
+            r += &format!("Function {}\n", sig.pretty_print(ssa, false));
             r += &format!("  Calls:\n");
             for (sig, count) in cost.calls.iter() {
-                r += &format!("    {}: {} times\n", sig.pretty_print(ssa), count);
+                r += &format!("    {}: {} times\n", sig.pretty_print(ssa, false), count);
             }
             r += &format!("  Raw constraints: {}\n", cost.raw.constraints);
             r += &format!(
@@ -958,6 +969,7 @@ impl CostEstimator {
         Self {}
     }
 
+    #[instrument(skip_all, name = "CostEstimator::run")]
     pub fn run(&self, ssa: &SSA<ConstantTaint>) -> CostAnalysis {
         let main_sig = self.make_main_sig(ssa);
         let mut costs = CostAnalysis {

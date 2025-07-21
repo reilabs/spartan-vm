@@ -1,12 +1,9 @@
 use tracing::{Level, instrument};
 
 use crate::compiler::{
-    Field,
-    ir::r#type::Type,
-    ssa::{
-        BinaryArithOpKind, BlockId, CastTarget, CmpKind, Const, Endianness, FunctionId, SSA,
-        Terminator,
-    },
+    ir::r#type::Type, ssa::{
+        BinaryArithOpKind, BlockId, CastTarget, CmpKind, Const, Endianness, FunctionId, SeqType, Terminator, SSA
+    }, Field
 };
 
 pub trait Value<Context, Taint>
@@ -42,13 +39,13 @@ where
         ctx: &mut Context,
     ) -> Self;
     fn not(&self, out_type: &Type<Taint>, ctx: &mut Context) -> Self;
-    fn of_u(s: usize, v: u128) -> Self;
-    fn of_field(f: Field) -> Self;
-    fn mk_array(a: Vec<Self>) -> Self;
+    fn of_u(s: usize, v: u128, ctx: &mut Context) -> Self;
+    fn of_field(f: Field, ctx: &mut Context) -> Self;
+    fn mk_array(a: Vec<Self>, ctx: &mut Context, seq_type: SeqType, elem_type: &Type<Taint>) -> Self;
     fn alloc(ctx: &mut Context) -> Self;
     fn ptr_write(&self, val: &Self, ctx: &mut Context);
     fn ptr_read(&self, out_type: &Type<Taint>, ctx: &mut Context) -> Self;
-    fn expect_constant_bool(&self) -> bool;
+    fn expect_constant_bool(&self, ctx: &mut Context) -> bool;
     fn select(&self, if_t: &Self, if_f: &Self, out_type: &Type<Taint>, ctx: &mut Context) -> Self;
     fn write_witness(&self, tp: Option<&Type<Taint>>, ctx: &mut Context) -> Self;
 }
@@ -73,7 +70,7 @@ impl SymbolicExecutor {
         Self {}
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, name = "SymbolicExecutor::run", level = Level::DEBUG)]
     pub fn run<V, T, Ctx>(
         &self,
         ssa: &SSA<T>,
@@ -88,7 +85,7 @@ impl SymbolicExecutor {
         self.run_fn(ssa, entry_point, params, context);
     }
 
-    #[instrument(skip_all, level = Level::DEBUG, fields(function = %ssa.get_function(fn_id).get_name()))]
+    #[instrument(skip_all, name="SymbolicExecutor::run_fn", level = Level::TRACE, fields(function = %ssa.get_function(fn_id).get_name()))]
     fn run_fn<V, T, Ctx>(
         &self,
         ssa: &SSA<T>,
@@ -107,8 +104,8 @@ impl SymbolicExecutor {
 
         for (val, cst) in fn_body.iter_consts() {
             let v = match cst {
-                Const::U(s, v) => V::of_u(*s, *v),
-                Const::Field(f) => V::of_field(f.clone()),
+                Const::U(s, v) => V::of_u(*s, *v, ctx),
+                Const::Field(f) => V::of_field(f.clone(), ctx),
             };
             scope[val.0 as usize] = Some(v);
         }
@@ -163,12 +160,12 @@ impl SymbolicExecutor {
                         scope[r.0 as usize] =
                             Some(a.not(&fn_body.get_value_type(*r).unwrap(), ctx));
                     }
-                    crate::compiler::ssa::OpCode::MkSeq(r, a, _, _) => {
+                    crate::compiler::ssa::OpCode::MkSeq(r, a, seq_type, elem_type) => {
                         let a = a
                             .iter()
                             .map(|id| scope[id.0 as usize].as_ref().unwrap().clone())
                             .collect::<Vec<_>>();
-                        scope[r.0 as usize] = Some(V::mk_array(a));
+                        scope[r.0 as usize] = Some(V::mk_array(a, ctx, *seq_type, elem_type));
                     }
                     crate::compiler::ssa::OpCode::Alloc(r, _, _) => {
                         scope[r.0 as usize] = Some(V::alloc(ctx));
@@ -286,7 +283,7 @@ impl SymbolicExecutor {
                 }
                 Terminator::JmpIf(cond, if_true, if_false) => {
                     let cond = scope[cond.0 as usize].as_ref().unwrap();
-                    if cond.expect_constant_bool() {
+                    if cond.expect_constant_bool(ctx) {
                         current = Some(fn_body.get_block(*if_true));
                     } else {
                         current = Some(fn_body.get_block(*if_false));
