@@ -1,5 +1,7 @@
 //! Functionality for working with projects of Noir sources.
 
+use std::fs;
+
 use crate::compiler::analysis::instrumenter::CostEstimator;
 use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::monomorphization::Monomorphization;
@@ -189,32 +191,31 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             Box::new(FixDoubleJumps::new()),
             Box::new(PullIntoAssert::new()),
             Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
-            // Box::new(ExplicitWitness::new()),
+            Box::new(Specializer::new(5.0)),
+            Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
+            Box::new(ExplicitWitness::new()),
         ]);
 
-        // pass_manager.set_debug_output_dir(package.root_dir.join("spartan_vm_debug"));
+        pass_manager.set_debug_output_dir(package.root_dir.join("spartan_vm_debug"));
         pass_manager.run(&mut custom_ssa);
 
-        let cost_estimator = CostEstimator::new();
-        let cost_analysis = cost_estimator.run(&custom_ssa);
-        let summary = cost_analysis.summarize();
-        let mut specializer = Specializer {
-            savings_to_code_ratio: 5.0,
-        };
-        for (sig, summary) in summary.functions.iter() {
-            if summary.specialization_total_savings > 0 {
-                specializer.run(&mut custom_ssa, summary, sig.clone());
-            }
-        }
-        
-        let cfg = FlowAnalysis::run(&custom_ssa);
-        cfg.generate_images(package.root_dir.join("spartan_vm_debug").join("specialized"), &custom_ssa, "specialized".to_string());
-        // let mut r1cs_gen = R1CGen::new();
-        // r1cs_gen.run(&custom_ssa);
-        // let r1cs = r1cs_gen.clone().get_r1cs();
-        // info!(
-        //     name: "R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
-        // );
+        let mut r1cs_gen = R1CGen::new();
+        r1cs_gen.run(&custom_ssa);
+        let r1cs = r1cs_gen.clone().get_r1cs();
+        info!(
+            message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
+        );
+
+        fs::write(
+            package.root_dir.join("spartan_vm_debug").join("r1cs.txt"),
+            r1cs_gen
+                .get_r1cs()
+                .iter()
+                .map(|r1c| r1c.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
 
         // let r1cs_cleanup = R1CSCleanup::new();
         // r1cs_cleanup.run(&mut custom_ssa);

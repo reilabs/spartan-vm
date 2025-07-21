@@ -11,6 +11,7 @@ use crate::compiler::{
         symbolic_executor::{self, SymbolicExecutor},
     },
     ir::r#type::{CommutativeMonoid, Type},
+    pass_manager::{DataPoint, Pass, PassInfo},
     ssa::{
         BinaryArithOpKind, CastTarget, DefaultSsaAnnotator, Endianness, Function, FunctionId, SSA,
         SeqType, ValueId,
@@ -365,17 +366,58 @@ impl<T> symbolic_executor::Context<Val, T> for SpecializationState {
     }
 }
 
+impl Pass<ConstantTaint> for Specializer {
+    fn run(
+        &self,
+        ssa: &mut SSA<ConstantTaint>,
+        pass_manager: &crate::compiler::pass_manager::PassManager<ConstantTaint>,
+    ) {
+        let summary = pass_manager.get_constraint_instrumentation();
+        for (sig, summary) in summary.functions.iter() {
+            if summary.specialization_total_savings > 0 {
+                self.try_spec(ssa, summary, sig.clone());
+            }
+        }
+    }
+
+    fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
+        PassInfo {
+            name: "specializer",
+            invalidates: vec![
+                DataPoint::CFG,
+                DataPoint::Types,
+                DataPoint::ConstraintInstrumentation,
+            ],
+            needs: vec![DataPoint::ConstraintInstrumentation],
+        }
+    }
+}
+
 impl Specializer {
-    #[instrument(skip_all, name = "Specializer::run", fields(function = %signature.pretty_print(ssa, true)))]
-    pub fn run(
-        &mut self,
+    pub fn new(savings_to_code_ratio: f64) -> Self {
+        Self {
+            savings_to_code_ratio,
+        }
+    }
+
+    #[instrument(skip_all, name = "Specializer::try_spec", fields(function = %signature.pretty_print(ssa, true), expected_savings = summary.specialization_total_savings))]
+    fn try_spec(
+        &self,
         ssa: &mut SSA<ConstantTaint>,
         summary: &SpecializationSummary,
         signature: FunctionSignature,
     ) {
         let name = signature.pretty_print(ssa, true);
 
-        info!(message = %"Trying specialization", specialization = %name, saved_constraints = summary.specialization_total_savings);
+        if summary.specialization_total_savings as f64 / self.savings_to_code_ratio < 10.0 {
+            info!(
+                message = %"Specialization rejected, would need less than 10 codesize to be worth it",
+                specialization = %name,
+                saved_constraints = summary.specialization_total_savings,
+                savings_to_code_ratio = self.savings_to_code_ratio
+            );
+            return;
+        }
 
         let original_fn = ssa.get_function(signature.get_fun_id());
 
@@ -522,7 +564,11 @@ impl Specializer {
             dispatcher_params,
             return_values.len(),
         );
-        dispatcher.terminate_block_with_jmp(unspecialized_caller, return_block, unspecialized_returns);
+        dispatcher.terminate_block_with_jmp(
+            unspecialized_caller,
+            return_block,
+            unspecialized_returns,
+        );
 
         let specialized_returns = dispatcher.push_call(
             specialized_caller,
@@ -532,9 +578,12 @@ impl Specializer {
         );
         dispatcher.terminate_block_with_jmp(specialized_caller, return_block, specialized_returns);
 
-
-        dispatcher.terminate_block_with_jmp_if(entry_block, should_call_spec, specialized_caller, unspecialized_caller);
-
+        dispatcher.terminate_block_with_jmp_if(
+            entry_block,
+            should_call_spec,
+            specialized_caller,
+            unspecialized_caller,
+        );
 
         // dispatcher.terminate_block_with_return(dispatcher.get_entry_id(), vec![Val(unspecialized_id)]);
 

@@ -1,11 +1,18 @@
 use std::{fmt::Display, fs, path::PathBuf};
 
-use crate::compiler::{flow_analysis::FlowAnalysis, ir::r#type::CommutativeMonoid, ssa::SSA};
+use crate::compiler::{
+    analysis::instrumenter::{self, CostEstimator},
+    flow_analysis::FlowAnalysis,
+    ir::r#type::CommutativeMonoid,
+    ssa::SSA,
+    taint_analysis::ConstantTaint,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DataPoint {
     CFG,
     Types,
+    ConstraintInstrumentation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -25,16 +32,18 @@ pub struct PassManager<V> {
     current_pass_info: Option<PassInfo>,
     cfg: Option<FlowAnalysis>,
     types_valid: bool,
+    constraint_instrumentation: Option<instrumenter::Summary>,
     debug_output_dir: Option<PathBuf>,
 }
 
-impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
-    pub fn new(passes: Vec<Box<dyn Pass<V>>>) -> Self {
+impl PassManager<ConstantTaint> {
+    pub fn new(passes: Vec<Box<dyn Pass<ConstantTaint>>>) -> Self {
         Self {
             passes,
             current_pass_info: None,
             cfg: None,
             types_valid: false,
+            constraint_instrumentation: None,
             debug_output_dir: None,
         }
     }
@@ -44,7 +53,7 @@ impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
     }
 
     #[tracing::instrument(skip_all, name = "PassManager::run")]
-    pub fn run(&mut self, ssa: &mut SSA<V>) {
+    pub fn run(&mut self, ssa: &mut SSA<ConstantTaint>) {
         if let Some(debug_output_dir) = &self.debug_output_dir {
             if debug_output_dir.exists() {
                 fs::remove_dir_all(&debug_output_dir).unwrap();
@@ -61,7 +70,12 @@ impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
     }
 
     #[tracing::instrument(skip_all, fields(pass = %pass.pass_info().name))]
-    fn run_pass(&mut self, ssa: &mut SSA<V>, pass: &dyn Pass<V>, pass_index: usize) {
+    fn run_pass(
+        &mut self,
+        ssa: &mut SSA<ConstantTaint>,
+        pass: &dyn Pass<ConstantTaint>,
+        pass_index: usize,
+    ) {
         self.initialize_pass_data(ssa, &pass.pass_info());
         self.output_debug_info(ssa, pass_index, &pass.pass_info());
         self.current_pass_info = Some(pass.pass_info());
@@ -69,7 +83,12 @@ impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
         self.tear_down_pass_data(&pass.pass_info());
     }
 
-    fn output_debug_info(&mut self, ssa: &SSA<V>, pass_index: usize, pass_info: &PassInfo) {
+    fn output_debug_info(
+        &mut self,
+        ssa: &SSA<ConstantTaint>,
+        pass_index: usize,
+        pass_info: &PassInfo,
+    ) {
         let Some(debug_output_dir) = &self.debug_output_dir else {
             return;
         };
@@ -84,7 +103,7 @@ impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
         }
     }
 
-    fn output_final_debug_info(&mut self, ssa: &mut SSA<V>) {
+    fn output_final_debug_info(&mut self, ssa: &mut SSA<ConstantTaint>) {
         if self.cfg.is_none() {
             self.cfg = Some(FlowAnalysis::run(ssa));
         }
@@ -95,20 +114,40 @@ impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
             return;
         };
         if let Some(cfg) = &self.cfg {
-            cfg.generate_images(debug_output_dir.join("final_result"), ssa, "final result".to_string());
+            cfg.generate_images(
+                debug_output_dir.join("final_result"),
+                ssa,
+                "final result".to_string(),
+            );
         }
     }
 
-    fn initialize_pass_data(&mut self, ssa: &mut SSA<V>, pass_info: &PassInfo) {
+    fn initialize_pass_data(&mut self, ssa: &mut SSA<ConstantTaint>, pass_info: &PassInfo) {
         if (pass_info.needs.contains(&DataPoint::CFG)
-            || pass_info.needs.contains(&DataPoint::Types))
+            || pass_info.needs.contains(&DataPoint::Types)
+            || pass_info
+                .needs
+                .contains(&DataPoint::ConstraintInstrumentation))
             && self.cfg.is_none()
         {
             self.cfg = Some(FlowAnalysis::run(ssa));
         }
-        if pass_info.needs.contains(&DataPoint::Types) && !self.types_valid {
+        if (pass_info.needs.contains(&DataPoint::Types)
+            || pass_info
+                .needs
+                .contains(&DataPoint::ConstraintInstrumentation))
+            && !self.types_valid
+        {
             ssa.typecheck(&self.get_cfg());
             self.types_valid = true;
+        }
+        if pass_info
+            .needs
+            .contains(&DataPoint::ConstraintInstrumentation)
+        {
+            let cost_estimator = CostEstimator::new();
+            let cost_analysis = cost_estimator.run(ssa);
+            self.constraint_instrumentation = Some(cost_analysis.summarize());
         }
     }
 
@@ -118,6 +157,12 @@ impl<V: Clone + CommutativeMonoid + Eq + Display> PassManager<V> {
         }
         if pass_info.invalidates.contains(&DataPoint::Types) {
             self.types_valid = false;
+        }
+        if pass_info
+            .invalidates
+            .contains(&DataPoint::ConstraintInstrumentation)
+        {
+            self.constraint_instrumentation = None;
         }
     }
 }
@@ -136,5 +181,23 @@ impl<V> PassManager<V> {
             None => {}
         }
         self.cfg.as_ref().unwrap()
+    }
+
+    pub fn get_constraint_instrumentation(&self) -> &instrumenter::Summary {
+        match &self.current_pass_info {
+            Some(pass_info) => {
+                if !pass_info
+                    .needs
+                    .contains(&DataPoint::ConstraintInstrumentation)
+                {
+                    panic!(
+                        "Pass {} does not need constraint instrumentation but tries to access it",
+                        pass_info.name
+                    );
+                }
+            }
+            None => {}
+        }
+        self.constraint_instrumentation.as_ref().unwrap()
     }
 }

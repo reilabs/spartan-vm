@@ -382,8 +382,11 @@ impl R1CGen {
                         scope.insert(*result, r);
                     }
 
-                    OpCode::BinaryArithOp(BinaryArithOpKind::And, _, _, _) => {
-                        todo!();
+                    OpCode::BinaryArithOp(BinaryArithOpKind::And, r, lhs, rhs) => {
+                        let lhs = scope.get(lhs).unwrap().expect_u32();
+                        let rhs = scope.get(rhs).unwrap().expect_u32();
+                        let res = lhs & rhs;
+                        scope.insert(*r, Value::Const(ark_bn254::Fr::from(res as u128)));
                     }
                     OpCode::Select(rslot, c, l, r) => {
                         let cond = scope.get(c).unwrap();
@@ -408,8 +411,17 @@ impl R1CGen {
                     }
                     OpCode::Truncate(result, value, target_bits, _) => {
                         let value = scope.get(value).unwrap().clone();
-                        let new_value = value.expect_constant().into_bigint().to_bits_le().iter().take(*target_bits).cloned().collect::<Vec<_>>();
-                        let new_value = Value::Const(ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&new_value)).unwrap());
+                        let new_value = value
+                            .expect_constant()
+                            .into_bigint()
+                            .to_bits_le()
+                            .iter()
+                            .take(*target_bits)
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        let new_value = Value::Const(
+                            ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&new_value)).unwrap(),
+                        );
                         scope.insert(*result, new_value);
                     }
                     OpCode::Not(result, value_id) => {
@@ -423,7 +435,10 @@ impl R1CGen {
                             let bit = if i < bits.len() { bits[i] } else { false };
                             negated_bits.push(!bit);
                         }
-                        let new_value = Value::Const(ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&negated_bits)).unwrap());
+                        let new_value = Value::Const(
+                            ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&negated_bits))
+                                .unwrap(),
+                        );
                         scope.insert(*result, new_value);
                     }
                     OpCode::ToBits(result, value_id, endianness, output_size) => {

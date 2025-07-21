@@ -21,7 +21,7 @@ impl Pass<ConstantTaint> for ExplicitWitness {
         crate::compiler::pass_manager::PassInfo {
             name: "explicit_witness",
             invalidates: vec![DataPoint::Types],
-            needs: vec![],
+            needs: vec![DataPoint::Types],
         }
     }
 }
@@ -89,7 +89,13 @@ impl ExplicitWitness {
                             assert!(r_taint.is_pure());
                             new_instructions.push(instruction);
                         }
-                        OpCode::BinaryArithOp(BinaryArithOpKind::And, ..) => todo!(),
+                        OpCode::BinaryArithOp(BinaryArithOpKind::And, _, l, r) => {
+                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
+                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+                            assert!(l_taint.is_pure());
+                            assert!(r_taint.is_pure());
+                            new_instructions.push(instruction);
+                        },
                         OpCode::Store(ptr, _) => {
                             let ptr_taint = function.get_value_type(ptr).unwrap().get_annotation();
                             assert!(ptr_taint.is_pure());
