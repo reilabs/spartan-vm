@@ -201,6 +201,9 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         // pass_manager.set_debug_output_dir(debug_output_dir);
         pass_manager.run(&mut custom_ssa);
 
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        custom_ssa.typecheck(&flow_analysis);
+
         let mut r1cs_gen = R1CGen::new();
         r1cs_gen.run(&custom_ssa);
         let r1cs = r1cs_gen.clone().get_r1cs();

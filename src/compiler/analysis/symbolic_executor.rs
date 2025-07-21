@@ -150,7 +150,7 @@ impl SymbolicExecutor {
                         scope[r.0 as usize] =
                             Some(a.cast(cast_target, &fn_body.get_value_type(*r).unwrap(), ctx));
                     }
-                    crate::compiler::ssa::OpCode::Truncate(r, a, from, to) => {
+                    crate::compiler::ssa::OpCode::Truncate(r, a, to, from) => {
                         let a = scope[a.0 as usize].as_ref().unwrap();
                         scope[r.0 as usize] =
                             Some(a.truncate(*from, *to, &fn_body.get_value_type(*r).unwrap(), ctx));

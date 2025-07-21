@@ -5,6 +5,7 @@ use crate::compiler::{
     ssa::{BinaryArithOpKind, BlockId, Const, CmpKind, Endianness, Function, FunctionId, OpCode, SSA, Terminator, ValueId},
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
+use tracing::instrument;
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -97,6 +98,7 @@ impl WitnessGen {
         }
     }
 
+    #[instrument(skip_all, name = "WitnessGen::run")]
     pub fn run<V: Clone>(&mut self, ssa: &SSA<V>) {
         let entry_point = ssa.get_main_id();
         let params = ssa.get_function(entry_point).get_param_types();
