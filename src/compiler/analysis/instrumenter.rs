@@ -2,10 +2,14 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, PrimeField};
 use itertools::Itertools;
-use tracing::{Level, instrument};
+use tracing::instrument;
 
 use crate::compiler::{
-    analysis::symbolic_executor::{self, SymbolicExecutor}, ir::r#type::{Type, TypeExpr}, ssa::{BinaryArithOpKind, CastTarget, CmpKind, Const, Endianness, FunctionId, SeqType, Terminator, SSA}, taint_analysis::ConstantTaint, Field
+    Field,
+    analysis::symbolic_executor::{self, SymbolicExecutor},
+    ir::r#type::{Type, TypeExpr},
+    ssa::{BinaryArithOpKind, CastTarget, CmpKind, Endianness, FunctionId, SSA, SeqType},
+    taint_analysis::ConstantTaint,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -66,7 +70,7 @@ impl Value {
         &self,
         b: &Value,
         cmp_kind: &crate::compiler::ssa::CmpKind,
-        instrumenter: &mut dyn OpInstrumenter,
+        _instrumenter: &mut dyn OpInstrumenter,
     ) -> Value {
         match (self, b) {
             (Value::U(_, a), Value::U(_, b)) => match cmp_kind {
@@ -77,7 +81,7 @@ impl Value {
                 CmpKind::Eq => Value::U(1, if a == b { 1 } else { 0 }),
                 CmpKind::Lt => Value::U(1, if a < b { 1 } else { 0 }),
             },
-            (Value::UWitness(s), _) | (_, Value::UWitness(s)) => {
+            (Value::UWitness(_), _) | (_, Value::UWitness(_)) => {
                 todo!();
             }
             (Value::FWitness, _) | (_, Value::FWitness) => {
@@ -135,7 +139,7 @@ impl Value {
                     _ => Value::FWitness,
                 }
             }
-            (Value::UWitness(s), _) | (_, Value::UWitness(s)) => {
+            (Value::UWitness(_), _) | (_, Value::UWitness(_)) => {
                 todo!();
             }
             (_, _) => panic!("Cannot perform binary arithmetic on {:?} and {:?}", self, b),
@@ -153,7 +157,7 @@ impl Value {
             (Value::Array(_), ConstantTaint::Witness, _) => {
                 panic!("Witness arrays not supported yet")
             }
-            (Value::Array(vals), _, tp) => {
+            (Value::Array(_), _, tp) => {
                 let item_tp = match tp {
                     TypeExpr::Array(tp, _) => tp,
                     TypeExpr::Slice(tp) => tp,
@@ -188,7 +192,7 @@ impl Value {
             (Value::U(s, v), ConstantTaint::Pure, _) => ValueSignature::U(*s, *v),
             (Value::U(s, _), ConstantTaint::Witness, _) => ValueSignature::UWitness(*s),
             (Value::Field(f), ConstantTaint::Pure, _) => ValueSignature::Field(f.clone()),
-            (Value::Field(f), ConstantTaint::Witness, _) => ValueSignature::FWitness,
+            (Value::Field(_), ConstantTaint::Witness, _) => ValueSignature::FWitness,
             (Value::Array(vals), ConstantTaint::Pure, tp) => {
                 let item_tp = match tp {
                     TypeExpr::Array(tp, _) => tp,
@@ -289,7 +293,7 @@ impl Value {
     ) -> Value {
         match (self, cast_target) {
             (Value::U(_, v), CastTarget::U(s2)) => Value::U(*s2, *v),
-            (Value::U(s, v), CastTarget::Field) => Value::Field(Field::from(*v)),
+            (Value::U(_, v), CastTarget::Field) => Value::Field(Field::from(*v)),
             (Value::Field(f), CastTarget::Field) => Value::Field(f.clone()),
             (Value::Field(f), CastTarget::U(s)) => {
                 let bigint = f.into_bigint();
@@ -345,13 +349,13 @@ impl Value {
         }
     }
 
-    fn ptr_read(&self, tp: &Type<ConstantTaint>, _instrumenter: &mut dyn OpInstrumenter) -> Value {
+    fn ptr_read(&self, _tp: &Type<ConstantTaint>, _instrumenter: &mut dyn OpInstrumenter) -> Value {
         match self {
             Value::Pointer(val) => val.borrow().clone(),
             _ => panic!("Cannot read from {:?}", self),
         }
     }
-    
+
     fn assert_r1c(a: &Value, b: &Value, c: &Value, get_unspecialized: &mut dyn OpInstrumenter) {
         if a.is_witness() || b.is_witness() || c.is_witness() {
             get_unspecialized.record_constraints(1);
@@ -362,19 +366,25 @@ impl Value {
         match &tp.expr {
             TypeExpr::U(s) => Value::UWitness(*s),
             TypeExpr::Field => Value::FWitness,
-            TypeExpr::Array(tp, size) =>{
+            TypeExpr::Array(tp, size) => {
                 let mut values = vec![];
                 for _ in 0..*size {
                     values.push(Self::witness_of(tp));
                 }
                 Value::Array(values)
-            } 
+            }
             TypeExpr::Slice(_) => panic!("Cannot witness slice type"),
             TypeExpr::Ref(_) => panic!("Cannot witness pointer type"),
         }
     }
-    
-    fn select(&self, if_true: &Value, if_false: &Value, tp: &Type<ConstantTaint>, get_specialized: &mut dyn OpInstrumenter) -> Value {
+
+    fn select(
+        &self,
+        if_true: &Value,
+        if_false: &Value,
+        tp: &Type<ConstantTaint>,
+        get_specialized: &mut dyn OpInstrumenter,
+    ) -> Value {
         match self {
             Value::U(_, 0) => if_true.clone(),
             Value::U(_, _) => if_false.clone(),
@@ -383,7 +393,7 @@ impl Value {
                     get_specialized.record_constraints(1);
                 }
                 Self::witness_of(tp)
-            },
+            }
             _ => panic!("Cannot select on {:?}", self),
         }
     }
@@ -510,7 +520,12 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         res
     }
 
-    fn mk_array(values: Vec<SpecSplitValue>, _ctx: &mut CostAnalysis, _seq_type: SeqType, _elem_type: &Type<ConstantTaint>) -> SpecSplitValue {
+    fn mk_array(
+        values: Vec<SpecSplitValue>,
+        _ctx: &mut CostAnalysis,
+        _seq_type: SeqType,
+        _elem_type: &Type<ConstantTaint>,
+    ) -> SpecSplitValue {
         let (uns, spec) = values
             .into_iter()
             .map(|v| (v.unspecialized, v.specialized))
@@ -588,8 +603,18 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
         SpecSplitValue {
-            unspecialized: self.unspecialized.select(&if_t.unspecialized, &if_f.unspecialized, tp, instrumenter.get_unspecialized()),
-            specialized: self.specialized.select(&if_t.specialized, &if_f.specialized, tp, instrumenter.get_specialized()),
+            unspecialized: self.unspecialized.select(
+                &if_t.unspecialized,
+                &if_f.unspecialized,
+                tp,
+                instrumenter.get_unspecialized(),
+            ),
+            specialized: self.specialized.select(
+                &if_t.specialized,
+                &if_f.specialized,
+                tp,
+                instrumenter.get_specialized(),
+            ),
         }
     }
 
@@ -814,15 +839,20 @@ impl symbolic_executor::Context<SpecSplitValue, ConstantTaint> for CostAnalysis 
         // also caching the final results of all input ptrs.
         let ptrs = param_types.iter().any(|tp| tp.contains_ptrs());
         if ptrs {
-            return None
+            return None;
         }
 
         if let Some(cached) = self.cache.get(&sig).cloned() {
             self.register_cached_call(sig.clone());
-            return Some(cached.iter().map(|v| SpecSplitValue {
-                unspecialized: v.to_value(),
-                specialized: v.to_value(),
-            }).collect());
+            return Some(
+                cached
+                    .iter()
+                    .map(|v| SpecSplitValue {
+                        unspecialized: v.to_value(),
+                        specialized: v.to_value(),
+                    })
+                    .collect(),
+            );
         }
 
         self.enter_call(sig);
@@ -903,7 +933,6 @@ impl Summary {
 }
 
 impl CostAnalysis {
-
     fn register_cached_call(&mut self, sig: FunctionSignature) {
         if !self.stack.is_empty() {
             let (_, cost) = self.stack.last_mut().unwrap();
