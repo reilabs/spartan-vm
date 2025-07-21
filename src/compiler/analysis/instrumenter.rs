@@ -726,6 +726,7 @@ impl OpInstrumenter for DummyInstrumenter {
 pub struct CostAnalysis {
     entry_point: Option<FunctionSignature>,
     functions: HashMap<FunctionSignature, FunctionCost>,
+    cache: HashMap<FunctionSignature, Vec<ValueSignature>>,
     stack: Vec<(FunctionSignature, Box<dyn FunctionInstrumenter>)>,
 }
 
@@ -735,7 +736,7 @@ impl symbolic_executor::Context<SpecSplitValue, ConstantTaint> for CostAnalysis 
         func: FunctionId,
         params: &mut [SpecSplitValue],
         param_types: &[&Type<ConstantTaint>],
-    ) {
+    ) -> Option<Vec<SpecSplitValue>> {
         let mut inputs_sig = vec![];
         for (pval, ptype) in params.iter_mut().zip(param_types.iter()) {
             pval.blind_from(ptype);
@@ -747,7 +748,24 @@ impl symbolic_executor::Context<SpecSplitValue, ConstantTaint> for CostAnalysis 
             params: inputs_sig,
         };
 
+        // It's unsafe to use a cache for functions that take pointers,
+        // as these could get modified. We can improve in the future by
+        // also caching the final results of all input ptrs.
+        let ptrs = param_types.iter().any(|tp| tp.contains_ptrs());
+        if ptrs {
+            return None
+        }
+
+        if let Some(cached) = self.cache.get(&sig).cloned() {
+            self.register_cached_call(sig.clone());
+            return Some(cached.iter().map(|v| SpecSplitValue {
+                unspecialized: v.to_value(),
+                specialized: v.to_value(),
+            }).collect());
+        }
+
         self.enter_call(sig);
+        None
     }
 
     fn on_return(&mut self, returns: &mut [SpecSplitValue], return_types: &[Type<ConstantTaint>]) {
@@ -755,7 +773,15 @@ impl symbolic_executor::Context<SpecSplitValue, ConstantTaint> for CostAnalysis 
             rval.blind_from(rtype);
         }
 
-        self.exit_call();
+        let sig = self.exit_call();
+
+        let mut caches = vec![];
+
+        for (rval, rtype) in returns.iter().zip(return_types.iter()) {
+            caches.push(rval.make_unspecialized_sig(rtype));
+        }
+
+        self.cache.insert(sig.clone(), caches);
     }
 
     fn on_jmp(
@@ -816,6 +842,14 @@ impl Summary {
 }
 
 impl CostAnalysis {
+
+    fn register_cached_call(&mut self, sig: FunctionSignature) {
+        if !self.stack.is_empty() {
+            let (_, cost) = self.stack.last_mut().unwrap();
+            cost.record_call(sig.clone());
+        }
+    }
+
     fn enter_call(&mut self, sig: FunctionSignature) {
         if !self.stack.is_empty() {
             let (_, cost) = self.stack.last_mut().unwrap();
@@ -836,12 +870,13 @@ impl CostAnalysis {
         }
     }
 
-    fn exit_call(&mut self) {
+    fn exit_call(&mut self) -> FunctionSignature {
         let (sig, instrumenter) = self.stack.pop().unwrap();
         if !self.functions.contains_key(&sig) {
             let instrumenter = instrumenter.seal();
-            self.functions.insert(sig, instrumenter);
+            self.functions.insert(sig.clone(), instrumenter);
         }
+        sig
     }
 
     fn get_specialized(&mut self) -> &mut dyn OpInstrumenter {
@@ -929,6 +964,7 @@ impl CostEstimator {
             functions: HashMap::new(),
             stack: vec![],
             entry_point: Some(main_sig.clone()),
+            cache: HashMap::new(),
         };
 
         self.run_fn_from_signature(ssa, main_sig, &mut costs);

@@ -109,6 +109,16 @@ impl<V: CommutativeMonoid + Display> Type<V> {
             annotation: self.annotation.op(other),
         }
     }
+
+    pub fn contains_ptrs(&self) -> bool {
+        match &self.expr {
+            TypeExpr::Ref(_) => true,
+            TypeExpr::Array(inner, _) => inner.contains_ptrs(),
+            TypeExpr::Slice(inner) => inner.contains_ptrs(),
+            TypeExpr::Field => false,
+            TypeExpr::U(_) => false,
+        }
+    }
 }
 
 impl<V: Clone> Type<V> {

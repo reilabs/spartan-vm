@@ -54,7 +54,14 @@ where
 }
 
 pub trait Context<V, Taint> {
-    fn on_call(&mut self, func: FunctionId, params: &mut [V], param_types: &[&Type<Taint>]);
+    // If this returns Some, the function execution will be skipped and the returned values will be used instead
+    // as call results.
+    fn on_call(
+        &mut self,
+        func: FunctionId,
+        params: &mut [V],
+        param_types: &[&Type<Taint>],
+    ) -> Option<Vec<V>>;
     fn on_return(&mut self, returns: &mut [V], return_types: &[Type<Taint>]);
     fn on_jmp(&mut self, target: BlockId, params: &mut [V], param_types: &[&Type<Taint>]);
 }
@@ -106,11 +113,15 @@ impl SymbolicExecutor {
             scope[val.0 as usize] = Some(v);
         }
 
-        ctx.on_call(
+        let call_result = ctx.on_call(
             fn_id,
             &mut inputs,
             &entry.get_parameters().map(|(_, tp)| tp).collect::<Vec<_>>(),
         );
+
+        if let Some(call_result) = call_result {
+            return call_result;
+        }
 
         for (pval, ppos) in inputs.iter_mut().zip(entry.get_parameter_values()) {
             scope[ppos.0 as usize] = Some(pval.clone());
@@ -224,10 +235,8 @@ impl SymbolicExecutor {
                     crate::compiler::ssa::OpCode::WriteWitness(r, a, _) => {
                         let a = scope[a.0 as usize].as_ref().unwrap();
                         if let Some(r) = r {
-                            scope[r.0 as usize] = Some(a.write_witness(
-                                fn_body.get_value_type(*r),
-                                ctx,
-                            ));
+                            scope[r.0 as usize] =
+                                Some(a.write_witness(fn_body.get_value_type(*r), ctx));
                         } else {
                             a.write_witness(None, ctx);
                         }
