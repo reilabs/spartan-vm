@@ -351,6 +351,42 @@ impl Value {
             _ => panic!("Cannot read from {:?}", self),
         }
     }
+    
+    fn assert_r1c(a: &Value, b: &Value, c: &Value, get_unspecialized: &mut dyn OpInstrumenter) {
+        if a.is_witness() || b.is_witness() || c.is_witness() {
+            get_unspecialized.record_constraints(1);
+        }
+    }
+
+    fn witness_of(tp: &Type<ConstantTaint>) -> Value {
+        match &tp.expr {
+            TypeExpr::U(s) => Value::UWitness(*s),
+            TypeExpr::Field => Value::FWitness,
+            TypeExpr::Array(tp, size) =>{
+                let mut values = vec![];
+                for _ in 0..*size {
+                    values.push(Self::witness_of(tp));
+                }
+                Value::Array(values)
+            } 
+            TypeExpr::Slice(_) => panic!("Cannot witness slice type"),
+            TypeExpr::Ref(_) => panic!("Cannot witness pointer type"),
+        }
+    }
+    
+    fn select(&self, if_true: &Value, if_false: &Value, tp: &Type<ConstantTaint>, get_specialized: &mut dyn OpInstrumenter) -> Value {
+        match self {
+            Value::U(_, 0) => if_true.clone(),
+            Value::U(_, _) => if_false.clone(),
+            Value::UWitness(_) => {
+                if if_true.is_witness() || if_false.is_witness() {
+                    get_specialized.record_constraints(1);
+                }
+                Self::witness_of(tp)
+            },
+            _ => panic!("Cannot select on {:?}", self),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -486,12 +522,23 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
     }
 
     fn assert_r1c(
-        _a: &SpecSplitValue,
-        _b: &SpecSplitValue,
-        _c: &SpecSplitValue,
-        _ctx: &mut CostAnalysis,
+        a: &SpecSplitValue,
+        b: &SpecSplitValue,
+        c: &SpecSplitValue,
+        ctx: &mut CostAnalysis,
     ) {
-        todo!()
+        Value::assert_r1c(
+            &a.unspecialized,
+            &b.unspecialized,
+            &c.unspecialized,
+            ctx.get_unspecialized(),
+        );
+        Value::assert_r1c(
+            &a.specialized,
+            &b.specialized,
+            &c.specialized,
+            ctx.get_specialized(),
+        );
     }
 
     fn array_get(
@@ -535,12 +582,15 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
 
     fn select(
         &self,
-        _if_t: &SpecSplitValue,
-        _if_f: &SpecSplitValue,
-        _tp: &Type<ConstantTaint>,
-        _instrumenter: &mut CostAnalysis,
+        if_t: &SpecSplitValue,
+        if_f: &SpecSplitValue,
+        tp: &Type<ConstantTaint>,
+        instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
-        todo!()
+        SpecSplitValue {
+            unspecialized: self.unspecialized.select(&if_t.unspecialized, &if_f.unspecialized, tp, instrumenter.get_unspecialized()),
+            specialized: self.specialized.select(&if_t.specialized, &if_f.specialized, tp, instrumenter.get_specialized()),
+        }
     }
 
     fn constrain(

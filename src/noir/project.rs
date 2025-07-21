@@ -198,7 +198,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let debug_output_dir = package.root_dir.join("spartan_vm_debug");
 
-        // pass_manager.set_debug_output_dir(debug_output_dir);
+        pass_manager.set_debug_output_dir(debug_output_dir.clone());
         pass_manager.run(&mut custom_ssa);
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
