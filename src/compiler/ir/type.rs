@@ -193,6 +193,10 @@ impl<V> Type<V> {
         matches!(self.expr, TypeExpr::U(_) | TypeExpr::Field)
     }
 
+    pub fn is_field(&self) -> bool {
+        matches!(self.expr, TypeExpr::Field)
+    }
+
     pub fn is_array(&self) -> bool {
         matches!(self.expr, TypeExpr::Array(_, _))
     }

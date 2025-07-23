@@ -18,9 +18,11 @@
 
 mod noir;
 
+pub mod compiler;
 pub mod error;
 pub mod project;
-pub mod compiler;
+
+pub mod vm;
 
 pub use error::Error;
 pub use noir::error as noir_error;

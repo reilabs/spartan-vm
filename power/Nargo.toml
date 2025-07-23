@@ -1,0 +1,6 @@
+[package]
+name = "power"
+type = "bin"
+authors = [""]
+
+[dependencies]

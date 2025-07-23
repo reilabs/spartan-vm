@@ -3,6 +3,7 @@
 use std::fs;
 
 use crate::compiler::analysis::instrumenter::CostEstimator;
+use crate::compiler::codegen::CodeGen;
 use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::monomorphization::Monomorphization;
 use crate::compiler::pass_manager::PassManager;
@@ -228,6 +229,10 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         custom_ssa.typecheck(&flow_analysis);
+
+        let mut codegen = CodeGen::new();
+        let program = codegen.run(&custom_ssa, &flow_analysis);
+        fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
 
         let mut witness_gen = WitnessGen::new(public_witness);
         witness_gen.run(&custom_ssa);
