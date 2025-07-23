@@ -1,0 +1,6 @@
+[package]
+name = "just_add"
+type = "bin"
+authors = [""]
+
+[dependencies]

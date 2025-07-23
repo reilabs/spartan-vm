@@ -2,6 +2,7 @@
 
 use std::fs;
 
+use crate::compiler::Field;
 use crate::compiler::analysis::instrumenter::CostEstimator;
 use crate::compiler::codegen::CodeGen;
 use crate::compiler::flow_analysis::FlowAnalysis;
@@ -23,6 +24,7 @@ use crate::compiler::taint_analysis::{ConstantTaint, TaintAnalysis};
 use crate::compiler::untaint_control_flow::UntaintControlFlow;
 use crate::compiler::witness_generation::WitnessGen;
 use crate::noir::error::compilation::{Error as CompileError, Result as CompileResult};
+use crate::vm::interpreter;
 use fm::FileManager;
 use nargo::{
     insert_all_files_for_workspace_into_file_manager, package::Package, parse_all, prepare_package,
@@ -230,9 +232,25 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         custom_ssa.typecheck(&flow_analysis);
 
-        let mut codegen = CodeGen::new();
+        let codegen = CodeGen::new();
         let program = codegen.run(&custom_ssa, &flow_analysis);
         fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
+
+        let mut binary = program.to_binary();
+        let len_num_digits = binary.len().to_string().len();
+        for (i, b) in binary.iter().enumerate() {
+            println!("{: >len_num_digits$}: {}", i, b);
+        }
+
+        let (out_wit, out_a, out_b, out_c) = interpreter::run(
+            &mut binary,
+            &[Field::from(3), Field::from(4), Field::from(7)],
+        );
+
+        println!("out_wit: {:?}", out_wit);
+        println!("out_a: {:?}", out_a);
+        println!("out_b: {:?}", out_b);
+        println!("out_c: {:?}", out_c);
 
         let mut witness_gen = WitnessGen::new(public_witness);
         witness_gen.run(&custom_ssa);

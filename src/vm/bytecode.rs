@@ -9,7 +9,7 @@ impl FramePosition {
         FramePosition(self.0.checked_add_signed(offset).unwrap())
     }
     pub fn return_data_ptr() -> FramePosition {
-        FramePosition(1)
+        FramePosition(0)
     }
 }
 
@@ -109,12 +109,141 @@ impl Display for Program {
         let max_function_idx_digits = max_function_idx.to_string().len();
         let mut line = 0;
         for (i, function) in self.functions.iter().enumerate() {
-            writeln!(f, "{: >max_function_idx_digits$}: fn {}", i, function.name)?;
+            writeln!(f, "{: >max_function_idx_digits$}: fn {} (frame_size = {})", i, function.name, function.frame_size)?;
             for op in &function.code {
                 writeln!(f, "  {: >max_line_number_digits$}: {}", line, op)?;
                 line += 1;
             }
         }
         Ok(())
+    }
+}
+
+impl Program {
+    pub fn to_binary(&self) -> Vec<u64> {
+        let mut binary = Vec::new();
+        let mut positions = vec![];
+        let mut jumps_to_fix = vec![];
+
+        for function in &self.functions {
+            binary.push(function.frame_size as u64);
+
+            for op in &function.code {
+                positions.push(binary.len());
+
+                match op {
+                    OpCode::Const(pos, val) => {
+                        binary.push(0);
+                        binary.push(pos.0 as u64);
+                        binary.push(*val);
+                    }
+
+                    OpCode::AddF(pos1, pos2, pos3) => {
+                        binary.push(1);
+                        binary.push(pos1.0 as u64);
+                        binary.push(pos2.0 as u64);
+                        binary.push(pos3.0 as u64);
+                    }
+
+                    OpCode::MulF(pos1, pos2, pos3) => {
+                        binary.push(2);
+                        binary.push(pos1.0 as u64);
+                        binary.push(pos2.0 as u64);
+                        binary.push(pos3.0 as u64);
+                    }
+
+                    OpCode::AddU(size, pos1, pos2, pos3) => {
+                        binary.push(3);
+                        binary.push(*size as u64);
+                        binary.push(pos1.0 as u64);
+                        binary.push(pos2.0 as u64);
+                        binary.push(pos3.0 as u64);
+                    }
+
+                    OpCode::LtU(size, pos1, pos2, pos3) => {
+                        binary.push(4);
+                        binary.push(*size as u64);
+                        binary.push(pos1.0 as u64);
+                        binary.push(pos2.0 as u64);
+                        binary.push(pos3.0 as u64);
+                    }
+
+                    OpCode::WriteWitness(pos) => {
+                        binary.push(5);
+                        binary.push(pos.0 as u64);
+                    }
+
+                    OpCode::ConstraintR1C(pos1, pos2, pos3) => {
+                        binary.push(6);
+                        binary.push(pos1.0 as u64);
+                        binary.push(pos2.0 as u64);
+                        binary.push(pos3.0 as u64);
+                    }
+
+                    OpCode::Select(pos1, pos2, pos3, pos4) => {
+                        binary.push(7);
+                        binary.push(pos1.0 as u64);
+                        binary.push(pos2.0 as u64);
+                        binary.push(pos3.0 as u64);
+                        binary.push(pos4.0 as u64);
+                    }
+
+                    OpCode::Mov(pos1, pos2, size) => {
+                        binary.push(8);
+                        binary.push(*size as u64);
+                        binary.push(pos1.0 as u64);
+                        binary.push(pos2.0 as u64);
+                    }
+
+                    OpCode::Jmp(target) => {
+                        binary.push(9);
+                        jumps_to_fix.push(binary.len());
+                        binary.push(target.0 as u64);
+                    }
+
+                    OpCode::JmpIf(pos, target1, target2) => {
+                        binary.push(10);
+                        binary.push(pos.0 as u64);
+                        jumps_to_fix.push(binary.len());
+                        binary.push(target1.0 as u64);
+                        jumps_to_fix.push(binary.len());
+                        binary.push(target2.0 as u64);
+                    }
+
+                    OpCode::Return => {
+                        binary.push(11);
+                    }
+
+                    OpCode::Call(target, args, ret) => {
+                        binary.push(12);
+                        jumps_to_fix.push(binary.len());
+                        binary.push(target.0 as u64);
+                        binary.push(args.len() as u64);
+                        for arg in args {
+                            binary.push(arg.0 as u64);
+                        }
+                        binary.push(ret.0 as u64);
+                    }
+
+                    OpCode::WritePtr(tgt, offset, val, size) => {
+                        binary.push(13);
+                        binary.push(tgt.0 as u64);
+                        binary.push(unsafe { std::mem::transmute(offset) });
+                        binary.push(val.0 as u64);
+                        binary.push(*size as u64);
+                    }
+
+                    OpCode::Nop => {
+                        binary.push(14);
+                    }
+                }
+            }
+        }
+        for jump in jumps_to_fix {
+            let target = binary[jump];
+            let target_pos = positions[target as usize];
+            binary[jump] = unsafe { std::mem::transmute(target_pos as isize - jump as isize) };
+        }
+        binary
     }
 }

@@ -15,4 +15,4 @@ pub mod union_find;
 pub mod untaint_control_flow;
 pub mod witness_generation;
 
-type Field = ark_bn254::Fr;
+pub type Field = ark_bn254::Fr;
