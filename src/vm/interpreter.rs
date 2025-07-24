@@ -217,11 +217,11 @@ pub fn nop(
     dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
 }
 
-fn prepare_dispatch(program: &mut [u64], dispatch: &[Handler]) {
+fn prepare_dispatch(program: &mut [u64]) {
     let mut current_offset = 1;
     while current_offset < program.len() {
         let opcode = program[current_offset];
-        program[current_offset] = dispatch[opcode as usize] as u64;
+        program[current_offset] = DISPATCH[opcode as usize] as u64;
         match opcode {
             0 => {
                 current_offset += 3;
@@ -294,9 +294,7 @@ pub fn run_interpreter(
     let sp = unsafe { stack.as_mut_ptr().offset(1) };
 
     let mut program = program.to_vec();
-    // let mut dispatch_table = DISPATCH;
-    let dispatch_table = &DISPATCH;
-    prepare_dispatch(&mut program, dispatch_table);
+    prepare_dispatch(&mut program);
 
     let pc = unsafe { program.as_mut_ptr().offset(1) };
 
