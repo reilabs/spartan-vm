@@ -11,18 +11,10 @@ use crate::compiler::Field;
 
 const DISPATCH_SIZE: usize = 15;
 
-type Handler = fn(
-    *const u64,
-    *mut Frame,
-    Frame,
-    *mut Field,
-    *mut Field,
-    *mut Field,
-    *mut Field,
-);
+type Handler = fn(*const u64, *mut Frame, Frame, *mut Field, *mut Field, *mut Field, *mut Field);
 
 const DISPATCH: [Handler; DISPATCH_SIZE] = [
-    mov_const, add_f, todo, todo, todo, todo, r1c, todo, todo, todo, todo, ret, todo, todo, nop,
+    mov_const, add_f, mul_f, add_u, lt_u, write_witness, r1c, todo, mov_mem, jmp, jmp_if, ret, todo, todo, nop,
 ];
 
 #[inline(always)]
@@ -35,7 +27,7 @@ pub fn dispatch(
     out_b: *mut Field,
     out_c: *mut Field,
 ) {
-    let opcode: Handler = unsafe { mem::transmute::<_, _>(*pc) };
+    let opcode: Handler = unsafe { mem::transmute(*pc) };
     opcode(pc, sp, frame, out_wit, out_a, out_b, out_c);
 }
 
@@ -76,6 +68,24 @@ impl Frame {
     }
 
     #[inline(always)]
+    pub fn read_u64(&self, offset: isize) -> u64 {
+        unsafe { *self.data.offset(offset) }
+    }
+
+    #[inline(always)]
+    pub fn read_bool(&self, offset: isize) -> bool {
+        let a0 = unsafe { *self.data.offset(offset) };
+        a0 != 0
+    }
+
+    #[inline(always)]
+    pub fn write_u64(&self, offset: isize, value: u64) {
+        unsafe {
+            *self.data.offset(offset) = value;
+        };
+    }
+
+    #[inline(always)]
     pub fn write_field(&self, offset: isize, field: Field) {
         let a0 = field.0.0[0];
         let a1 = field.0.0[1];
@@ -86,6 +96,13 @@ impl Frame {
             *self.data.offset(offset + 1) = a1;
             *self.data.offset(offset + 2) = a2;
             *self.data.offset(offset + 3) = a3;
+        }
+    }
+
+    #[inline(always)]
+    pub fn memcpy(&self, dest: isize, src: isize, size: usize) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.data.offset(src), self.data.offset(dest), size);
         }
     }
 }
@@ -115,6 +132,33 @@ pub fn add_f(
     dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
 }
 
+pub fn add_u(
+    pc: *const u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
+) {
+    let size = unsafe { *pc.offset(1) as usize };
+    let r_offset = unsafe { *pc.offset(2) as isize };
+    let a_offset = unsafe { *pc.offset(3) as isize };
+    let b_offset = unsafe { *pc.offset(4) as isize };
+
+    let a = frame.read_u64(a_offset);
+    let b = frame.read_u64(b_offset);
+
+    let c = a + b;
+
+    // println!("add_u: {}({}) + {}({}) = {}({})", a, a_offset, b, b_offset, c, r_offset);
+
+    frame.write_u64(r_offset, c);
+
+    let new_pc = unsafe { pc.offset(5) };
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
+}
+
 pub fn ret(
     _pc: *const u64,
     sp: *mut Frame,
@@ -131,15 +175,7 @@ pub fn ret(
     if new_frame.data.is_null() {
         return;
     }
-    dispatch(
-        ret_address,
-        new_sp,
-        new_frame,
-        out_wit,
-        out_a,
-        out_b,
-        out_c,
-    )
+    dispatch(ret_address, new_sp, new_frame, out_wit, out_a, out_b, out_c)
 }
 
 pub fn todo(
@@ -204,6 +240,25 @@ pub fn r1c(
     dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c);
 }
 
+pub fn write_witness(
+    pc: *const u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
+) {
+    let offset = unsafe { *pc.offset(1) as isize };
+    let value = frame.read_field(offset);
+    unsafe {
+        *out_wit = value;
+    }
+    let out_wit = unsafe { out_wit.offset(1) };
+    let new_pc = unsafe { pc.offset(2) };
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c);
+}
+
 pub fn nop(
     pc: *const u64,
     sp: *mut Frame,
@@ -214,6 +269,116 @@ pub fn nop(
     out_c: *mut Field,
 ) {
     let new_pc = unsafe { pc.offset(1) };
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
+}
+
+pub fn mov_mem(
+    pc: *const u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
+) {
+    let size = unsafe { *pc.offset(1) as usize };
+    let dest = unsafe { *pc.offset(2) as isize };
+    let src = unsafe { *pc.offset(3) as isize };
+
+    // println!("mov {} words from {} to {}", size, src, dest);
+    frame.memcpy(dest, src, size);
+
+    // println!("frame at dst: {:?}", frame.read_u64(dest));
+
+    let new_pc = unsafe { pc.offset(4) };
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
+}
+
+pub fn jmp(
+    pc: *const u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
+) {
+    let target = unsafe { *pc.offset(1) as isize };
+    // println!("jump by: {}", target);
+    let new_pc = unsafe { pc.offset(target) };
+    // println!("new pc: {:?}", new_pc);
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
+}
+
+pub fn jmp_if(
+    pc: *const u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
+) {
+    let cond = frame.read_bool(unsafe { *pc.offset(1) as isize });
+    let target = if cond {
+        unsafe { *pc.offset(2) as isize }
+    } else {
+        unsafe { *pc.offset(3) as isize }
+    };
+    // println!("jmp_if by: {}", target);
+    let new_pc = unsafe { pc.offset(target) };
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
+}
+
+pub fn lt_u(
+    pc: *const u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
+) {
+    let size = unsafe { *pc.offset(1) as usize };
+    let r_offset = unsafe { *pc.offset(2) as isize };
+    let a_offset = unsafe { *pc.offset(3) as isize };
+    let b_offset = unsafe { *pc.offset(4) as isize };
+
+    let a = frame.read_u64(a_offset);
+    let b = frame.read_u64(b_offset);
+
+    let c = (a < b) as u64;
+
+    // println!("lt_u: {}({}) < {}({}) = {}({})", a, a_offset, b, b_offset, c, r_offset);
+
+    frame.write_u64(r_offset, c);
+
+    let new_pc = unsafe { pc.offset(5) };
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
+}
+
+pub fn mul_f(
+    pc: *const u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
+) {
+    // println!("mul_f");
+    let r_offset = unsafe { *pc.offset(1) as isize };
+    let a_offset = unsafe { *pc.offset(2) as isize };
+    let b_offset = unsafe { *pc.offset(3) as isize };
+
+    let a = frame.read_field(a_offset);
+    let b = frame.read_field(b_offset);
+
+    let c = a * b;
+
+    frame.write_field(r_offset, c);
+
+    let new_pc = unsafe { pc.offset(4) };
     dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
 }
 
@@ -251,7 +416,7 @@ fn prepare_dispatch(program: &mut [u64]) {
                 current_offset += 4;
             }
             9 => {
-                current_offset += 3;
+                current_offset += 2;
             }
             10 => {
                 current_offset += 4;
@@ -298,10 +463,10 @@ pub fn run_interpreter(
 
     let pc = unsafe { program.as_mut_ptr().offset(1) };
 
-    let mut out_wit = vec![Field::ZERO; 10];
-    let mut out_a = vec![Field::ZERO; 10];
-    let mut out_b = vec![Field::ZERO; 10];
-    let mut out_c = vec![Field::ZERO; 10];
+    let mut out_wit = vec![Field::ZERO; 1000010];
+    let mut out_a = vec![Field::ZERO; 1000010];
+    let mut out_b = vec![Field::ZERO; 1000010];
+    let mut out_c = vec![Field::ZERO; 1000010];
 
     dispatch(
         pc,

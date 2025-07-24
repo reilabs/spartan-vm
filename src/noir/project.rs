@@ -247,10 +247,42 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             &[Field::from(3), Field::from(4), Field::from(7)],
         );
 
-        println!("out_wit: {:?}", out_wit);
-        println!("out_a: {:?}", out_a);
-        println!("out_b: {:?}", out_b);
-        println!("out_c: {:?}", out_c);
+        fs::write(
+            debug_output_dir.join("witness_good.txt"),
+            out_wit
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("a_good.txt"),
+            out_a
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("b_good.txt"),
+            out_b
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("c_good.txt"),
+            out_c
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
 
         let mut witness_gen = WitnessGen::new(public_witness);
         witness_gen.run(&custom_ssa);

@@ -1,8 +1,0 @@
-fn main(mut x: Field, y: pub Field) -> pub (Field, Field) {
-  let mut r = 1;
-  for i in 0..32 {
-    r *= x;
-  }
-  assert(r == y);
-  (r, y)
-}

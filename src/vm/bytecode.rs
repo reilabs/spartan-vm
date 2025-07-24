@@ -123,7 +123,7 @@ impl Program {
     pub fn to_binary(&self) -> Vec<u64> {
         let mut binary = Vec::new();
         let mut positions = vec![];
-        let mut jumps_to_fix = vec![];
+        let mut jumps_to_fix: Vec<(usize, isize)> = vec![];
 
         for function in &self.functions {
             binary.push(function.frame_size as u64);
@@ -197,16 +197,16 @@ impl Program {
 
                     OpCode::Jmp(target) => {
                         binary.push(9);
-                        jumps_to_fix.push(binary.len());
+                        jumps_to_fix.push((binary.len(), -1));
                         binary.push(target.0 as u64);
                     }
 
                     OpCode::JmpIf(pos, target1, target2) => {
                         binary.push(10);
                         binary.push(pos.0 as u64);
-                        jumps_to_fix.push(binary.len());
+                        jumps_to_fix.push((binary.len(), -2));
                         binary.push(target1.0 as u64);
-                        jumps_to_fix.push(binary.len());
+                        jumps_to_fix.push((binary.len(), -3));
                         binary.push(target2.0 as u64);
                     }
 
@@ -216,7 +216,7 @@ impl Program {
 
                     OpCode::Call(target, args, ret) => {
                         binary.push(12);
-                        jumps_to_fix.push(binary.len());
+                        jumps_to_fix.push((binary.len(), -1));
                         binary.push(target.0 as u64);
                         binary.push(args.len() as u64);
                         for arg in args {
@@ -239,10 +239,10 @@ impl Program {
                 }
             }
         }
-        for jump in jumps_to_fix {
-            let target = binary[jump];
+        for (jump_position, add_offset) in jumps_to_fix {
+            let target = binary[jump_position];
             let target_pos = positions[target as usize];
-            binary[jump] = unsafe { std::mem::transmute(target_pos as isize - jump as isize) };
+            binary[jump_position] = unsafe { std::mem::transmute(target_pos as isize - (jump_position as isize + add_offset)) };
         }
         binary
     }
