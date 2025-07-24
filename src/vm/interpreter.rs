@@ -5,87 +5,68 @@ use std::{
 };
 
 use ark_ff::{AdditiveGroup, BigInt, Fp};
+use tracing::instrument;
 
 use crate::compiler::Field;
 
 const DISPATCH_SIZE: usize = 15;
 
-type Erased = fn(&[fn(); DISPATCH_SIZE], *mut u64, *mut Frame, Frame, OutBufs);
-type Handler = fn(&[Erased; DISPATCH_SIZE], *mut u64, *mut Frame, Frame, OutBufs);
+type Handler = fn(
+    *const u64,
+    *mut Frame,
+    Frame,
+    *mut Field,
+    *mut Field,
+    *mut Field,
+    *mut Field,
+);
 
 const DISPATCH: [Handler; DISPATCH_SIZE] = [
-    mov_const,
-    add_f,
-    todo,
-    todo,
-    todo,
-    todo,
-    r1c,
-    todo,
-    todo,
-    todo,
-    todo,
-    ret,
-    todo,
-    todo,
-    nop,
+    mov_const, add_f, todo, todo, todo, todo, r1c, todo, todo, todo, todo, ret, todo, todo, nop,
 ];
 
 #[inline(always)]
 pub fn dispatch(
-    d: &[Erased; DISPATCH_SIZE],
-    pc: *mut u64,
+    pc: *const u64,
     sp: *mut Frame,
     frame: Frame,
-    out: OutBufs,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
 ) {
-    let unerased: &[Handler; DISPATCH_SIZE] = unsafe { std::mem::transmute(d) };
-    let opcode = unsafe { *pc };
-    let handler = unsafe { *unerased.as_ptr().offset(opcode as isize) };
-    handler(d, pc, sp, frame, out)
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct OutBufs {
-    pub witness: *mut Field,
-    pub a: *mut Field,
-    pub b: *mut Field,
-    pub c: *mut Field,
-}
-
-impl OutBufs {
-    #[inline(always)]
-    pub fn write_constraint(self, a: Field, b: Field, c: Field) -> Self {
-        unsafe {
-            *self.a = a;
-            *self.b = b;
-            *self.c = c;
-        }
-        OutBufs {
-            witness: self.witness,
-            a: unsafe { self.a.offset(1) },
-            b: unsafe { self.b.offset(1) },
-            c: unsafe { self.c.offset(1) },
-        }
-    }
+    let opcode: Handler = unsafe { mem::transmute::<_, _>(*pc) };
+    opcode(pc, sp, frame, out_wit, out_a, out_b, out_c);
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct Frame {
-    size: usize,
     data: *mut u64,
 }
 
 impl Frame {
+    pub fn alloc(size: u64) -> Self {
+        unsafe {
+            let layout = Layout::array::<u64>(size as usize + 1).unwrap();
+            let data = alloc::alloc(layout) as *mut u64;
+            *data = size;
+            let data = data.offset(1);
+            Frame { data }
+        }
+    }
+
     pub fn dealloc(&self) {
         unsafe {
+            let real_data = self.data.offset(-1);
+            let size = *real_data;
             alloc::dealloc(
-                self.data as *mut u8,
-                Layout::array::<u64>(self.size).unwrap(),
+                real_data as *mut u8,
+                Layout::array::<u64>(size as usize + 1).unwrap(),
             )
         }
     }
 
+    #[inline(always)]
     pub fn read_field(&self, offset: isize) -> Field {
         let a0 = unsafe { *self.data.offset(offset) };
         let a1 = unsafe { *self.data.offset(offset + 1) };
@@ -94,6 +75,7 @@ impl Frame {
         Fp(BigInt([a0, a1, a2, a3]), PhantomData)
     }
 
+    #[inline(always)]
     pub fn write_field(&self, offset: isize, field: Field) {
         let a0 = field.0.0[0];
         let a1 = field.0.0[1];
@@ -109,11 +91,13 @@ impl Frame {
 }
 
 pub fn add_f(
-    d: &[Erased; DISPATCH_SIZE],
-    pc: *mut u64,
+    pc: *const u64,
     sp: *mut Frame,
     frame: Frame,
-    out: OutBufs,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
 ) {
     let r_offset = unsafe { *pc.offset(1) as isize };
     let a_offset = unsafe { *pc.offset(2) as isize };
@@ -128,30 +112,56 @@ pub fn add_f(
 
     let new_pc = unsafe { pc.offset(4) };
 
-    dispatch(d, new_pc, sp, frame, out)
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
 }
 
-pub fn ret(d: &[Erased; DISPATCH_SIZE], _pc: *mut u64, sp: *mut Frame, frame: Frame, out: OutBufs) {
-    let ret_address = unsafe { mem::transmute(frame.data) };
+pub fn ret(
+    _pc: *const u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
+) {
+    let ret_address = unsafe { *frame.data } as *mut u64;
     frame.dealloc();
     let new_sp = unsafe { sp.offset(-1) };
     let new_frame = unsafe { *new_sp };
     if new_frame.data.is_null() {
         return;
     }
-    dispatch(d, ret_address, new_sp, new_frame, out)
+    dispatch(
+        ret_address,
+        new_sp,
+        new_frame,
+        out_wit,
+        out_a,
+        out_b,
+        out_c,
+    )
 }
 
-pub fn todo(_d: &[Erased; DISPATCH_SIZE], _pc: *mut u64, _sp: *mut Frame, _frame: Frame, _out: OutBufs) {
+pub fn todo(
+    _pc: *const u64,
+    _sp: *mut Frame,
+    _frame: Frame,
+    _out_wit: *mut Field,
+    _out_a: *mut Field,
+    _out_b: *mut Field,
+    _out_c: *mut Field,
+) {
     panic!("todo");
 }
 
 pub fn mov_const(
-    d: &[Erased; DISPATCH_SIZE],
-    pc: *mut u64,
+    pc: *const u64,
     sp: *mut Frame,
     frame: Frame,
-    out: OutBufs,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
 ) {
     let r_offset = unsafe { *pc.offset(1) as isize };
     let val = unsafe { *pc.offset(2) };
@@ -160,15 +170,17 @@ pub fn mov_const(
     }
 
     let new_pc = unsafe { pc.offset(3) };
-    dispatch(d, new_pc, sp, frame, out)
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
 }
 
 pub fn r1c(
-    d: &[Erased; DISPATCH_SIZE],
-    pc: *mut u64,
+    pc: *const u64,
     sp: *mut Frame,
     frame: Frame,
-    out: OutBufs,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
 ) {
     let a_offset = unsafe { *pc.offset(1) as isize };
     let b_offset = unsafe { *pc.offset(2) as isize };
@@ -178,44 +190,113 @@ pub fn r1c(
     let b = frame.read_field(b_offset);
     let c = frame.read_field(c_offset);
 
-    let out = out.write_constraint(a, b, c);
+    unsafe {
+        *out_a = a;
+        *out_b = b;
+        *out_c = c;
+    }
+
+    let out_a = unsafe { out_a.offset(1) };
+    let out_b = unsafe { out_b.offset(1) };
+    let out_c = unsafe { out_c.offset(1) };
 
     let new_pc = unsafe { pc.offset(4) };
-    dispatch(d, new_pc, sp, frame, out)
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c);
 }
 
-pub fn nop(d: &[Erased; DISPATCH_SIZE], pc: *mut u64, sp: *mut Frame, frame: Frame, out: OutBufs) {
+pub fn nop(
+    pc: *const u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out_wit: *mut Field,
+    out_a: *mut Field,
+    out_b: *mut Field,
+    out_c: *mut Field,
+) {
     let new_pc = unsafe { pc.offset(1) };
-    dispatch(d, new_pc, sp, frame, out)
+    dispatch(new_pc, sp, frame, out_wit, out_a, out_b, out_c)
 }
 
-// #[instrument(skip_all, name = "Interpreter::run")]
+fn prepare_dispatch(program: &mut [u64], dispatch: &[Handler]) {
+    let mut current_offset = 1;
+    while current_offset < program.len() {
+        let opcode = program[current_offset];
+        program[current_offset] = dispatch[opcode as usize] as u64;
+        match opcode {
+            0 => {
+                current_offset += 3;
+            }
+            1 => {
+                current_offset += 4;
+            }
+            2 => {
+                current_offset += 4;
+            }
+            3 => {
+                current_offset += 5;
+            }
+            4 => {
+                current_offset += 5;
+            }
+            5 => {
+                current_offset += 2;
+            }
+            6 => {
+                current_offset += 4;
+            }
+            7 => {
+                current_offset += 5;
+            }
+            8 => {
+                current_offset += 4;
+            }
+            9 => {
+                current_offset += 3;
+            }
+            10 => {
+                current_offset += 4;
+            }
+            11 => {
+                current_offset += 1;
+            }
+            12 => {
+                todo!();
+            }
+            13 => {
+                current_offset += 5;
+            }
+            14 => {
+                current_offset += 1;
+            }
+            _ => {
+                panic!("Invalid opcode: {}", opcode);
+            }
+        }
+    }
+}
+
+#[instrument(skip_all, name = "Interpreter::run")]
 pub fn run_interpreter(
-    program: &mut [u64],
+    program: &[u64],
     inputs: &[Field],
 ) -> (Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>) {
     let mut stack = vec![
         Frame {
-            size: 0,
             data: std::ptr::null_mut()
         };
         10
     ];
-    let first_frame_contents: *mut u64 =
-        unsafe { alloc::alloc(Layout::array::<u64>(program[0] as usize).unwrap()) as *mut u64 };
+    stack[1] = Frame::alloc(program[0]);
     for (i, el) in inputs.iter().enumerate() {
-        unsafe {
-            *first_frame_contents.offset(2 + (i as isize) * 4) = el.0.0[0];
-            *first_frame_contents.offset(2 + (i as isize) * 4 + 1) = el.0.0[1];
-            *first_frame_contents.offset(2 + (i as isize) * 4 + 2) = el.0.0[2];
-            *first_frame_contents.offset(2 + (i as isize) * 4 + 3) = el.0.0[3];
-        }
+        stack[1].write_field(2 + (i as isize) * 4, *el);
     }
-    stack[1] = Frame {
-        size: program[0] as usize,
-        data: first_frame_contents,
-    };
+
     let sp = unsafe { stack.as_mut_ptr().offset(1) };
+
+    let mut program = program.to_vec();
+    // let mut dispatch_table = DISPATCH;
+    let dispatch_table = &DISPATCH;
+    prepare_dispatch(&mut program, dispatch_table);
 
     let pc = unsafe { program.as_mut_ptr().offset(1) };
 
@@ -224,16 +305,15 @@ pub fn run_interpreter(
     let mut out_b = vec![Field::ZERO; 10];
     let mut out_c = vec![Field::ZERO; 10];
 
-    let out = OutBufs {
-        witness: out_wit.as_mut_ptr(),
-        a: out_a.as_mut_ptr(),
-        b: out_b.as_mut_ptr(),
-        c: out_c.as_mut_ptr(),
-    };
-
-    let erased: &[Erased; 15] = unsafe { mem::transmute(&DISPATCH) };
-
-    dispatch(erased, pc, sp, stack[1], out);
+    dispatch(
+        pc,
+        sp,
+        stack[1],
+        out_wit.as_mut_ptr(),
+        out_a.as_mut_ptr(),
+        out_b.as_mut_ptr(),
+        out_c.as_mut_ptr(),
+    );
 
     (out_wit, out_a, out_b, out_c)
 }
