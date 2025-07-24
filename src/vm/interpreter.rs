@@ -16,30 +16,36 @@ type Handler = fn(&[Erased; DISPATCH_SIZE], *mut u64, *mut Frame, Frame, OutBufs
 const DISPATCH: [Handler; DISPATCH_SIZE] = [
     mov_const,
     add_f,
-    trap,
-    trap,
-    trap,
-    trap,
-    r1c_constraint,
-    trap,
-    trap,
-    trap,
-    trap,
+    todo,
+    todo,
+    todo,
+    todo,
+    r1c,
+    todo,
+    todo,
+    todo,
+    todo,
     ret,
-    trap,
-    trap,
-    trap,
+    todo,
+    todo,
+    nop,
 ];
 
 #[inline(always)]
-pub fn dispatch(d: &[Erased; DISPATCH_SIZE], pc: *mut u64, sp: *mut Frame, frame: Frame, out: OutBufs) {
+pub fn dispatch(
+    d: &[Erased; DISPATCH_SIZE],
+    pc: *mut u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out: OutBufs,
+) {
     let unerased: &[Handler; DISPATCH_SIZE] = unsafe { std::mem::transmute(d) };
     let opcode = unsafe { *pc };
-    println!("opcode: {:?}", opcode);
-    unerased[opcode as usize](d, pc, sp, frame, out)
+    let handler = unsafe { *unerased.as_ptr().offset(opcode as isize) };
+    handler(d, pc, sp, frame, out)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct OutBufs {
     pub witness: *mut Field,
     pub a: *mut Field,
@@ -48,6 +54,7 @@ pub struct OutBufs {
 }
 
 impl OutBufs {
+    #[inline(always)]
     pub fn write_constraint(self, a: Field, b: Field, c: Field) -> Self {
         unsafe {
             *self.a = a;
@@ -101,7 +108,13 @@ impl Frame {
     }
 }
 
-pub fn add_f(d: &[Erased; DISPATCH_SIZE], pc: *mut u64, sp: *mut Frame, frame: Frame, out: OutBufs) {
+pub fn add_f(
+    d: &[Erased; DISPATCH_SIZE],
+    pc: *mut u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out: OutBufs,
+) {
     let r_offset = unsafe { *pc.offset(1) as isize };
     let a_offset = unsafe { *pc.offset(2) as isize };
     let b_offset = unsafe { *pc.offset(3) as isize };
@@ -129,25 +142,34 @@ pub fn ret(d: &[Erased; DISPATCH_SIZE], _pc: *mut u64, sp: *mut Frame, frame: Fr
     dispatch(d, ret_address, new_sp, new_frame, out)
 }
 
-pub fn trap(d: &[Erased; DISPATCH_SIZE], pc: *mut u64, sp: *mut Frame, frame: Frame, out: OutBufs) {
-    panic!("trap");
+pub fn todo(_d: &[Erased; DISPATCH_SIZE], _pc: *mut u64, _sp: *mut Frame, _frame: Frame, _out: OutBufs) {
+    panic!("todo");
 }
 
-pub fn mov_const(d: &[Erased; DISPATCH_SIZE], pc: *mut u64, sp: *mut Frame, frame: Frame, out: OutBufs) {
+pub fn mov_const(
+    d: &[Erased; DISPATCH_SIZE],
+    pc: *mut u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out: OutBufs,
+) {
     let r_offset = unsafe { *pc.offset(1) as isize };
-    println!("r_offset: {:?}", r_offset);
     let val = unsafe { *pc.offset(2) };
-    println!("val: {:?}", val);
     unsafe {
         *frame.data.offset(r_offset) = val;
     }
-    println!("wrote");
 
     let new_pc = unsafe { pc.offset(3) };
     dispatch(d, new_pc, sp, frame, out)
 }
 
-pub fn r1c_constraint(d: &[Erased; DISPATCH_SIZE], pc: *mut u64, sp: *mut Frame, frame: Frame, out: OutBufs) {
+pub fn r1c(
+    d: &[Erased; DISPATCH_SIZE],
+    pc: *mut u64,
+    sp: *mut Frame,
+    frame: Frame,
+    out: OutBufs,
+) {
     let a_offset = unsafe { *pc.offset(1) as isize };
     let b_offset = unsafe { *pc.offset(2) as isize };
     let c_offset = unsafe { *pc.offset(3) as isize };
@@ -162,9 +184,25 @@ pub fn r1c_constraint(d: &[Erased; DISPATCH_SIZE], pc: *mut u64, sp: *mut Frame,
     dispatch(d, new_pc, sp, frame, out)
 }
 
-pub fn run(program: &mut [u64], inputs: &[Field]) -> (Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>) {
-    let mut stack = vec![Frame{size: 0, data: std::ptr::null_mut()}; 10];
-    let mut first_frame_contents: *mut u64 = unsafe { alloc::alloc(Layout::array::<u64>(program[0] as usize).unwrap()) as *mut u64 };
+pub fn nop(d: &[Erased; DISPATCH_SIZE], pc: *mut u64, sp: *mut Frame, frame: Frame, out: OutBufs) {
+    let new_pc = unsafe { pc.offset(1) };
+    dispatch(d, new_pc, sp, frame, out)
+}
+
+// #[instrument(skip_all, name = "Interpreter::run")]
+pub fn run_interpreter(
+    program: &mut [u64],
+    inputs: &[Field],
+) -> (Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>) {
+    let mut stack = vec![
+        Frame {
+            size: 0,
+            data: std::ptr::null_mut()
+        };
+        10
+    ];
+    let first_frame_contents: *mut u64 =
+        unsafe { alloc::alloc(Layout::array::<u64>(program[0] as usize).unwrap()) as *mut u64 };
     for (i, el) in inputs.iter().enumerate() {
         unsafe {
             *first_frame_contents.offset(2 + (i as isize) * 4) = el.0.0[0];
@@ -177,7 +215,7 @@ pub fn run(program: &mut [u64], inputs: &[Field]) -> (Vec<Field>, Vec<Field>, Ve
         size: program[0] as usize,
         data: first_frame_contents,
     };
-    let sp = unsafe {stack.as_mut_ptr().offset(1)};
+    let sp = unsafe { stack.as_mut_ptr().offset(1) };
 
     let pc = unsafe { program.as_mut_ptr().offset(1) };
 

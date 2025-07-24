@@ -242,7 +242,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             println!("{: >len_num_digits$}: {}", i, b);
         }
 
-        let (out_wit, out_a, out_b, out_c) = interpreter::run(
+        let (out_wit, out_a, out_b, out_c) = interpreter::run_interpreter(
             &mut binary,
             &[Field::from(3), Field::from(4), Field::from(7)],
         );
