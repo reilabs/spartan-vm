@@ -4,6 +4,7 @@ use std::fs;
 
 use crate::compiler::analysis::liveness::LivenessAnalysis;
 use crate::compiler::analysis::types::Types;
+use crate::compiler::passes::rc_insertion::RCInsertion;
 use crate::compiler::Field;
 use crate::compiler::analysis::instrumenter::CostEstimator;
 use crate::compiler::codegen::CodeGen;
@@ -202,6 +203,8 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
                 Box::new(Specializer::new(5.0)),
                 Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
                 Box::new(ExplicitWitness::new()),
+                Box::new(RCInsertion::new()),
+                Box::new(FixDoubleJumps::new()),
             ],
         );
 
@@ -212,9 +215,6 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         let type_info = Types::new().run(&custom_ssa, &flow_analysis);
-
-        let liveness_analysis = LivenessAnalysis::new();
-        let last_uses = liveness_analysis.run(&custom_ssa, &flow_analysis);
 
         let mut r1cs_gen = R1CGen::new();
         r1cs_gen.run(&custom_ssa, &type_info);

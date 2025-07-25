@@ -372,6 +372,15 @@ impl CFG {
             .edges_directed(self.return_node, Direction::Incoming)
             .filter_map(|edge| self.node_to_block.get(&edge.source()).cloned())
     }
+
+    pub fn get_edges(&self) -> impl Iterator<Item = (BlockId, BlockId)> {
+        self.cfg.cfg.edge_indices().filter_map(|edge| {
+            let (source, target) = self.cfg.cfg.edge_endpoints(edge).unwrap();
+            self.node_to_block
+                .get(&source)
+                .and_then(|src| self.node_to_block.get(&target).map(|tgt| (*src, *tgt)))
+        })
+    }
 }
 
 impl CFG {

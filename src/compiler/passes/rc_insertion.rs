@@ -1,10 +1,15 @@
-use tracing::{Level, instrument};
+use itertools::Itertools;
+use tracing::{debug, instrument, Level};
 
 use crate::compiler::{
-    analysis::liveness::{FunctionLiveness, LivenessAnalysis},
+    analysis::{
+        liveness::{FunctionLiveness, LivenessAnalysis},
+        types::FunctionTypeInfo,
+    },
     flow_analysis::CFG,
+    ir::r#type::{Type, TypeExpr},
     pass_manager::{DataPoint, Pass, PassInfo, PassManager},
-    ssa::{Function, Terminator, SSA},
+    ssa::{Function, MemOp, OpCode, SSA, Terminator, ValueId},
 };
 
 pub struct RCInsertion {}
@@ -12,7 +17,7 @@ pub struct RCInsertion {}
 impl<V: Clone> Pass<V> for RCInsertion {
     fn pass_info(&self) -> PassInfo {
         PassInfo {
-            name: "RCInsertion",
+            name: "rc_insertion",
             invalidates: vec![DataPoint::CFG],
             needs: vec![DataPoint::CFG, DataPoint::Types],
         }
@@ -26,7 +31,8 @@ impl<V: Clone> Pass<V> for RCInsertion {
         for (function_id, function) in ssa.iter_functions_mut() {
             let cfg = cfg.get_function_cfg(*function_id);
             let liveness = &liveness.function_liveness[function_id];
-            self.run_function(function, cfg, &liveness);
+            let type_info = pass_manager.get_type_info().get_function(*function_id);
+            self.run_function(function, cfg, type_info, &liveness);
         }
     }
 }
@@ -37,35 +43,237 @@ impl RCInsertion {
     }
 
     #[instrument(skip_all, level = Level::DEBUG, name = "RCInsertion::run_function", fields(function = function.get_name()))]
-    pub fn run_function<V: Clone>(
+    fn run_function<V: Clone>(
         &self,
         function: &mut Function<V>,
         cfg: &CFG,
+        type_info: &FunctionTypeInfo<V>,
         liveness: &FunctionLiveness,
     ) {
         for (block_id, block) in function.get_blocks_mut() {
-
             // We're traversing the block backwards, dropping everything that's not live
             // after the currently visited instruction.
             // This means new_instructions will be reversed, so some care is needed when
             // inserting drops.
-            // let mut currently_live = liveness.block_liveness[block_id].live_out.clone();
-            // let mut new_instructions = vec![];
+            let mut currently_live = liveness.block_liveness[block_id].live_out.clone();
+            let mut new_instructions = vec![];
 
-            // match block.get_terminator().unwrap() {
-            //     Terminator::Return(values) => {
-            //         // We don't drop these values.
-            //         // The caller will be responsible for them.
-            //         currently_live.extend(values);
-            //     }
-            //     Terminator::Jmp(_, values) => {
-            //         for value in values {
-            //             // Values that die here, are passed without an increase 
-            //         }
-            //     }
-            // }
+            match block.get_terminator().unwrap() {
+                Terminator::Return(values) => {
+                    for (value, count) in values
+                        .iter()
+                        .sorted_by_key(|v| v.0)
+                        .chunk_by(|v1| *v1)
+                        .into_iter()
+                    {
+                        // This is potentially aliasing, so we need to bump RC by 1 for each repetition.
+                        // We then decrease by one, because the original value dies here.
+                        let count = count.count() - 1;
+                        if self.needs_rc(type_info, value) && count > 0 {
+                            new_instructions.push(OpCode::MemOp(MemOp::Bump(count), *value));
+                        }
+                    }
+                    // We don't drop these values.
+                    // The caller will be responsible for them.
+                    currently_live.extend(values);
+                }
+                Terminator::Jmp(_, values) => {
+                    for (value, count) in values
+                        .iter()
+                        .sorted_by_key(|v| v.0)
+                        .chunk_by(|v1| *v1)
+                        .into_iter()
+                    {
+                        // This is a potentially aliasing operation, so we need
+                        // to bump RC by 1 for each repetition. Then, if the value
+                        // dies here, we remove 1 bump.
+                        let mut count = count.count();
+                        if !currently_live.contains(value) {
+                            count -= 1;
+                        }
+                        if self.needs_rc(type_info, value) && count > 0 {
+                            new_instructions.push(OpCode::MemOp(MemOp::Bump(count), *value));
+                        }
+                    }
+                    currently_live.extend(values);
+                }
+                Terminator::JmpIf(_cond, _, _) => {
+                    // Not inserting RCs for the condition, because it's
+                    // necessarily boolean and therefore doesn't matter if it lives.
+                }
+            }
 
+            for instruction in block.take_instructions().into_iter().rev() {
+                match &instruction {
+                    // The arithmetic block can easily be ignored.
+                    OpCode::BinaryArithOp(_, _, _, _)
+                    | OpCode::AssertEq(_, _)
+                    | OpCode::Cast(_, _, _)
+                    | OpCode::Cmp(_, _, _, _)
+                    | OpCode::Truncate(_, _, _, _)
+                    | OpCode::AssertR1C(_, _, _)
+                    | OpCode::Constrain(_, _, _)
+                    | OpCode::WriteWitness(_, _, _)
+                    | OpCode::Not(_, _) => new_instructions.push(instruction),
+                    OpCode::MkSeq(result, inputs, _, elem_type) => {
+                        // MkSeq should return an RC counter of 1.
+                        new_instructions.push(instruction.clone());
+                        // This happens after we push the instruction, so that it
+                        // happens before after reversal.
+                        if self.type_needs_rc(elem_type) {
+                            // This is an aliasing operation. Each use in the array needs a bump.
+                            // We then decrease by one, if the original value dies here.
+                            for (input, count) in inputs.iter().sorted_by_key(|v| v.0).chunk_by(|v1| *v1).into_iter() {
+                                let mut count = count.count();
+                                if !currently_live.contains(input) {
+                                    count -= 1;
+                                }
+                                if count > 0 {
+                                    new_instructions.push(OpCode::MemOp(MemOp::Bump(count), *input));
+                                }
+                            }
+                        }
+                        if !currently_live.contains(result) {
+                            panic!("ICE: Result of MkSeq is immediately dropped. This is a bug.")
+                            // The line below is the temporary solution if we run into this ever.
+                            // It should be debugged properly though, we expect DCE to sweep this
+                            // entire instruction.
+                            // new_instructions.push(OpCode::MemOp(MemOp::DropAndSweep, *result));
+                        }
+                        currently_live.extend(inputs);
+                    }
+                    OpCode::Alloc(_, _, _) => todo!(),
+                    OpCode::Store(_, _) => todo!(),
+                    OpCode::Load(_, _) => todo!(),
+                    OpCode::Call(returns, _, params) => {
+                        // Functions take parameters with the correct RC counter
+                        // and return results with the correct RC counter.
+                        // That means we need to give a bump to each param before the call
+                        // and we need to drop any unused returns after the call.
+                        for return_id in returns {
+                            if self.needs_rc(type_info, return_id)
+                                && !currently_live.contains(return_id)
+                            {
+                                new_instructions.push(OpCode::MemOp(MemOp::Drop, *return_id));
+                            }
+                        }
+                        new_instructions.push(instruction.clone());
+                        // This is an aliasing operation. We need a +1 bump for each use.
+                        // We then decrease by one, if the original value dies here.
+                        for (param, count) in params.iter().sorted_by_key(|v| v.0).chunk_by(|v1| *v1).into_iter() {
+                            let mut count = count.count();
+                            if !currently_live.contains(param) {
+                                count -= 1;
+                            }
+                            if self.needs_rc(type_info, param) && count > 0 {
+                                new_instructions.push(OpCode::MemOp(MemOp::Bump(count), *param));
+                            }
+                        }
+                        currently_live.extend(params);
+                    }
+                    OpCode::ArrayGet(result, array, _index) => {
+                        if !currently_live.contains(array) {
+                            // The array dies here, so we drop it _after_ the read.
+                            new_instructions.push(OpCode::MemOp(MemOp::Drop, *array));
+                        }
+                        if self.needs_rc(type_info, result) {
+                            if currently_live.contains(result) {
+                                // The result gets a bump to the RC counter, because
+                                // it's now both accessed here and in the array.
+                                new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *result));
+                            } else {
+                                panic!("ICE: Result of ArrayGet is not live. This is a bug.")
+                            }
+                        }
+                        new_instructions.push(instruction.clone());
+                        currently_live.insert(*array);
+                    }
+                    OpCode::ArraySet(result, array, _index, value) => {
+                        new_instructions.push(instruction.clone());
+                        if currently_live.contains(array) {
+                            // Array set will oportunistically reuse the storage, if
+                            // it notices a refcount of 1. So we need to bump _before_
+                            // we enter it.
+                            new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *array));
+                        }
+                        if self.needs_rc(type_info, value) && currently_live.contains(value) {
+                            new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *value))
+                        }
+                        if !currently_live.contains(result) {
+                            panic!("ICE: Result of ArraySet is immediately dropped. This is a bug.")
+                            // The line below is the temporary solution if we run into this ever.
+                            // It should be debugged properly though, we expect DCE to sweep this
+                            // entire instruction.
+                            // new_instructions.push(OpCode::MemOp(MemOp::Drop, *result));
+                        }
+                        currently_live.extend(vec![*array, *value]);
+                    }
+                    OpCode::Select(_, _, v1, v2) => {
+                        if self.needs_rc(type_info, v1) || self.needs_rc(type_info, v2) {
+                            panic!("Unsupported yet");
+                        }
+                        new_instructions.push(instruction);
+                    }
+                    OpCode::ToBits(r, _, _, _) => {
+                        if !currently_live.contains(r) {
+                            // We contend with this, because ToBits can be used for a range check.
+                            new_instructions.push(OpCode::MemOp(MemOp::Drop, *r));
+                        }
+                        // ToBits should return an RC counter of 1.
+                        new_instructions.push(instruction);
+                    }
+                    OpCode::MemOp(_mem_op, _value_id) => todo!(),
+                }
+            }
+            block.put_instructions(new_instructions.into_iter().rev().collect());
+        }
 
+        for (source, target) in cfg.get_edges() {
+            let live_out_source = &liveness.block_liveness[&source].live_out;
+            let live_in_target = &liveness.block_liveness[&target].live_in;
+            let diff = live_out_source.difference(live_in_target).filter(|v| self.needs_rc(type_info, v)).collect_vec();
+            if diff.is_empty() {  
+                continue;
+            }
+            let intermediate_block = function.add_block();
+            match function.get_block_mut(source).take_terminator().unwrap() {
+                Terminator::JmpIf(cond, t1, t2) => {
+                    let t1 = if t1 == target { intermediate_block } else { t1 };
+                    let t2 = if t2 == target { intermediate_block } else { t2 };
+                    function.get_block_mut(source).set_terminator(Terminator::JmpIf(cond, t1, t2));
+                }
+                Terminator::Jmp(_, _) => {
+                    debug!("Will panic: {} -> {}", source.0, target.0);
+                    debug!("Source live out: [{}]", liveness.block_liveness[&source].live_out.iter().map(|v| v.0).join(", "));
+                    debug!("Target live in: [{}]", liveness.block_liveness[&target].live_in.iter().map(|v| v.0).join(", "));
+                    debug!("Difference: [{}]", diff.iter().map(|v| v.0).join(", "));
+                    panic!("ICE: Jmp is not expected - the value should have died in the source block.");
+                }
+                Terminator::Return(_) => {
+                    panic!("ICE: Impossible, CFG says there's an edge here.");
+                }
+            }
+            let intermediate = function.get_block_mut(intermediate_block);
+            intermediate.set_terminator(Terminator::Jmp(target, vec![]));
+            for value in diff {
+                intermediate.push_instruction(OpCode::MemOp(MemOp::Drop, *value));
+            }
+        }
+
+    }
+
+    fn needs_rc<V: Clone>(&self, type_info: &FunctionTypeInfo<V>, value: &ValueId) -> bool {
+        let value_type = type_info.get_value_type(*value);
+        self.type_needs_rc(&value_type)
+    }
+
+    fn type_needs_rc<V: Clone>(&self, value_type: &Type<V>) -> bool {
+        match &value_type.expr {
+            TypeExpr::Ref(_) => true,
+            TypeExpr::Array(_, _) => true,
+            TypeExpr::Slice(_) => true,
+            TypeExpr::Field => false,
+            TypeExpr::U(_) => false,
         }
     }
 }

@@ -154,7 +154,6 @@ impl SSA<Empty> {
 
 impl<V: Display + Clone> SSA<V> {
     pub fn to_string(&self, value_annotator: &dyn SsaAnnotator) -> String {
-        println!("Entry point: {}", self.main_id.0);
         self.functions
             .iter()
             .sorted_by_key(|(fn_id, _)| fn_id.0)
@@ -918,9 +917,8 @@ impl SeqType {
 
 #[derive(Debug, Clone, Copy)]
 pub enum MemOp {
-    DropAndSweep,
+    Bump(usize),
     Drop,
-    Use,
 }
 
 #[derive(Debug, Clone)]
@@ -1119,9 +1117,8 @@ impl<V: Display + Clone> OpCode<V> {
             }
             OpCode::MemOp(kind, value) => {
                 let name = match kind {
-                    MemOp::DropAndSweep => "drop_and_sweep",
-                    MemOp::Drop => "drop",
-                    MemOp::Use => "use",
+                    MemOp::Bump(n) => format!("inc_rc[+{}]", n),
+                    MemOp::Drop => "drop".to_string(),
                 };
                 format!("{}(v{})", name, value.0)
             }

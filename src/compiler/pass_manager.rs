@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 use crate::compiler::{
     analysis::{instrumenter::{self, CostEstimator}, types::{TypeInfo, Types}},
     flow_analysis::FlowAnalysis,
-    ssa::SSA,
+    ssa::{DefaultSsaAnnotator, SSA},
     taint_analysis::ConstantTaint,
 };
 
@@ -100,6 +100,10 @@ impl PassManager<ConstantTaint> {
                     ssa,
                     format!("before {}: {}", pass_index, pass_info.name),
                 );
+                fs::write(
+                    debug_output_dir.join(format!("before_pass_{}_{}", pass_index, pass_info.name)).join("code.txt"),
+                    format!("{}", ssa.to_string(&DefaultSsaAnnotator)),
+                ).unwrap();
             }
         }
     }
@@ -119,6 +123,10 @@ impl PassManager<ConstantTaint> {
                     "final result".to_string(),
                 );
             }
+            fs::write(
+                debug_output_dir.join("final_result").join("code.txt"),
+                format!("{}", ssa.to_string(&DefaultSsaAnnotator)),
+            ).unwrap();
         }
     }
 
@@ -138,7 +146,7 @@ impl PassManager<ConstantTaint> {
                 .contains(&DataPoint::ConstraintInstrumentation))
             && !self.type_info.is_some()
         {
-            self.type_info = Some(Types::new().run(ssa, &self.get_cfg()));
+            self.type_info = Some(Types::new().run(ssa, &self.cfg.as_ref().unwrap()));
         }
         if pass_info
             .needs
