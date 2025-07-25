@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use tracing::{debug, instrument, Level};
 
+use crate::compiler::analysis::types::{FunctionTypeInfo, TypeInfo};
 use crate::compiler::passes::fix_double_jumps::ValueReplacements;
 use crate::compiler::{
     flow_analysis::{CFG, FlowAnalysis},
@@ -14,7 +15,7 @@ pub struct Mem2Reg {}
 
 impl<V: Clone> Pass<V> for Mem2Reg {
     fn run(&self, ssa: &mut SSA<V>, pass_manager: &PassManager<V>) {
-        self.do_run(ssa, pass_manager.get_cfg());
+        self.do_run(ssa, pass_manager.get_cfg(), pass_manager.get_type_info());
     }
 
     fn pass_info(&self) -> PassInfo {
@@ -31,10 +32,11 @@ impl Mem2Reg {
         Self {}
     }
 
-    pub fn do_run<V: Clone>(&self, ssa: &mut SSA<V>, cfg: &FlowAnalysis) {
+    pub fn do_run<V: Clone>(&self, ssa: &mut SSA<V>, cfg: &FlowAnalysis, type_info: &TypeInfo<V>) {
         for (function_id, function) in ssa.iter_functions_mut() {
-            if self.escape_safe(function) {
-                self.run_function(function, cfg.get_function_cfg(*function_id));
+            let function_type_info = type_info.get_function(*function_id);
+            if self.escape_safe(function, function_type_info) {
+                self.run_function(function, cfg.get_function_cfg(*function_id), function_type_info);
             } else {
                 debug!(
                     "Skipping mem2reg for function: {:?} because it failed escape analysis",
@@ -45,10 +47,10 @@ impl Mem2Reg {
     }
 
     #[instrument(skip_all, level = Level::DEBUG, fields(function = %function.get_name()))]
-    fn run_function<V: Clone>(&self, function: &mut Function<V>, cfg: &CFG) {
+    fn run_function<V: Clone>(&self, function: &mut Function<V>, cfg: &CFG, type_info: &FunctionTypeInfo<V>) {
         let (writes, defs) = self.find_pointer_writes_and_defs(function);
         let phi_blocks = self.find_phi_blocks(&writes, &defs, cfg);
-        let phi_args = self.initialize_phis(function, &phi_blocks);
+        let phi_args = self.initialize_phis(function, &phi_blocks, type_info);
         self.remove_ptrs(function, cfg, &phi_args);
     }
 
@@ -119,7 +121,7 @@ impl Mem2Reg {
                         )));
                     }
                 }
-                Terminator::JmpIf(cond, t1, t2) => {
+                Terminator::JmpIf(_cond, t1, t2) => {
                     if phi_map.contains_key(t1) {
                         let jumper = function.add_block();
                         let params = phi_map
@@ -166,13 +168,14 @@ impl Mem2Reg {
         &self,
         function: &mut Function<V>,
         phi_blocks: &HashMap<ValueId, HashSet<BlockId>>,
+        type_info: &FunctionTypeInfo<V>,
     ) -> HashMap<BlockId, Vec<(ValueId, ValueId)>> {
         let mut result: HashMap<BlockId, Vec<(ValueId, ValueId)>> = HashMap::new();
         for (value, blocks) in phi_blocks {
             for block in blocks {
                 let param = function.add_parameter(
                     *block,
-                    function.get_value_type(*value).unwrap().get_pointed(),
+                    type_info.get_value_type(*value).get_pointed(),
                 );
                 result.entry(*block).or_default().push((param, *value));
             }
@@ -241,7 +244,7 @@ impl Mem2Reg {
     // This is _very_ crude. We give up on mem2reg for the entire function
     // if we detect _any_ pointer escaping or entering the function, or being
     // written to another pointer. Obviously this needs a better implementation.
-    fn escape_safe<V: Clone>(&self, function: &Function<V>) -> bool {
+    fn escape_safe<V: Clone>(&self, function: &Function<V>, type_info: &FunctionTypeInfo<V>) -> bool {
         for (_, block) in function.get_blocks() {
             for (_, typ) in block.get_parameters() {
                 if self.type_contains_ptr(typ) {
@@ -252,19 +255,19 @@ impl Mem2Reg {
             for instruction in block.get_instructions() {
                 match instruction {
                     OpCode::ArraySet(_, _, _, val) => {
-                        let vtyp = function.get_value_type(*val).unwrap();
+                        let vtyp = type_info.get_value_type(*val);
                         if self.type_contains_ptr(vtyp) {
                             return false;
                         }
                     }
                     OpCode::ArrayGet(_, _, val) => {
-                        let vtyp = function.get_value_type(*val).unwrap();
+                        let vtyp = type_info.get_value_type(*val);
                         if self.type_contains_ptr(vtyp) {
                             return false;
                         }
                     }
                     OpCode::Store(_, r) => {
-                        let rtyp = function.get_value_type(*r).unwrap();
+                        let rtyp = type_info.get_value_type(*r);
                         if self.type_contains_ptr(rtyp) {
                             return false;
                         }
@@ -275,14 +278,14 @@ impl Mem2Reg {
                         }
                     }
                     OpCode::Load(r, _) => {
-                        let rtyp = function.get_value_type(*r).unwrap();
+                        let rtyp = type_info.get_value_type(*r);
                         if self.type_contains_ptr(rtyp) {
                             return false;
                         }
                     }
                     OpCode::Call(rets, _, args) => {
                         for v in rets.iter().chain(args.iter()) {
-                            let vtyp = function.get_value_type(*v).unwrap();
+                            let vtyp = type_info.get_value_type(*v);
                             if self.type_contains_ptr(vtyp) {
                                 return false;
                             }
@@ -295,7 +298,7 @@ impl Mem2Reg {
             match block.get_terminator() {
                 Some(Terminator::Return(vals)) => {
                     for v in vals {
-                        let vtyp = function.get_value_type(*v).unwrap();
+                        let vtyp = type_info.get_value_type(*v);
                         if self.type_contains_ptr(vtyp) {
                             return false;
                         }

@@ -1,8 +1,12 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::compiler::{
+    analysis::types::TypeInfo,
     ir::r#type::{Type, TypeExpr},
-    ssa::{BinaryArithOpKind, BlockId, Const, CmpKind, Endianness, Function, FunctionId, OpCode, SSA, Terminator, ValueId},
+    ssa::{
+        BinaryArithOpKind, BlockId, CmpKind, Const, Endianness, Function, FunctionId, OpCode, SSA,
+        Terminator, ValueId,
+    },
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
 use tracing::instrument;
@@ -99,7 +103,7 @@ impl WitnessGen {
     }
 
     #[instrument(skip_all, name = "WitnessGen::run")]
-    pub fn run<V: Clone>(&mut self, ssa: &SSA<V>) {
+    pub fn run<V: Clone>(&mut self, ssa: &SSA<V>, type_info: &TypeInfo<V>) {
         let entry_point = ssa.get_main_id();
         let params = ssa.get_function(entry_point).get_param_types();
         let mut main_params = vec![];
@@ -109,7 +113,7 @@ impl WitnessGen {
             main_params.push(self.initialize_main_input(&value_type, &mut witness_iter));
         }
 
-        self.run_function(ssa, entry_point, main_params);
+        self.run_function(ssa, entry_point, main_params, type_info);
     }
 
     pub fn get_witness(&self) -> Vec<ark_bn254::Fr> {
@@ -132,6 +136,7 @@ impl WitnessGen {
         ssa: &SSA<V>,
         function_id: FunctionId,
         params: Vec<Value>,
+        type_info: &TypeInfo<V>,
     ) -> Vec<Value> {
         let function = ssa.get_function(function_id);
         let entry_block_id = function.get_entry_id();
@@ -272,13 +277,16 @@ impl WitnessGen {
                             .iter()
                             .map(|arg| scope.get(arg).unwrap().clone())
                             .collect();
-                        let results = self.run_function(ssa, *tgt, args);
+                        let results = self.run_function(ssa, *tgt, args, type_info);
                         for (ret, result) in ret.iter().zip(results.into_iter()) {
                             scope.insert(*ret, result);
                         }
                     }
                     OpCode::MkSeq(result, values, _, _) => {
-                        let values = values.iter().map(|v| scope.get(v).unwrap().clone()).collect();
+                        let values = values
+                            .iter()
+                            .map(|v| scope.get(v).unwrap().clone())
+                            .collect();
                         scope.insert(*result, Value::Array(values));
                     }
                     OpCode::Cast(result, value, _) => {
@@ -287,31 +295,46 @@ impl WitnessGen {
                     }
                     OpCode::Truncate(result, value, target_bits, _) => {
                         let value = scope.get(value).unwrap().clone();
-                        let new_value = value.expect_fp().into_bigint().to_bits_le().iter().take(*target_bits).cloned().collect::<Vec<_>>();
-                        let new_value = Value::Fp(ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&new_value)).unwrap());
+                        let new_value = value
+                            .expect_fp()
+                            .into_bigint()
+                            .to_bits_le()
+                            .iter()
+                            .take(*target_bits)
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        let new_value = Value::Fp(
+                            ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&new_value)).unwrap(),
+                        );
                         scope.insert(*result, new_value);
                     }
                     OpCode::Not(result, value) => {
                         let value_val = scope.get(value).unwrap().clone();
                         let value_fp = value_val.expect_fp();
                         let bits = value_fp.into_bigint().to_bits_le();
-                        
+
                         // Get the actual type width from the function
-                        let bit_size = function.get_value_type(*value).unwrap().get_bit_size();
-                        
+                        let bit_size = type_info
+                            .get_function(function_id)
+                            .get_value_type(*value)
+                            .get_bit_size();
+
                         let mut negated_bits = Vec::new();
                         for i in 0..bit_size {
                             let bit = if i < bits.len() { bits[i] } else { false };
                             negated_bits.push(!bit);
                         }
-                        let new_value = Value::Fp(ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&negated_bits)).unwrap());
+                        let new_value = Value::Fp(
+                            ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&negated_bits))
+                                .unwrap(),
+                        );
                         scope.insert(*result, new_value);
                     }
                     OpCode::ToBits(result, value, endianness, output_size) => {
                         let value = scope.get(value).unwrap().clone();
                         let value_fp = value.expect_fp();
                         let mut bits = value_fp.into_bigint().to_bits_le();
-                        
+
                         // Truncate or pad to the desired output size
                         if bits.len() > *output_size {
                             bits.truncate(*output_size);
@@ -320,7 +343,7 @@ impl WitnessGen {
                                 bits.push(false);
                             }
                         }
-                        
+
                         // Handle endianness
                         let final_bits = match endianness {
                             Endianness::Little => bits,
@@ -330,7 +353,7 @@ impl WitnessGen {
                                 reversed
                             }
                         };
-                        
+
                         // Convert bits to array of field elements (0 or 1)
                         let mut bit_values = Vec::new();
                         for bit in final_bits {
@@ -341,9 +364,10 @@ impl WitnessGen {
                             };
                             bit_values.push(bit_value);
                         }
-                        
+
                         scope.insert(*result, Value::Array(bit_values));
                     }
+                    OpCode::MemOp(_, _) => {}
                 }
             }
 

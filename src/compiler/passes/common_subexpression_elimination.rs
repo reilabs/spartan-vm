@@ -399,6 +399,7 @@ impl CSE {
                     | OpCode::ArraySet { .. }
                     | OpCode::Cast { .. }
                     | OpCode::Truncate { .. }
+                    | OpCode::MemOp(_, _)
                     | OpCode::ToBits { .. } => {}
                     OpCode::Not(r, value) => {
                         let value_expr = get_expr(&exprs, value);

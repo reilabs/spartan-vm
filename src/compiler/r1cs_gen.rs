@@ -1,9 +1,9 @@
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 use crate::compiler::{
-    analysis::symbolic_executor::{self, SymbolicExecutor},
+    analysis::{symbolic_executor::{self, SymbolicExecutor}, types::TypeInfo},
     ir::r#type::{Type, TypeExpr},
-    ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, SSA},
+    ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, MemOp, SSA},
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
 use itertools::Itertools;
@@ -397,6 +397,8 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
         let witness_var = ctx.next_witness();
         Value::WitnessVar(witness_var)
     }
+
+    fn mem_op(&self, _kind: MemOp, _ctx: &mut R1CGen) {}
 }
 
 impl R1CGen {
@@ -433,7 +435,7 @@ impl R1CGen {
     }
 
     #[instrument(skip_all, name = "R1CGen::run")]
-    pub fn run<V: Clone>(&mut self, ssa: &SSA<V>) {
+    pub fn run<V: Clone>(&mut self, ssa: &SSA<V>, type_info: &TypeInfo<V>) {
         let entry_point = ssa.get_main_id();
         let params = ssa.get_function(entry_point).get_param_types();
         let mut main_params = vec![];
@@ -442,7 +444,7 @@ impl R1CGen {
         }
 
         let executor = SymbolicExecutor::new();
-        executor.run(ssa, entry_point, main_params, self);
+        executor.run(ssa, type_info, entry_point, main_params, self);
     }
 
     pub fn get_r1cs(self) -> Vec<R1C> {

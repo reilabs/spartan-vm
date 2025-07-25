@@ -152,22 +152,6 @@ impl SSA<Empty> {
     }
 }
 
-impl<V: CommutativeMonoid + Display + Eq + Clone> SSA<V> {
-    pub fn typecheck(&mut self, cfg: &FlowAnalysis) {
-        let function_types = self
-            .functions
-            .iter()
-            .map(|(id, func)| (*id, (func.get_param_types(), func.returns.clone())))
-            .collect::<HashMap<_, _>>();
-
-        for (fid, function) in self.functions.iter_mut() {
-            if let Err(err) = function.typecheck(&function_types, cfg.get_function_cfg(*fid)) {
-                panic!("Typecheck failed for function {}: {}", fid.0, err);
-            }
-        }
-    }
-}
-
 impl<V: Display + Clone> SSA<V> {
     pub fn to_string(&self, value_annotator: &dyn SsaAnnotator) -> String {
         println!("Entry point: {}", self.main_id.0);
@@ -192,14 +176,18 @@ pub struct Function<V> {
     name: String,
     returns: Vec<Type<V>>,
     next_block: u64,
-    value_info: HashMap<ValueId, Type<V>>,
     next_value: u64,
     consts: HashMap<ValueId, Const>,
     consts_to_val: HashMap<Const, ValueId>,
 }
 
 impl<V: Display + Clone> Function<V> {
-    pub fn to_string(&self, ssa: &SSA<V>, id: FunctionId, value_annotator: &dyn SsaAnnotator) -> String {
+    pub fn to_string(
+        &self,
+        ssa: &SSA<V>,
+        id: FunctionId,
+        value_annotator: &dyn SsaAnnotator,
+    ) -> String {
         let header = format!(
             "fn {}@{}(block {}) -> {} [{}] {{",
             self.name,
@@ -236,7 +224,6 @@ impl<V: Clone> Function<V> {
             name,
             next_block: 1,
             returns: Vec::new(),
-            value_info: HashMap::new(),
             next_value: 0,
             consts: HashMap::new(),
             consts_to_val: HashMap::new(),
@@ -251,7 +238,6 @@ impl<V: Clone> Function<V> {
                 next_block: self.next_block,
                 name: self.name,
                 returns: vec![],
-                value_info: HashMap::new(),
                 next_value: self.next_value,
                 consts: self.consts,
                 consts_to_val: self.consts_to_val,
@@ -337,14 +323,9 @@ impl<V: Clone> Function<V> {
         self.blocks.iter()
     }
 
-    pub fn get_value_type(&self, value: ValueId) -> Option<&Type<V>> {
-        self.value_info.get(&value)
-    }
-
     pub fn add_parameter(&mut self, block_id: BlockId, typ: Type<V>) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
-        self.value_info.insert(value_id, typ.clone());
         self.blocks
             .get_mut(&block_id)
             .unwrap()
@@ -384,9 +365,6 @@ impl<V: Clone> Function<V> {
     pub fn push_add(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
-        if let Some(lhs_type) = self.value_info.get(&lhs) {
-            self.value_info.insert(value_id, lhs_type.clone());
-        }
         self.blocks
             .get_mut(&block_id)
             .unwrap()
@@ -645,6 +623,14 @@ impl<V: Clone> Function<V> {
         value_id
     }
 
+    pub fn push_mem_op(&mut self, block_id: BlockId, value: ValueId, kind: MemOp) {
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::MemOp(kind, value));
+    }
+
     // pub fn push_constrain(&mut self, block_id: BlockId, a: ValueId, b: ValueId, c: ValueId) {
     //     self.blocks
     //         .get_mut(&block_id)
@@ -737,39 +723,6 @@ impl<V: Clone> Function<V> {
                     .sum::<usize>()
             })
             .sum()
-    }
-}
-
-impl<V: CommutativeMonoid + Display + Eq + Clone> Function<V> {
-    fn typecheck(
-        &mut self,
-        function_types: &HashMap<FunctionId, (Vec<Type<V>>, Vec<Type<V>>)>,
-        cfg: &CFG,
-    ) -> Result<(), String> {
-        let mut new_value_info = self.value_info.clone();
-
-        for (value_id, const_) in self.consts.iter() {
-            match const_ {
-                Const::U(size, _) => new_value_info.insert(*value_id, Type::u(*size, V::empty())),
-                Const::Field(_) => new_value_info.insert(*value_id, Type::field(V::empty())),
-            };
-        }
-
-        for block in cfg.get_domination_pre_order() {
-            let block = self.get_block(block);
-
-            for param in block.get_parameters() {
-                new_value_info.insert(param.0, param.1.clone());
-            }
-
-            for instruction in block.get_instructions() {
-                instruction.typecheck(&mut new_value_info, function_types)?;
-            }
-        }
-
-        self.value_info = new_value_info;
-
-        Ok(())
     }
 }
 
@@ -963,6 +916,13 @@ impl SeqType {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum MemOp {
+    DropAndSweep,
+    Drop,
+    Use,
+}
+
 #[derive(Debug, Clone)]
 pub enum OpCode<V> {
     Cmp(CmpKind, ValueId, ValueId, ValueId), // _1 = _2 `cmp` _3
@@ -981,6 +941,7 @@ pub enum OpCode<V> {
     ArraySet(ValueId, ValueId, ValueId, ValueId), // _1 = _2[_3] = _4
     Select(ValueId, ValueId, ValueId, ValueId), // _1 = _2 ? _3 : _4
     ToBits(ValueId, ValueId, Endianness, usize), // _1 = to_bits _2 (endianness, output_size)
+    MemOp(MemOp, ValueId),                       // mem_op(kind, _2)
 
     // Phase 2
     WriteWitness(Option<ValueId>, ValueId, V), // _1 = as_witness(_2)
@@ -1060,7 +1021,13 @@ impl<V: Display + Clone> OpCode<V> {
                     .iter()
                     .map(|v| format!("v{}{}", v.0, annotate(value_annotator, *v)))
                     .join(", ");
-                format!("{} = call {}@{}({})", result_str, ssa.get_function(*fn_id).get_name(), fn_id.0, args_str)
+                format!(
+                    "{} = call {}@{}({})",
+                    result_str,
+                    ssa.get_function(*fn_id).get_name(),
+                    fn_id.0,
+                    args_str
+                )
             }
             OpCode::ArrayGet(result, array, index) => {
                 format!(
@@ -1150,197 +1117,13 @@ impl<V: Display + Clone> OpCode<V> {
                     output_size
                 )
             }
-        }
-    }
-}
-
-impl<V: CommutativeMonoid + Display + Clone + Eq> OpCode<V> {
-    pub fn typecheck(
-        &self,
-        type_assignments: &mut HashMap<ValueId, Type<V>>,
-        function_types: &HashMap<FunctionId, (Vec<Type<V>>, Vec<Type<V>>)>,
-    ) -> Result<(), String> {
-        match self {
-            Self::Cmp(_kind, result, lhs, rhs) => {
-                let lhs_type = type_assignments.get(lhs).ok_or_else(|| {
-                    format!(
-                        "Left-hand side value {:?} not found in type assignments",
-                        lhs
-                    )
-                })?;
-                let rhs_type = type_assignments.get(rhs).ok_or_else(|| {
-                    format!(
-                        "Right-hand side value {:?} not found in type assignments",
-                        rhs
-                    )
-                })?;
-                type_assignments.insert(
-                    *result,
-                    Type::u(1, lhs_type.get_annotation().op(rhs_type.get_annotation())),
-                );
-                Ok(())
-            }
-            Self::BinaryArithOp(_kind, result, lhs, rhs) => {
-                let lhs_type = type_assignments.get(lhs).ok_or_else(|| {
-                    format!(
-                        "Left-hand side value {:?} not found in type assignments",
-                        lhs
-                    )
-                })?;
-                let rhs_type = type_assignments.get(rhs).ok_or_else(|| {
-                    format!(
-                        "Right-hand side value {:?} not found in type assignments",
-                        rhs
-                    )
-                })?;
-                type_assignments.insert(*result, lhs_type.get_arithmetic_result_type(rhs_type));
-                Ok(())
-            }
-            Self::Alloc(result, typ, annotation) => {
-                type_assignments.insert(*result, Type::ref_of(typ.clone(), annotation.clone()));
-                Ok(())
-            }
-            Self::Store(_, _) => Ok(()),
-            Self::Load(result, ptr) => {
-                let ptr_type = type_assignments.get(ptr).ok_or_else(|| {
-                    format!("Pointer value {:?} not found in type assignments", ptr)
-                })?;
-                if !ptr_type.is_ref() {
-                    return Err(format!(
-                        "Load operation expects a reference type, got {}",
-                        ptr_type
-                    ));
-                }
-                type_assignments.insert(
-                    *result,
-                    ptr_type
-                        .get_refered()
-                        .clone()
-                        .combine_with_annotation(ptr_type.get_annotation()),
-                );
-                Ok(())
-            }
-            Self::AssertEq(_, _) => Ok(()),
-            Self::AssertR1C(_, _, _) => Ok(()),
-            Self::Call(result, fn_id, args) => {
-                let (param_types, return_types) = function_types
-                    .get(fn_id)
-                    .ok_or_else(|| format!("Function {:?} not found", fn_id))?;
-
-                if args.len() != param_types.len() {
-                    return Err(format!(
-                        "Function {:?} expects {} arguments, got {}",
-                        fn_id,
-                        param_types.len(),
-                        args.len()
-                    ));
-                }
-
-                if result.len() != return_types.len() {
-                    return Err(format!(
-                        "Function {:?} expects {} return values, got {}",
-                        fn_id,
-                        return_types.len(),
-                        result.len()
-                    ));
-                }
-
-                for (ret, ret_type) in result.iter().zip(return_types) {
-                    type_assignments.insert(*ret, ret_type.clone());
-                }
-                Ok(())
-            }
-            Self::ArrayGet(result, array, _) => {
-                let array_type = type_assignments.get(array).ok_or_else(|| {
-                    format!("Array value {:?} not found in type assignments", array)
-                })?;
-
-                let element_type = array_type.get_array_element();
-                type_assignments.insert(
-                    *result,
-                    element_type.combine_with_annotation(array_type.get_annotation()),
-                );
-                Ok(())
-            }
-            Self::ArraySet(result, array, _, _) => {
-                let array_type = type_assignments.get(array).ok_or_else(|| {
-                    format!("Array value {:?} not found in type assignments", array)
-                })?;
-
-                type_assignments.insert(*result, array_type.clone());
-                Ok(())
-            }
-            Self::Select(result, _cond, then, otherwise) => {
-                let then_type = type_assignments.get(then).ok_or_else(|| {
-                    format!("Then value {:?} not found in type assignments", then)
-                })?;
-                let otherwise_type = type_assignments.get(otherwise).ok_or_else(|| {
-                    format!(
-                        "Otherwise value {:?} not found in type assignments",
-                        otherwise
-                    )
-                })?;
-                type_assignments.insert(
-                    *result,
-                    then_type.get_arithmetic_result_type(otherwise_type),
-                );
-                Ok(())
-            }
-            Self::WriteWitness(result, value, annotation) => {
-                let Some(result) = result else {
-                    return Ok(());
+            OpCode::MemOp(kind, value) => {
+                let name = match kind {
+                    MemOp::DropAndSweep => "drop_and_sweep",
+                    MemOp::Drop => "drop",
+                    MemOp::Use => "use",
                 };
-                let witness_type = type_assignments.get(value).ok_or_else(|| {
-                    format!("Witness value {:?} not found in type assignments", value)
-                })?;
-                type_assignments.insert(
-                    *result,
-                    witness_type.clone().combine_with_annotation(annotation),
-                );
-                Ok(())
-            }
-            Self::Constrain(_, _, _) => Ok(()),
-            Self::MkSeq(r, _, top_tp, t) => {
-                type_assignments.insert(*r, top_tp.of(t.clone()));
-                Ok(())
-            }
-            Self::Cast(result, value, target) => {
-                let value_type = type_assignments
-                    .get(value)
-                    .ok_or_else(|| format!("Value {:?} not found in type assignments", value))?;
-
-                let result_type = match target {
-                    CastTarget::Field => Type::field(value_type.get_annotation().clone()),
-                    CastTarget::U(size) => Type::u(*size, value_type.get_annotation().clone()),
-                };
-
-                type_assignments.insert(*result, result_type);
-                Ok(())
-            }
-            Self::Truncate(result, value, _, _) => {
-                let value_type = type_assignments
-                    .get(value)
-                    .ok_or_else(|| format!("Value {:?} not found in type assignments", value))?;
-
-                type_assignments.insert(*result, value_type.clone());
-                Ok(())
-            }
-            Self::Not(result, value) => {
-                let value_type = type_assignments
-                    .get(value)
-                    .ok_or_else(|| format!("Value {:?} not found in type assignments", value))?;
-                type_assignments.insert(*result, value_type.clone());
-                Ok(())
-            }
-            Self::ToBits(result, value, _, output_size) => {
-                let value_type = type_assignments
-                    .get(value)
-                    .ok_or_else(|| format!("Value {:?} not found in type assignments", value))?;
-                // Return an array of U(1) values with the same annotation as the input
-                let bit_type = Type::u(1, value_type.get_annotation().clone());
-                let result_type = Type::array_of(bit_type, *output_size, V::empty());
-                type_assignments.insert(*result, result_type);
-                Ok(())
+                format!("{}(v{})", name, value.0)
             }
         }
     }
@@ -1349,7 +1132,7 @@ impl<V: CommutativeMonoid + Display + Clone + Eq> OpCode<V> {
 impl<V> OpCode<V> {
     pub fn get_operands_mut(&mut self) -> impl Iterator<Item = &mut ValueId> {
         match self {
-            Self::Alloc(r, _, _) => vec![r].into_iter(),
+            Self::Alloc(r, _, _) | Self::MemOp(_, r) => vec![r].into_iter(),
             Self::Cmp(_, a, b, c) | Self::BinaryArithOp(_, a, b, c) | Self::ArrayGet(a, b, c) => {
                 vec![a, b, c].into_iter()
             }
@@ -1398,7 +1181,7 @@ impl<V> OpCode<V> {
                 vec![b, c, d].into_iter()
             }
             Self::Not(_, v) => vec![v].into_iter(),
-            Self::ToBits(_, v, _, _) => vec![v].into_iter(),
+            Self::ToBits(_, v, _, _) | Self::MemOp(_, v) => vec![v].into_iter(),
         }
     }
 
@@ -1420,7 +1203,7 @@ impl<V> OpCode<V> {
                 vec![b, c, d].into_iter()
             }
             Self::Not(_, v) => vec![v].into_iter(),
-            Self::ToBits(_, v, _, _) => vec![v].into_iter(),
+            Self::ToBits(_, v, _, _) | Self::MemOp(_, v) => vec![v].into_iter(),
         }
     }
 
@@ -1442,6 +1225,7 @@ impl<V> OpCode<V> {
             }
             Self::Call(r, _, _) => r.iter().collect::<Vec<_>>().into_iter(),
             Self::Constrain { .. }
+            | Self::MemOp(_, _)
             | Self::Store(_, _)
             | Self::AssertEq(_, _)
             | Self::AssertR1C(_, _, _) => vec![].into_iter(),

@@ -5,11 +5,7 @@ use itertools::Itertools;
 use tracing::instrument;
 
 use crate::compiler::{
-    Field,
-    analysis::symbolic_executor::{self, SymbolicExecutor},
-    ir::r#type::{Type, TypeExpr},
-    ssa::{BinaryArithOpKind, CastTarget, CmpKind, Endianness, FunctionId, SSA, SeqType},
-    taint_analysis::ConstantTaint,
+    analysis::{symbolic_executor::{self, SymbolicExecutor}, types::TypeInfo}, ir::r#type::{Type, TypeExpr}, ssa::{BinaryArithOpKind, CastTarget, CmpKind, Endianness, FunctionId, MemOp, SeqType, SSA}, taint_analysis::ConstantTaint, Field
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -710,6 +706,8 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
             None => self.clone(),
         }
     }
+
+    fn mem_op(&self, _kind: MemOp, _ctx: &mut CostAnalysis) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1049,7 +1047,7 @@ impl CostEstimator {
     }
 
     #[instrument(skip_all, name = "CostEstimator::run")]
-    pub fn run(&self, ssa: &SSA<ConstantTaint>) -> CostAnalysis {
+    pub fn run(&self, ssa: &SSA<ConstantTaint>, type_info: &TypeInfo<ConstantTaint>) -> CostAnalysis {
         let main_sig = self.make_main_sig(ssa);
         let mut costs = CostAnalysis {
             functions: HashMap::new(),
@@ -1058,7 +1056,7 @@ impl CostEstimator {
             cache: HashMap::new(),
         };
 
-        self.run_fn_from_signature(ssa, main_sig, &mut costs);
+        self.run_fn_from_signature(ssa, type_info, main_sig, &mut costs);
 
         costs
     }
@@ -1066,6 +1064,7 @@ impl CostEstimator {
     fn run_fn_from_signature(
         &self,
         ssa: &SSA<ConstantTaint>,
+        type_info: &TypeInfo<ConstantTaint>,
         sig: FunctionSignature,
         costs: &mut CostAnalysis,
     ) {
@@ -1078,7 +1077,7 @@ impl CostEstimator {
                 specialized: param.to_value(),
             })
             .collect();
-        SymbolicExecutor::new().run(ssa, sig.id, inputs, costs);
+        SymbolicExecutor::new().run(ssa, type_info, sig.id, inputs, costs);
     }
 
     fn make_main_sig(&self, ssa: &SSA<ConstantTaint>) -> FunctionSignature {

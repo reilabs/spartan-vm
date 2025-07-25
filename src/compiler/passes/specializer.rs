@@ -1,22 +1,13 @@
 use std::collections::HashMap;
 
-use ark_ff::{AdditiveGroup, BigInt, BigInteger, PrimeField};
-use noirc_frontend::ast::BinaryOpKind;
+use ark_ff::{AdditiveGroup, BigInteger, PrimeField};
 use tracing::{info, instrument};
 
 use crate::compiler::{
-    Field,
     analysis::{
-        instrumenter::{FunctionSignature, SpecializationSummary, Summary, ValueSignature},
-        symbolic_executor::{self, SymbolicExecutor},
-    },
-    ir::r#type::{CommutativeMonoid, Type},
-    pass_manager::{DataPoint, Pass, PassInfo},
-    ssa::{
-        BinaryArithOpKind, CastTarget, DefaultSsaAnnotator, Endianness, Function, FunctionId, SSA,
-        SeqType, ValueId,
-    },
-    taint_analysis::ConstantTaint,
+        instrumenter::{FunctionSignature, SpecializationSummary, ValueSignature},
+        symbolic_executor::{self, SymbolicExecutor}, types::TypeInfo,
+    }, ir::r#type::Type, pass_manager::{DataPoint, Pass, PassInfo}, ssa::{BinaryArithOpKind, CastTarget, Endianness, Function, FunctionId, MemOp, SeqType, ValueId, SSA}, taint_analysis::ConstantTaint, Field
 };
 
 pub struct Specializer {
@@ -44,7 +35,7 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
         &self,
         b: &Self,
         cmp_kind: crate::compiler::ssa::CmpKind,
-        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
         ctx: &mut SpecializationState,
     ) -> Self {
         let l_const = ctx.const_vals.get(&self.0).unwrap(); // TODO: no unwrap here
@@ -67,7 +58,7 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
         &self,
         b: &Self,
         binary_arith_op_kind: crate::compiler::ssa::BinaryArithOpKind,
-        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
         ctx: &mut SpecializationState,
     ) -> Self {
         let a_const = ctx.const_vals.get(&self.0);
@@ -144,14 +135,14 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
         }
     }
 
-    fn assert_r1c(a: &Self, b: &Self, c: &Self, ctx: &mut SpecializationState) {
+    fn assert_r1c(_a: &Self, _b: &Self, _c: &Self, _ctx: &mut SpecializationState) {
         todo!()
     }
 
     fn array_get(
         &self,
         index: &Self,
-        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
         ctx: &mut SpecializationState,
     ) -> Self {
         let a_const = ctx.const_vals.get(&self.0).unwrap();
@@ -184,10 +175,10 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
 
     fn array_set(
         &self,
-        index: &Self,
-        value: &Self,
-        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
-        ctx: &mut SpecializationState,
+        _index: &Self,
+        _value: &Self,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _ctx: &mut SpecializationState,
     ) -> Self {
         todo!()
     }
@@ -195,9 +186,9 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
     fn truncate(
         &self,
         _from: usize,
-        to: usize,
-        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
-        ctx: &mut SpecializationState,
+        _to: usize,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _ctx: &mut SpecializationState,
     ) -> Self {
         todo!()
     }
@@ -205,12 +196,12 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
     fn cast(
         &self,
         cast_target: &crate::compiler::ssa::CastTarget,
-        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
         ctx: &mut SpecializationState,
     ) -> Self {
         let self_const = ctx.const_vals.get(&self.0);
         match self_const {
-            Some(ConstVal::U(s, v)) => match cast_target {
+            Some(ConstVal::U(_, v)) => match cast_target {
                 CastTarget::U(s) => {
                     let res = v & ((1 << *s) - 1);
                     let res_v = ctx.function.push_u_const(*s, res);
@@ -228,7 +219,7 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
         }
     }
 
-    fn constrain(a: &Self, b: &Self, c: &Self, ctx: &mut SpecializationState) {
+    fn constrain(_a: &Self, _b: &Self, _c: &Self, _ctx: &mut SpecializationState) {
         todo!()
     }
 
@@ -236,7 +227,7 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
         &self,
         endianness: Endianness,
         size: usize,
-        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
         ctx: &mut SpecializationState,
     ) -> Self {
         let val = ctx
@@ -249,7 +240,7 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
 
     fn not(
         &self,
-        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
         ctx: &mut SpecializationState,
     ) -> Self {
         let const_val = ctx.const_vals.get(&self.0).unwrap();
@@ -293,18 +284,18 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
         Self(val)
     }
 
-    fn alloc(ctx: &mut SpecializationState) -> Self {
+    fn alloc(_ctx: &mut SpecializationState) -> Self {
         todo!()
     }
 
-    fn ptr_write(&self, val: &Self, ctx: &mut SpecializationState) {
+    fn ptr_write(&self, _val: &Self, _ctx: &mut SpecializationState) {
         todo!()
     }
 
     fn ptr_read(
         &self,
-        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
-        ctx: &mut SpecializationState,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _ctx: &mut SpecializationState,
     ) -> Self {
         todo!()
     }
@@ -319,29 +310,33 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
 
     fn select(
         &self,
-        if_t: &Self,
-        if_f: &Self,
-        out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
-        ctx: &mut SpecializationState,
+        _if_t: &Self,
+        _if_f: &Self,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _ctx: &mut SpecializationState,
     ) -> Self {
         todo!()
     }
 
     fn write_witness(
         &self,
-        tp: Option<&crate::compiler::ir::r#type::Type<ConstantTaint>>,
-        ctx: &mut SpecializationState,
+        _tp: Option<&crate::compiler::ir::r#type::Type<ConstantTaint>>,
+        _ctx: &mut SpecializationState,
     ) -> Self {
         todo!()
+    }
+
+    fn mem_op(&self, kind: MemOp, ctx: &mut SpecializationState) {
+        ctx.function.push_mem_op(ctx.function.get_entry_id(), self.0, kind);
     }
 }
 
 impl<T> symbolic_executor::Context<Val, T> for SpecializationState {
     fn on_call(
         &mut self,
-        func: crate::compiler::ssa::FunctionId,
-        params: &mut [Val],
-        param_types: &[&crate::compiler::ir::r#type::Type<T>],
+        _func: crate::compiler::ssa::FunctionId,
+        _params: &mut [Val],
+        _param_types: &[&crate::compiler::ir::r#type::Type<T>],
     ) -> Option<Vec<Val>> {
         None
     }
@@ -349,7 +344,7 @@ impl<T> symbolic_executor::Context<Val, T> for SpecializationState {
     fn on_return(
         &mut self,
         returns: &mut [Val],
-        return_types: &[crate::compiler::ir::r#type::Type<T>],
+        _return_types: &[crate::compiler::ir::r#type::Type<T>],
     ) {
         self.function.terminate_block_with_return(
             self.function.get_entry_id(),
@@ -359,9 +354,9 @@ impl<T> symbolic_executor::Context<Val, T> for SpecializationState {
 
     fn on_jmp(
         &mut self,
-        target: crate::compiler::ssa::BlockId,
-        params: &mut [Val],
-        param_types: &[&crate::compiler::ir::r#type::Type<T>],
+        _target: crate::compiler::ssa::BlockId,
+        _params: &mut [Val],
+        _param_types: &[&crate::compiler::ir::r#type::Type<T>],
     ) {
     }
 }
@@ -375,7 +370,7 @@ impl Pass<ConstantTaint> for Specializer {
         let summary = pass_manager.get_constraint_instrumentation();
         for (sig, summary) in summary.functions.iter() {
             if summary.specialization_total_savings > 0 {
-                self.try_spec(ssa, summary, sig.clone());
+                self.try_spec(ssa, pass_manager.get_type_info(), summary, sig.clone());
             }
         }
     }
@@ -388,7 +383,7 @@ impl Pass<ConstantTaint> for Specializer {
                 DataPoint::Types,
                 DataPoint::ConstraintInstrumentation,
             ],
-            needs: vec![DataPoint::ConstraintInstrumentation],
+            needs: vec![DataPoint::ConstraintInstrumentation, DataPoint::Types],
         }
     }
 }
@@ -404,6 +399,7 @@ impl Specializer {
     fn try_spec(
         &self,
         ssa: &mut SSA<ConstantTaint>,
+        type_info: &TypeInfo<ConstantTaint>,
         summary: &SpecializationSummary,
         signature: FunctionSignature,
     ) {
@@ -469,7 +465,7 @@ impl Specializer {
             state.function.add_return_type(ret.clone());
         }
 
-        SymbolicExecutor::new().run(ssa, signature.get_fun_id(), call_params, &mut state);
+        SymbolicExecutor::new().run(ssa, type_info, signature.get_fun_id(), call_params, &mut state);
 
         let code_bloat = state.function.code_size();
         let savings_to_code_ratio = summary.specialization_total_savings as f64 / code_bloat as f64;

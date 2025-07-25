@@ -89,6 +89,7 @@ impl UntaintControlFlow {
                     }
                     OpCode::Not(r, l) => OpCode::Not(r, l),
                     OpCode::ToBits(r, l, e, s) => OpCode::ToBits(r, l, e, s),
+                    OpCode::MemOp(kind, value) => OpCode::MemOp(kind, value),
                 };
                 new_instructions.push(new);
             }

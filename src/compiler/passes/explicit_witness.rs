@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
+    analysis::types::TypeInfo,
     pass_manager::{DataPoint, Pass},
     ssa::{BinaryArithOpKind, Block, BlockId, OpCode, SSA},
     taint_analysis::ConstantTaint,
@@ -12,9 +13,9 @@ impl Pass<ConstantTaint> for ExplicitWitness {
     fn run(
         &self,
         ssa: &mut SSA<ConstantTaint>,
-        _pass_manager: &crate::compiler::pass_manager::PassManager<ConstantTaint>,
+        pass_manager: &crate::compiler::pass_manager::PassManager<ConstantTaint>,
     ) {
-        self.do_run(ssa);
+        self.do_run(ssa, pass_manager.get_type_info());
     }
 
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
@@ -31,8 +32,9 @@ impl ExplicitWitness {
         Self {}
     }
 
-    pub fn do_run(&self, ssa: &mut SSA<ConstantTaint>) {
-        for (_, function) in ssa.iter_functions_mut() {
+    pub fn do_run(&self, ssa: &mut SSA<ConstantTaint>, type_info: &TypeInfo<ConstantTaint>) {
+        for (function_id, function) in ssa.iter_functions_mut() {
+            let function_type_info = type_info.get_function(*function_id);
             let mut new_blocks = HashMap::<BlockId, Block<ConstantTaint>>::new();
             for (bid, mut block) in function.take_blocks().into_iter() {
                 let mut new_instructions = Vec::new();
@@ -51,16 +53,16 @@ impl ExplicitWitness {
                             new_instructions.push(instruction);
                         }
                         OpCode::Cmp(_, r, l, _) => {
-                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
-                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+                            let l_taint = function_type_info.get_value_type(l).get_annotation();
+                            let r_taint = function_type_info.get_value_type(r).get_annotation();
                             // TODO: witness versions
                             assert!(l_taint.is_pure());
                             assert!(r_taint.is_pure());
                             new_instructions.push(instruction);
                         }
                         OpCode::BinaryArithOp(BinaryArithOpKind::Mul, res, l, r) => {
-                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
-                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+                            let l_taint = function_type_info.get_value_type(l).get_annotation();
+                            let r_taint = function_type_info.get_value_type(r).get_annotation();
 
                             if l_taint.is_pure() || r_taint.is_pure() {
                                 new_instructions.push(instruction);
@@ -83,32 +85,32 @@ impl ExplicitWitness {
                             new_instructions.push(OpCode::Constrain(l, r, res));
                         }
                         OpCode::BinaryArithOp(BinaryArithOpKind::Div, _, l, r) => {
-                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
-                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+                            let l_taint = function_type_info.get_value_type(l).get_annotation();
+                            let r_taint = function_type_info.get_value_type(r).get_annotation();
                             assert!(l_taint.is_pure());
                             assert!(r_taint.is_pure());
                             new_instructions.push(instruction);
                         }
                         OpCode::BinaryArithOp(BinaryArithOpKind::And, _, l, r) => {
-                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
-                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+                            let l_taint = function_type_info.get_value_type(l).get_annotation();
+                            let r_taint = function_type_info.get_value_type(r).get_annotation();
                             assert!(l_taint.is_pure());
                             assert!(r_taint.is_pure());
                             new_instructions.push(instruction);
-                        },
+                        }
                         OpCode::Store(ptr, _) => {
-                            let ptr_taint = function.get_value_type(ptr).unwrap().get_annotation();
+                            let ptr_taint = function_type_info.get_value_type(ptr).get_annotation();
                             assert!(ptr_taint.is_pure());
                             new_instructions.push(instruction);
                         }
                         OpCode::Load(_, ptr) => {
-                            let ptr_taint = function.get_value_type(ptr).unwrap().get_annotation();
+                            let ptr_taint = function_type_info.get_value_type(ptr).get_annotation();
                             assert!(ptr_taint.is_pure());
                             new_instructions.push(instruction);
                         }
                         OpCode::AssertEq(l, r) => {
-                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
-                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+                            let l_taint = function_type_info.get_value_type(l).get_annotation();
+                            let r_taint = function_type_info.get_value_type(r).get_annotation();
                             if l_taint.is_pure() && r_taint.is_pure() {
                                 new_instructions.push(instruction);
                                 continue;
@@ -117,9 +119,9 @@ impl ExplicitWitness {
                             new_instructions.push(OpCode::Constrain(l, one, r));
                         }
                         OpCode::AssertR1C(a, b, c) => {
-                            let a_taint = function.get_value_type(a).unwrap().get_annotation();
-                            let b_taint = function.get_value_type(b).unwrap().get_annotation();
-                            let c_taint = function.get_value_type(c).unwrap().get_annotation();
+                            let a_taint = function_type_info.get_value_type(a).get_annotation();
+                            let b_taint = function_type_info.get_value_type(b).get_annotation();
+                            let c_taint = function_type_info.get_value_type(c).get_annotation();
                             if a_taint.is_pure() && b_taint.is_pure() && c_taint.is_pure() {
                                 new_instructions.push(instruction);
                                 continue;
@@ -127,24 +129,24 @@ impl ExplicitWitness {
                             new_instructions.push(OpCode::Constrain(a, b, c));
                         }
                         OpCode::ArrayGet(_, arr, idx) => {
-                            let arr_taint = function.get_value_type(arr).unwrap().get_annotation();
-                            let idx_taint = function.get_value_type(idx).unwrap().get_annotation();
+                            let arr_taint = function_type_info.get_value_type(arr).get_annotation();
+                            let idx_taint = function_type_info.get_value_type(idx).get_annotation();
                             assert!(arr_taint.is_pure());
                             assert!(idx_taint.is_pure());
                             new_instructions.push(instruction);
                         }
                         OpCode::ArraySet(_, arr, idx, _) => {
-                            let arr_taint = function.get_value_type(arr).unwrap().get_annotation();
-                            let idx_taint = function.get_value_type(idx).unwrap().get_annotation();
+                            let arr_taint = function_type_info.get_value_type(arr).get_annotation();
+                            let idx_taint = function_type_info.get_value_type(idx).get_annotation();
                             assert!(arr_taint.is_pure());
                             assert!(idx_taint.is_pure());
                             new_instructions.push(instruction);
                         }
                         OpCode::Select(res, cond, l, r) => {
                             let cond_taint =
-                                function.get_value_type(cond).unwrap().get_annotation();
-                            let l_taint = function.get_value_type(l).unwrap().get_annotation();
-                            let r_taint = function.get_value_type(r).unwrap().get_annotation();
+                                function_type_info.get_value_type(cond).get_annotation();
+                            let l_taint = function_type_info.get_value_type(l).get_annotation();
+                            let r_taint = function_type_info.get_value_type(r).get_annotation();
                             // The result is cond * l + (1 - cond) * r
                             // If either cond or both l and r and pure, this becomes a linear combination
                             // and as such doesn't need a witness
@@ -193,18 +195,21 @@ impl ExplicitWitness {
                             new_instructions.push(instruction);
                         }
                         OpCode::Truncate(_, i, _, _) => {
-                            let i_taint = function.get_value_type(i).unwrap().get_annotation();
+                            let i_taint = function_type_info.get_value_type(i).get_annotation();
                             assert!(i_taint.is_pure()); // TODO: witness versions
                             new_instructions.push(instruction);
                         }
                         OpCode::Not(_, i) => {
-                            let i_taint = function.get_value_type(i).unwrap().get_annotation();
+                            let i_taint = function_type_info.get_value_type(i).get_annotation();
                             assert!(i_taint.is_pure()); // TODO: witness versions
                             new_instructions.push(instruction);
                         }
                         OpCode::ToBits(_, i, _, _) => {
-                            let i_taint = function.get_value_type(i).unwrap().get_annotation();
+                            let i_taint = function_type_info.get_value_type(i).get_annotation();
                             assert!(i_taint.is_pure()); // Only handle pure input case for now
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::MemOp(_, _) => {
                             new_instructions.push(instruction);
                         }
                     }

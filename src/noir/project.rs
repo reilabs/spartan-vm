@@ -3,6 +3,7 @@
 use std::fs;
 
 use crate::compiler::analysis::liveness::LivenessAnalysis;
+use crate::compiler::analysis::types::Types;
 use crate::compiler::Field;
 use crate::compiler::analysis::instrumenter::CostEstimator;
 use crate::compiler::codegen::CodeGen;
@@ -129,7 +130,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         );
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        custom_ssa.typecheck(&flow_analysis);
+        let type_info = Types::new().run(&custom_ssa, &flow_analysis);
         println!(
             "Converted SSA:\n{}",
             custom_ssa.to_string(&DefaultSsaAnnotator)
@@ -210,13 +211,13 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         pass_manager.run(&mut custom_ssa);
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        custom_ssa.typecheck(&flow_analysis);
+        let type_info = Types::new().run(&custom_ssa, &flow_analysis);
 
         let liveness_analysis = LivenessAnalysis::new();
         let last_uses = liveness_analysis.run(&custom_ssa, &flow_analysis);
 
         let mut r1cs_gen = R1CGen::new();
-        r1cs_gen.run(&custom_ssa);
+        r1cs_gen.run(&custom_ssa, &type_info);
         let r1cs = r1cs_gen.clone().get_r1cs();
         info!(
             message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
@@ -238,10 +239,10 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         r1cs_cleanup.run(&mut custom_ssa);
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        custom_ssa.typecheck(&flow_analysis);
+        let type_info = Types::new().run(&custom_ssa, &flow_analysis);
 
         let codegen = CodeGen::new();
-        let program = codegen.run(&custom_ssa, &flow_analysis);
+        let program = codegen.run(&custom_ssa, &flow_analysis, &type_info);
         fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
 
         let mut binary = program.to_binary();
@@ -252,8 +253,8 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let (out_wit, out_a, out_b, out_c) = interpreter::run(
             &mut binary,
-            todo!(),
-            todo!(),
+            r1cs_gen.get_witness_size(),
+            r1cs.len(),
             &[
                 Field::from(2),
                 Field::from_str(
@@ -301,7 +302,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         .unwrap();
 
         let mut witness_gen = WitnessGen::new(public_witness);
-        witness_gen.run(&custom_ssa);
+        witness_gen.run(&custom_ssa, &type_info);
         let witness = witness_gen.get_witness();
         fs::write(
             debug_output_dir.join("witness.txt"),

@@ -1,9 +1,8 @@
-use std::{fmt::Display, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
 
 use crate::compiler::{
-    analysis::instrumenter::{self, CostEstimator},
+    analysis::{instrumenter::{self, CostEstimator}, types::{TypeInfo, Types}},
     flow_analysis::FlowAnalysis,
-    ir::r#type::CommutativeMonoid,
     ssa::SSA,
     taint_analysis::ConstantTaint,
 };
@@ -32,7 +31,7 @@ pub struct PassManager<V> {
     current_pass_info: Option<PassInfo>,
     cfg: Option<FlowAnalysis>,
     draw_cfg: bool,
-    types_valid: bool,
+    type_info: Option<TypeInfo<V>>,
     constraint_instrumentation: Option<instrumenter::Summary>,
     debug_output_dir: Option<PathBuf>,
 }
@@ -44,7 +43,7 @@ impl PassManager<ConstantTaint> {
             current_pass_info: None,
             cfg: None,
             draw_cfg,
-            types_valid: false,
+            type_info: None,
             constraint_instrumentation: None,
             debug_output_dir: None,
         }
@@ -109,9 +108,6 @@ impl PassManager<ConstantTaint> {
         if self.cfg.is_none() {
             self.cfg = Some(FlowAnalysis::run(ssa));
         }
-        if self.types_valid {
-            ssa.typecheck(&self.get_cfg());
-        }
         let Some(debug_output_dir) = &self.debug_output_dir else {
             return;
         };
@@ -140,17 +136,16 @@ impl PassManager<ConstantTaint> {
             || pass_info
                 .needs
                 .contains(&DataPoint::ConstraintInstrumentation))
-            && !self.types_valid
+            && !self.type_info.is_some()
         {
-            ssa.typecheck(&self.get_cfg());
-            self.types_valid = true;
+            self.type_info = Some(Types::new().run(ssa, &self.get_cfg()));
         }
         if pass_info
             .needs
             .contains(&DataPoint::ConstraintInstrumentation)
         {
             let cost_estimator = CostEstimator::new();
-            let cost_analysis = cost_estimator.run(ssa);
+            let cost_analysis = cost_estimator.run(ssa, self.type_info.as_ref().unwrap());
             self.constraint_instrumentation = Some(cost_analysis.summarize());
         }
     }
@@ -160,7 +155,7 @@ impl PassManager<ConstantTaint> {
             self.cfg = None;
         }
         if pass_info.invalidates.contains(&DataPoint::Types) {
-            self.types_valid = false;
+            self.type_info = None;
         }
         if pass_info
             .invalidates
@@ -203,5 +198,17 @@ impl<V> PassManager<V> {
             None => {}
         }
         self.constraint_instrumentation.as_ref().unwrap()
+    }
+
+    pub fn get_type_info(&self) -> &TypeInfo<V> {
+        match &self.current_pass_info {
+            Some(pass_info) => {
+                if !pass_info.needs.contains(&DataPoint::Types) {
+                    panic!("Pass {} does not need type information but tries to access it", pass_info.name);
+                }
+            }
+            None => {}
+        }
+        self.type_info.as_ref().unwrap()
     }
 }

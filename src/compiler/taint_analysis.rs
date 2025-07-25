@@ -739,7 +739,7 @@ impl TaintAnalysis {
                         );
                         function_taint.value_taints.insert(*result, result_taint);
                     }
-
+                    OpCode::MemOp(_, _) => {}
                     OpCode::WriteWitness { .. } | OpCode::Constrain { .. } => {
                         panic!("Should not be present at this stage {:?}", instruction);
                     }

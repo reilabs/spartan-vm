@@ -103,6 +103,13 @@ impl DCE {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
                         }
+                        OpCode::MemOp(_, _) => {
+                            // TODO: this is over-conservative - accidentally alives the value
+                            // even if it's not used otherwise. Should be fixed in the future,
+                            // but we're inserting these late in the pipeline, so main passes
+                            // we'll be fine.
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
                         OpCode::Load { .. }
                         | OpCode::BinaryArithOp { .. }
                         | OpCode::Cmp { .. }

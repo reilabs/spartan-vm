@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     compiler::{
+        analysis::types::{FunctionTypeInfo, TypeInfo},
         flow_analysis::{CFG, FlowAnalysis},
         ir::r#type::{Type, TypeExpr},
         ssa::{
@@ -99,16 +100,30 @@ impl CodeGen {
         Self {}
     }
 
-    pub fn run(&self, ssa: &SSA<ConstantTaint>, cfg: &FlowAnalysis) -> bytecode::Program {
+    pub fn run(
+        &self,
+        ssa: &SSA<ConstantTaint>,
+        cfg: &FlowAnalysis,
+        type_info: &TypeInfo<ConstantTaint>,
+    ) -> bytecode::Program {
         let function = ssa.get_main();
-        let function = self.run_function(function, cfg.get_function_cfg(ssa.get_main_id()));
+        let function = self.run_function(
+            function,
+            cfg.get_function_cfg(ssa.get_main_id()),
+            type_info.get_function(ssa.get_main_id()),
+        );
 
         bytecode::Program {
             functions: vec![function],
         }
     }
 
-    fn run_function(&self, function: &Function<ConstantTaint>, cfg: &CFG) -> bytecode::Function {
+    fn run_function(
+        &self,
+        function: &Function<ConstantTaint>,
+        cfg: &CFG,
+        type_info: &FunctionTypeInfo<ConstantTaint>,
+    ) -> bytecode::Function {
         let mut layouter = FrameLayouter::new();
         let entry = function.get_entry();
         let mut emitter = EmitterState::new();
@@ -139,6 +154,7 @@ impl CodeGen {
             function,
             function.get_entry_id(),
             entry,
+            type_info,
             &mut layouter,
             &mut emitter,
         );
@@ -151,7 +167,14 @@ impl CodeGen {
             for (param, tp) in block.get_parameters() {
                 layouter.alloc_value(*param, tp);
             }
-            self.run_block_body(function, block_id, block, &mut layouter, &mut emitter);
+            self.run_block_body(
+                function,
+                block_id,
+                block,
+                type_info,
+                &mut layouter,
+                &mut emitter,
+            );
         }
 
         for (block_id, block) in function.get_blocks() {
@@ -167,9 +190,9 @@ impl CodeGen {
                         );
                         block_exit_start += 1;
                     }
-                    emitter.code[block_exit_start] = bytecode::OpCode::Jmp(
-                        bytecode::JumpTarget(*emitter.block_entrances.get(&tgt).unwrap() as isize),
-                    );
+                    emitter.code[block_exit_start] = bytecode::OpCode::Jmp(bytecode::JumpTarget(
+                        *emitter.block_entrances.get(&tgt).unwrap() as isize,
+                    ));
                     block_exit_start += 1;
                 }
                 Terminator::JmpIf(cond, if_t, if_f) => {
@@ -198,6 +221,7 @@ impl CodeGen {
         function: &Function<ConstantTaint>,
         block_id: BlockId,
         block: &Block<ConstantTaint>,
+        type_info: &FunctionTypeInfo<ConstantTaint>,
         layouter: &mut FrameLayouter,
         emitter: &mut EmitterState,
     ) {
@@ -205,7 +229,7 @@ impl CodeGen {
         for instruction in block.get_instructions() {
             match instruction {
                 ssa::OpCode::BinaryArithOp(BinaryArithOpKind::Add, val, op1, op2) => {
-                    match &function.get_value_type(*val).unwrap().expr {
+                    match &type_info.get_value_type(*val).expr {
                         TypeExpr::Field => {
                             let result = layouter.alloc_field(*val);
                             emitter.push_op(bytecode::OpCode::AddF(
@@ -227,7 +251,7 @@ impl CodeGen {
                     }
                 }
                 ssa::OpCode::BinaryArithOp(BinaryArithOpKind::Mul, val, op1, op2) => {
-                    match &function.get_value_type(*val).unwrap().expr {
+                    match &type_info.get_value_type(*val).expr {
                         TypeExpr::Field => {
                             let result = layouter.alloc_field(*val);
                             emitter.push_op(bytecode::OpCode::MulF(
@@ -240,7 +264,7 @@ impl CodeGen {
                     }
                 }
                 ssa::OpCode::Cmp(CmpKind::Lt, val, op1, op2) => {
-                    match &function.get_value_type(*val).unwrap().expr {
+                    match &type_info.get_value_type(*val).expr {
                         TypeExpr::U(bits) => {
                             let result = layouter.alloc_u64(*val, *bits);
                             emitter.push_op(bytecode::OpCode::LtU(
@@ -254,9 +278,9 @@ impl CodeGen {
                     }
                 }
                 ssa::OpCode::Constrain(a, b, c) => {
-                    let a_type = function.get_value_type(*a).unwrap();
-                    let b_type = function.get_value_type(*b).unwrap();
-                    let c_type = function.get_value_type(*c).unwrap();
+                    let a_type = type_info.get_value_type(*a);
+                    let b_type = type_info.get_value_type(*b);
+                    let c_type = type_info.get_value_type(*c);
                     if !a_type.is_field() || !b_type.is_field() || !c_type.is_field() {
                         panic!(
                             "Unsupported type for constrain: {:?}, {:?}, {:?}",
@@ -289,7 +313,7 @@ impl CodeGen {
             Terminator::Return(params) => {
                 let mut offset = 0;
                 for param in params {
-                    let size = layouter.type_size(&function.get_value_type(*param).unwrap());
+                    let size = layouter.type_size(&type_info.get_value_type(*param));
                     emitter.push_op(bytecode::OpCode::WritePtr(
                         bytecode::FramePosition::return_data_ptr(),
                         offset,
