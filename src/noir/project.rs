@@ -2,6 +2,7 @@
 
 use std::fs;
 
+use crate::compiler::analysis::liveness::LivenessAnalysis;
 use crate::compiler::Field;
 use crate::compiler::analysis::instrumenter::CostEstimator;
 use crate::compiler::codegen::CodeGen;
@@ -35,6 +36,7 @@ use noirc_evaluator::ssa::ssa_gen::Ssa;
 use noirc_evaluator::ssa::{SsaBuilder, SsaLogging, SsaPass};
 use noirc_frontend::hir::ParsedFiles;
 use noirc_frontend::monomorphization::monomorphize;
+use std::str::FromStr;
 use tracing::{info, warn};
 
 /// A manager for source files for the Noir project that we intend to extract.
@@ -183,21 +185,24 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             custom_ssa.to_string(&DefaultSsaAnnotator)
         );
 
-        let mut pass_manager = PassManager::<ConstantTaint>::new(vec![
-            Box::new(FixDoubleJumps::new()),
-            Box::new(Mem2Reg::new()),
-            Box::new(CSE::new()),
-            Box::new(ConditionPropagation::new()),
-            Box::new(CSE::new()),
-            Box::new(DeduplicatePhis::new()),
-            Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
-            Box::new(FixDoubleJumps::new()),
-            Box::new(PullIntoAssert::new()),
-            Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
-            Box::new(Specializer::new(5.0)),
-            Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
-            Box::new(ExplicitWitness::new()),
-        ]);
+        let mut pass_manager = PassManager::<ConstantTaint>::new(
+            true,
+            vec![
+                Box::new(FixDoubleJumps::new()),
+                Box::new(Mem2Reg::new()),
+                Box::new(CSE::new()),
+                Box::new(ConditionPropagation::new()),
+                Box::new(CSE::new()),
+                Box::new(DeduplicatePhis::new()),
+                Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
+                Box::new(FixDoubleJumps::new()),
+                Box::new(PullIntoAssert::new()),
+                Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
+                Box::new(Specializer::new(5.0)),
+                Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
+                Box::new(ExplicitWitness::new()),
+            ],
+        );
 
         let debug_output_dir = package.root_dir.join("spartan_vm_debug");
 
@@ -206,6 +211,9 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         custom_ssa.typecheck(&flow_analysis);
+
+        let liveness_analysis = LivenessAnalysis::new();
+        let last_uses = liveness_analysis.run(&custom_ssa, &flow_analysis);
 
         let mut r1cs_gen = R1CGen::new();
         r1cs_gen.run(&custom_ssa);
@@ -237,14 +245,22 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
 
         let mut binary = program.to_binary();
-        let len_num_digits = binary.len().to_string().len();
-        for (i, b) in binary.iter().enumerate() {
-            println!("{: >len_num_digits$}: {}", i, b);
-        }
+        // let len_num_digits = binary.len().to_string().len();
+        // for (i, b) in binary.iter().enumerate() {
+        //     println!("{: >len_num_digits$}: {}", i, b);
+        // }
 
-        let (out_wit, out_a, out_b, out_c) = interpreter::run_interpreter(
+        let (out_wit, out_a, out_b, out_c) = interpreter::run(
             &mut binary,
-            &[Field::from(3), Field::from(4), Field::from(7)],
+            todo!(),
+            todo!(),
+            &[
+                Field::from(2),
+                Field::from_str(
+                    "8828670086143533245061788684574618475763043903694187796770609410437484537737",
+                )
+                .unwrap(),
+            ],
         );
 
         fs::write(

@@ -166,7 +166,7 @@ impl CFGBuilder {
         let reverse_cfg_data = CFGData::from_graph(reverse_cfg, self.return_node);
         CFG {
             entry_node: self.entry_node,
-            _return_node: self.return_node,
+            return_node: self.return_node,
             block_to_node: self.block_to_node,
             node_to_block: self.node_to_block,
             cfg: cfg_data,
@@ -178,7 +178,7 @@ impl CFGBuilder {
 #[derive(Debug, Clone)]
 pub struct CFG {
     entry_node: NodeIndex<u32>,
-    _return_node: NodeIndex<u32>,
+    return_node: NodeIndex<u32>,
     block_to_node: HashMap<BlockId, NodeIndex<u32>>,
     node_to_block: HashMap<NodeIndex<u32>, BlockId>,
     cfg: CFGData,
@@ -207,6 +207,25 @@ impl CFG {
             .cfg
             .edges_directed(node, Direction::Incoming)
             .map(|edge| edge.source())
+    }
+
+    pub fn get_predecessors(&self, block_id: BlockId) -> impl Iterator<Item = BlockId> {
+        let node = *self.block_to_node.get(&block_id).unwrap();
+        self.predecessors(node)
+            .filter_map(|node| self.node_to_block.get(&node).cloned())
+    }
+
+    fn successors(&self, node: NodeIndex<u32>) -> impl Iterator<Item = NodeIndex<u32>> {
+        self.cfg
+            .cfg
+            .edges_directed(node, Direction::Outgoing)
+            .map(|edge| edge.target())
+    }
+
+    pub fn get_successors(&self, block_id: BlockId) -> impl Iterator<Item = BlockId> {
+        let node = *self.block_to_node.get(&block_id).unwrap();
+        self.successors(node)
+            .filter_map(|node| self.node_to_block.get(&node).cloned())
     }
 
     fn get_merge_point_node(&self, node: NodeIndex<u32>) -> NodeIndex {
@@ -346,6 +365,13 @@ impl CFG {
         let (source, target) = self.cfg.cfg.edge_endpoints(edge).unwrap();
         self.cfg.dominates(target, source)
     }
+
+    pub fn get_return_blocks(&self) -> impl Iterator<Item = BlockId> {
+        self.cfg
+            .cfg
+            .edges_directed(self.return_node, Direction::Incoming)
+            .filter_map(|edge| self.node_to_block.get(&edge.source()).cloned())
+    }
 }
 
 impl CFG {
@@ -371,14 +397,16 @@ impl CFG {
         dot_content.push_str("  labelloc=t;\n");
         dot_content.push_str("  node [shape=box, fontname=\"monospace\"];\n\n");
 
-        let constants = function.iter_consts().map(|(id, cst)| {
-            format!("v{} = {:?}", id.0, cst)
-        }).collect::<Vec<_>>().join("\\l");
+        let constants = function
+            .iter_consts()
+            .map(|(id, cst)| format!("v{} = {:?}", id.0, cst))
+            .collect::<Vec<_>>()
+            .join("\\l");
 
         // Add special nodes (entry and return)
-        dot_content.push_str(
-            &format!("  entry [label=\"ENTRY:\\n{constants}\\l\", style=filled, fillcolor=lightgreen];\n"),
-        );
+        dot_content.push_str(&format!(
+            "  entry [label=\"ENTRY:\\n{constants}\\l\", style=filled, fillcolor=lightgreen];\n"
+        ));
         dot_content.push_str(
             "  return [label=\"RETURN\", shape=ellipse, style=filled, fillcolor=lightcoral];\n\n",
         );
@@ -416,7 +444,7 @@ impl CFG {
             // Handle special nodes (entry and return)
             let source_name = if source == self.entry_node {
                 "entry".to_string()
-            } else if source == self._return_node {
+            } else if source == self.return_node {
                 "return".to_string()
             } else {
                 let source_block = self.node_to_block[&source];
@@ -425,7 +453,7 @@ impl CFG {
 
             let target_name = if target == self.entry_node {
                 "entry".to_string()
-            } else if target == self._return_node {
+            } else if target == self.return_node {
                 "return".to_string()
             } else {
                 let target_block = self.node_to_block[&target];
@@ -675,7 +703,11 @@ impl FlowAnalysis {
                     ssa,
                     ssa.get_function(*func_id),
                     *func_id,
-                    format!("CFG for {} {}", ssa.get_function(*func_id).get_name(), phase_label),
+                    format!(
+                        "CFG for {} {}",
+                        ssa.get_function(*func_id).get_name(),
+                        phase_label
+                    ),
                 )
                 .unwrap();
         }

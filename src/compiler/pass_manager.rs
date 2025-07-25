@@ -31,17 +31,19 @@ pub struct PassManager<V> {
     passes: Vec<Box<dyn Pass<V>>>,
     current_pass_info: Option<PassInfo>,
     cfg: Option<FlowAnalysis>,
+    draw_cfg: bool,
     types_valid: bool,
     constraint_instrumentation: Option<instrumenter::Summary>,
     debug_output_dir: Option<PathBuf>,
 }
 
 impl PassManager<ConstantTaint> {
-    pub fn new(passes: Vec<Box<dyn Pass<ConstantTaint>>>) -> Self {
+    pub fn new(draw_cfg: bool, passes: Vec<Box<dyn Pass<ConstantTaint>>>) -> Self {
         Self {
             passes,
             current_pass_info: None,
             cfg: None,
+            draw_cfg,
             types_valid: false,
             constraint_instrumentation: None,
             debug_output_dir: None,
@@ -92,7 +94,7 @@ impl PassManager<ConstantTaint> {
         let Some(debug_output_dir) = &self.debug_output_dir else {
             return;
         };
-        if pass_info.needs.contains(&DataPoint::CFG) {
+        if pass_info.needs.contains(&DataPoint::CFG) && self.draw_cfg {
             if let Some(cfg) = &self.cfg {
                 cfg.generate_images(
                     debug_output_dir.join(format!("before_pass_{}_{}", pass_index, pass_info.name)),
@@ -113,12 +115,14 @@ impl PassManager<ConstantTaint> {
         let Some(debug_output_dir) = &self.debug_output_dir else {
             return;
         };
-        if let Some(cfg) = &self.cfg {
-            cfg.generate_images(
-                debug_output_dir.join("final_result"),
-                ssa,
-                "final result".to_string(),
-            );
+        if self.draw_cfg {
+            if let Some(cfg) = &self.cfg {
+                cfg.generate_images(
+                    debug_output_dir.join("final_result"),
+                    ssa,
+                    "final result".to_string(),
+                );
+            }
         }
     }
 

@@ -251,7 +251,30 @@ impl Mem2Reg {
 
             for instruction in block.get_instructions() {
                 match instruction {
+                    OpCode::ArraySet(_, _, _, val) => {
+                        let vtyp = function.get_value_type(*val).unwrap();
+                        if self.type_contains_ptr(vtyp) {
+                            return false;
+                        }
+                    }
+                    OpCode::ArrayGet(_, _, val) => {
+                        let vtyp = function.get_value_type(*val).unwrap();
+                        if self.type_contains_ptr(vtyp) {
+                            return false;
+                        }
+                    }
                     OpCode::Store(_, r) => {
+                        let rtyp = function.get_value_type(*r).unwrap();
+                        if self.type_contains_ptr(rtyp) {
+                            return false;
+                        }
+                    }
+                    OpCode::MkSeq(_, _, _, typ) => {
+                        if self.type_contains_ptr(typ) {
+                            return false;
+                        }
+                    }
+                    OpCode::Load(r, _) => {
                         let rtyp = function.get_value_type(*r).unwrap();
                         if self.type_contains_ptr(rtyp) {
                             return false;

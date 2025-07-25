@@ -869,7 +869,7 @@ impl<V> Block<V> {
         &self.instructions[i]
     }
 
-    pub fn get_instructions(&self) -> impl Iterator<Item = &OpCode<V>> {
+    pub fn get_instructions(&self) -> impl DoubleEndedIterator<Item = &OpCode<V>> {
         self.instructions.iter()
     }
 

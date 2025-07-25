@@ -441,8 +441,10 @@ fn prepare_dispatch(program: &mut [u64]) {
 }
 
 #[instrument(skip_all, name = "Interpreter::run")]
-pub fn run_interpreter(
+pub fn run(
     program: &[u64],
+    witness_size: usize,
+    r1cs_size: usize,
     inputs: &[Field],
 ) -> (Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>) {
     let mut stack = vec![
@@ -463,10 +465,10 @@ pub fn run_interpreter(
 
     let pc = unsafe { program.as_mut_ptr().offset(1) };
 
-    let mut out_wit = vec![Field::ZERO; 1000010];
-    let mut out_a = vec![Field::ZERO; 1000010];
-    let mut out_b = vec![Field::ZERO; 1000010];
-    let mut out_c = vec![Field::ZERO; 1000010];
+    let mut out_wit = vec![Field::ZERO; witness_size];
+    let mut out_a = vec![Field::ZERO; r1cs_size];
+    let mut out_b = vec![Field::ZERO; r1cs_size];
+    let mut out_c = vec![Field::ZERO; r1cs_size];
 
     dispatch(
         pc,
