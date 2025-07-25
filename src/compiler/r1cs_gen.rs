@@ -13,8 +13,8 @@ use tracing::{instrument, warn};
 pub enum Value {
     Const(ark_bn254::Fr),
     WitnessVar(usize),
-    Arith(BinaryArithOpKind, Box<Value>, Box<Value>),
-    Array(Vec<Value>),
+    Arith(BinaryArithOpKind, Rc<Value>, Rc<Value>),
+    Array(Rc<Vec<Value>>),
     Ptr(Rc<RefCell<Value>>),
     Invalid,
 }
@@ -25,8 +25,8 @@ impl Value {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs + rhs),
             (lhs, rhs) => Value::Arith(
                 BinaryArithOpKind::Add,
-                Box::new(lhs.clone()),
-                Box::new(rhs.clone()),
+                Rc::new(lhs.clone()),
+                Rc::new(rhs.clone()),
             ),
         }
     }
@@ -36,8 +36,8 @@ impl Value {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs - rhs),
             (lhs, rhs) => Value::Arith(
                 BinaryArithOpKind::Sub,
-                Box::new(lhs.clone()),
-                Box::new(rhs.clone()),
+                Rc::new(lhs.clone()),
+                Rc::new(rhs.clone()),
             ),
         }
     }
@@ -47,8 +47,8 @@ impl Value {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs / rhs),
             (lhs, rhs) => Value::Arith(
                 BinaryArithOpKind::Div,
-                Box::new(lhs.clone()),
-                Box::new(rhs.clone()),
+                Rc::new(lhs.clone()),
+                Rc::new(rhs.clone()),
             ),
         }
     }
@@ -72,8 +72,8 @@ impl Value {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs * rhs),
             (lhs, rhs) => Value::Arith(
                 BinaryArithOpKind::Mul,
-                Box::new(lhs.clone()),
-                Box::new(rhs.clone()),
+                Rc::new(lhs.clone()),
+                Rc::new(rhs.clone()),
             ),
         }
     }
@@ -95,7 +95,7 @@ impl Value {
         }
     }
 
-    pub fn expect_array(&self) -> Vec<Value> {
+    pub fn expect_array(&self) -> Rc<Vec<Value>> {
         match self {
             Value::Array(array) => array.clone(),
             _ => panic!("expected array"),
@@ -268,9 +268,9 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     ) -> Self {
         let array = self.expect_array();
         let index = index.expect_u32();
-        let mut new_array = array.clone();
+        let mut new_array = array.as_ref().clone();
         new_array[index as usize] = value.clone();
-        Value::Array(new_array)
+        Value::Array(Rc::new(new_array))
     }
 
     fn truncate(&self, _from: usize, to: usize, _out_type: &Type<V>, _ctx: &mut R1CGen) -> Self {
@@ -337,7 +337,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
             };
             bit_values.push(bit_value);
         }
-        Value::Array(bit_values)
+        Value::Array(Rc::new(bit_values))
     }
 
     fn not(&self, out_type: &Type<V>, _ctx: &mut R1CGen) -> Self {
@@ -366,7 +366,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
         _seq_type: super::ssa::SeqType,
         _elem_type: &Type<V>,
     ) -> Self {
-        Value::Array(a)
+        Value::Array(Rc::new(a))
     }
 
     fn alloc(_ctx: &mut R1CGen) -> Self {
@@ -468,7 +468,7 @@ impl R1CGen {
                 for _ in 0..*size {
                     result.push(self.initialize_main_input(tp));
                 }
-                Value::Array(result)
+                Value::Array(Rc::new(result))
             }
             _ => panic!("unexpected main params"),
         }
