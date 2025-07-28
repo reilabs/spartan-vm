@@ -191,10 +191,13 @@ impl RCInsertion {
                     OpCode::ArraySet(result, array, _index, value) => {
                         new_instructions.push(instruction.clone());
                         if currently_live.contains(array) {
-                            // Array set will oportunistically reuse the storage, if
-                            // it notices a refcount of 1. So we need to bump _before_
+                            // Array set will decrease the RC and oportunistically reuse the storage, 
+                            // if it notices a refcount of 0. So we need to bump _before_
                             // we enter it.
                             new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *array));
+                            if self.needs_rc(type_info, array) {
+                                new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *array));
+                            }
                         }
                         if self.needs_rc(type_info, value) && currently_live.contains(value) {
                             new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *value))

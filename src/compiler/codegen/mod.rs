@@ -6,8 +6,7 @@ use crate::{
         flow_analysis::{CFG, FlowAnalysis},
         ir::r#type::{Type, TypeExpr},
         ssa::{
-            self, BinaryArithOpKind, Block, BlockId, CmpKind, Const, Function, SSA, Terminator,
-            ValueId,
+            self, BinaryArithOpKind, Block, BlockId, CmpKind, Const, Function, FunctionId, MemOp, SSA, Terminator, ValueId
         },
         taint_analysis::ConstantTaint,
     },
@@ -53,6 +52,13 @@ impl FrameLayouter {
         bytecode::FramePosition(r)
     }
 
+    fn alloc_ptr(&mut self, value: ValueId) -> bytecode::FramePosition {
+        self.variables.insert(value, self.next_free);
+        let r = self.next_free;
+        self.next_free += 1;
+        bytecode::FramePosition(r)
+    }
+
     fn type_size(&self, tp: &Type<ConstantTaint>) -> usize {
         match tp.expr {
             TypeExpr::Field => bytecode::LIMBS,
@@ -60,8 +66,22 @@ impl FrameLayouter {
                 assert!(bits <= 64);
                 1
             }
+            TypeExpr::Array(_, _) => 1, // Ptr
+            TypeExpr::Slice(_) => 1,    // Ptr
             _ => todo!(),
         }
+    }
+
+    // This method needs to ensure contiguous storage!
+    fn alloc_many_contiguous(
+        &mut self,
+        values: Vec<(ValueId, &Type<ConstantTaint>)>,
+    ) -> bytecode::FramePosition {
+        let r = self.next_free;
+        for (value, tp) in values {
+            self.alloc_value(value, tp);
+        }
+        bytecode::FramePosition(r)
     }
 }
 
@@ -113,8 +133,41 @@ impl CodeGen {
             type_info.get_function(ssa.get_main_id()),
         );
 
+        let mut functions = vec![function];
+
+        let mut function_ids = HashMap::new();
+        function_ids.insert(ssa.get_main_id(), 0);
+
+        let mut cur_fn_begin = functions[0].code.len();
+
+        for (function_id, function) in ssa.iter_functions() {
+            if *function_id == ssa.get_main_id() {
+                continue;
+            }
+            let function = self.run_function(
+                function,
+                cfg.get_function_cfg(*function_id),
+                type_info.get_function(*function_id),
+            );
+            function_ids.insert(*function_id, cur_fn_begin);
+            cur_fn_begin += function.code.len();
+            functions.push(function);
+        }
+
+        for function in functions.iter_mut() {
+            for op in function.code.iter_mut() {
+                match op {
+                    bytecode::OpCode::Call(target, _, _) => {
+                        target.0 =
+                            *function_ids.get(&FunctionId(target.0 as u64)).unwrap() as isize;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         bytecode::Program {
-            functions: vec![function],
+            functions: functions,
         }
     }
 
@@ -250,11 +303,87 @@ impl CodeGen {
                         t => panic!("Unsupported type for addition: {:?}", t),
                     }
                 }
+                ssa::OpCode::BinaryArithOp(BinaryArithOpKind::Sub, val, op1, op2) => {
+                    match &type_info.get_value_type(*val).expr {
+                        TypeExpr::Field => {
+                            let result = layouter.alloc_field(*val);
+                            emitter.push_op(bytecode::OpCode::SubF(
+                                result,
+                                layouter.get_value(*op1),
+                                layouter.get_value(*op2),
+                            ));
+                        }
+                        TypeExpr::U(bits) => {
+                            let result = layouter.alloc_u64(*val, *bits);
+                            emitter.push_op(bytecode::OpCode::SubU(
+                                *bits,
+                                result,
+                                layouter.get_value(*op1),
+                                layouter.get_value(*op2),
+                            ));
+                        }
+                        t => panic!("Unsupported type for addition: {:?}", t),
+                    }
+                }
+                ssa::OpCode::BinaryArithOp(BinaryArithOpKind::Div, val, op1, op2) => {
+                    match &type_info.get_value_type(*val).expr {
+                        TypeExpr::Field => {
+                            let result = layouter.alloc_field(*val);
+                            emitter.push_op(bytecode::OpCode::DivF(
+                                result,
+                                layouter.get_value(*op1),
+                                layouter.get_value(*op2),
+                            ));
+                        }
+                        TypeExpr::U(bits) => {
+                            let result = layouter.alloc_u64(*val, *bits);
+                            emitter.push_op(bytecode::OpCode::DivU(
+                                *bits,
+                                result,
+                                layouter.get_value(*op1),
+                                layouter.get_value(*op2),
+                            ));
+                        }
+                        t => panic!("Unsupported type for addition: {:?}", t),
+                    }
+                }
                 ssa::OpCode::BinaryArithOp(BinaryArithOpKind::Mul, val, op1, op2) => {
                     match &type_info.get_value_type(*val).expr {
                         TypeExpr::Field => {
                             let result = layouter.alloc_field(*val);
                             emitter.push_op(bytecode::OpCode::MulF(
+                                result,
+                                layouter.get_value(*op1),
+                                layouter.get_value(*op2),
+                            ));
+                        }
+                        TypeExpr::U(bits) => {
+                            let result = layouter.alloc_u64(*val, *bits);
+                            emitter.push_op(bytecode::OpCode::MulU(
+                                *bits,
+                                result,
+                                layouter.get_value(*op1),
+                                layouter.get_value(*op2),
+                            ));
+                        }
+                        t => panic!("Unsupported type for multiplication: {:?}", t),
+                    }
+                }
+                ssa::OpCode::BinaryArithOp(BinaryArithOpKind::And, val, op1, op2) => {
+                    match &type_info.get_value_type(*val).expr {
+                        TypeExpr::Field => {
+                            panic!("Unsupported: field and");
+                            // let result = layouter.alloc_field(*val);
+                            // emitter.push_op(bytecode::OpCode::MulF(
+                            //     result,
+                            //     layouter.get_value(*op1),
+                            //     layouter.get_value(*op2),
+                            // ));
+                        }
+                        TypeExpr::U(bits) => {
+                            let result = layouter.alloc_u64(*val, *bits);
+                            emitter.push_op(bytecode::OpCode::AndU(
+                                *bits,
                                 result,
                                 layouter.get_value(*op1),
                                 layouter.get_value(*op2),
@@ -277,6 +406,50 @@ impl CodeGen {
                         t => panic!("Unsupported type for comparison: {:?}", t),
                     }
                 }
+                ssa::OpCode::Cmp(CmpKind::Eq, val, op1, op2) => {
+                    match &type_info.get_value_type(*val).expr {
+                        TypeExpr::U(bits) => {
+                            let result = layouter.alloc_u64(*val, *bits);
+                            emitter.push_op(bytecode::OpCode::EqU(
+                                *bits,
+                                result,
+                                layouter.get_value(*op1),
+                                layouter.get_value(*op2),
+                            ));
+                        }
+                        t => panic!("Unsupported type for comparison: {:?}", t),
+                    }
+                }
+                ssa::OpCode::Truncate(val, op, to_bits, from_bits) => {
+                    let result = layouter.alloc_u64(*val, 64);
+                    assert!(*to_bits <= 64);
+                    let in_type = type_info.get_value_type(*op);
+                    if in_type.is_field() {
+                        emitter.push_op(bytecode::OpCode::TruncateFToU(
+                            result,
+                            layouter.get_value(*op),
+                            *to_bits,
+                        ));
+                    } else {
+                        assert!(*from_bits <= 64);
+                        emitter.push_op(bytecode::OpCode::TruncateUToU(
+                            result,
+                            layouter.get_value(*op),
+                            *to_bits,
+                        ))
+                    }
+                }
+                ssa::OpCode::Cast(r, v, tgt) => {
+                    let result = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                    // TODO: Implement this, it _will_ break
+                }
+                ssa::OpCode::Not(r, v) => {
+                    let result = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                    emitter.push_op(bytecode::OpCode::Not(
+                        result,
+                        layouter.get_value(*v),
+                    ));
+                }
                 ssa::OpCode::Constrain(a, b, c) => {
                     let a_type = type_info.get_value_type(*a);
                     let b_type = type_info.get_value_type(*b);
@@ -296,18 +469,84 @@ impl CodeGen {
                 ssa::OpCode::WriteWitness(None, v, _) => {
                     emitter.push_op(bytecode::OpCode::WriteWitness(layouter.get_value(*v)));
                 }
+                ssa::OpCode::ArrayGet(r, arr, idx) => {
+                    let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                    emitter.push_op(bytecode::OpCode::ArrayGet(
+                        res,
+                        layouter.get_value(*arr),
+                        layouter.get_value(*idx),
+                        layouter.type_size(&type_info.get_value_type(*arr).get_array_element()),
+                    ));
+                }
+                ssa::OpCode::ArraySet(r, arr, idx, val) => {
+                    let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                    emitter.push_op(bytecode::OpCode::ArraySet(
+                        res,
+                        layouter.get_value(*arr),
+                        layouter.get_value(*idx),
+                        layouter.get_value(*val),
+                        layouter.type_size(&type_info.get_value_type(*arr).get_array_element()),
+                    ));
+                }
+                ssa::OpCode::MkSeq(r, vals, _, eltype) => {
+                    let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                    let args = vals
+                        .iter()
+                        .map(|a| layouter.get_value(*a))
+                        .collect::<Vec<_>>();
+                    emitter.push_op(bytecode::OpCode::MkArray(
+                        res,
+                        layouter.type_size(eltype),
+                        args,
+                    ));
+                }
+
+                ssa::OpCode::Call(r, fnid, params) => {
+                    let r = layouter.alloc_many_contiguous(
+                        r.iter()
+                            .map(|a| (*a, type_info.get_value_type(*a)))
+                            .collect(),
+                    );
+                    let args = params
+                        .iter()
+                        .map(|a| {
+                            (
+                                layouter.type_size(&type_info.get_value_type(*a)),
+                                layouter.get_value(*a),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    emitter.push_op(bytecode::OpCode::Call(
+                        bytecode::JumpTarget(fnid.0 as isize),
+                        args,
+                        r,
+                    ));
+                }
+                ssa::OpCode::MemOp(MemOp::Drop, r) => {
+                    emitter.push_op(bytecode::OpCode::Drop(layouter.get_value(*r)));
+                }
+                ssa::OpCode::MemOp(MemOp::Bump(size), r) => {
+                    emitter.push_op(bytecode::OpCode::IncRC(*size, layouter.get_value(*r)));
+                }
+                ssa::OpCode::AssertEq(_, _) => {
+                    // TODO: Implement this
+                }
+                ssa::OpCode::ToBits(r, _, _, _) => {
+                    // This will bite me soon
+                    _ = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                }
                 other => panic!("Unsupported instruction: {:?}", other),
             }
         }
         emitter.exit_block(block_id);
         match block.get_terminator().unwrap() {
-            Terminator::Jmp(tgt, params) => {
+            Terminator::Jmp(_, params) => {
                 emitter.push_op(bytecode::OpCode::Nop);
                 for i in 0..params.len() {
                     emitter.push_op(bytecode::OpCode::Nop);
                 }
             }
-            Terminator::JmpIf(cond, tgt, params) => {
+            Terminator::JmpIf(_, _, _) => {
                 emitter.push_op(bytecode::OpCode::Nop);
             }
             Terminator::Return(params) => {

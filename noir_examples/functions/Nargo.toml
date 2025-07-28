@@ -1,0 +1,6 @@
+[package]
+name = "functions"
+type = "bin"
+authors = [""]
+
+[dependencies]
