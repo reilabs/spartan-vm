@@ -1,3 +1,7 @@
+[workspace]
+resolver = "3"
+members = ["opcode-gen"]
+
 [package]
 name = "spartan-vm"
 version = "0.1.0"
@@ -28,6 +32,8 @@ graphviz-rust = "0.6.0"
 tracing = "0.1.41"
 tracing-forest = "0.1.6"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+
+opcode-gen = { path = "opcode-gen" }
 
 [dev-dependencies]
 anyhow = "1.0.87"

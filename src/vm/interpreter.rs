@@ -100,6 +100,13 @@ impl Frame {
     }
 
     #[inline(always)]
+    pub fn read_u64_mut(&self, offset: isize) -> *mut u64 {
+        unsafe {
+            self.data.offset(offset)
+        }
+    }
+
+    #[inline(always)]
     pub fn read_u64(&self, offset: isize) -> u64 {
         unsafe { *self.data.offset(offset) }
     }
@@ -419,7 +426,7 @@ pub fn jmp(
     out_c: *mut Field,
 ) {
     let target = unsafe { *pc.offset(1) as isize };
-    // println!("jump by: {}", target);
+    println!("jump by: {}", target);
     let new_pc = unsafe { pc.offset(target) };
     // println!("new pc: {:?}", new_pc);
     dispatch(new_pc, frame, out_wit, out_a, out_b, out_c)
