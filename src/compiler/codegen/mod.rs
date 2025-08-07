@@ -501,27 +501,27 @@ impl CodeGen {
                 //     ));
                 // }
 
-                // ssa::OpCode::Call(r, fnid, params) => {
-                //     let r = layouter.alloc_many_contiguous(
-                //         r.iter()
-                //             .map(|a| (*a, type_info.get_value_type(*a)))
-                //             .collect(),
-                //     );
-                //     let args = params
-                //         .iter()
-                //         .map(|a| {
-                //             (
-                //                 layouter.type_size(&type_info.get_value_type(*a)),
-                //                 layouter.get_value(*a),
-                //             )
-                //         })
-                //         .collect::<Vec<_>>();
-                //     emitter.push_op(bytecode::OpCode::Call(
-                //         bytecode::JumpTarget(fnid.0 as isize),
-                //         args,
-                //         r,
-                //     ));
-                // }
+                ssa::OpCode::Call(r, fnid, params) => {
+                    let r = layouter.alloc_many_contiguous(
+                        r.iter()
+                            .map(|a| (*a, type_info.get_value_type(*a)))
+                            .collect(),
+                    );
+                    let args = params
+                        .iter()
+                        .map(|a| {
+                            (
+                                layouter.type_size(&type_info.get_value_type(*a)),
+                                layouter.get_value(*a),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    emitter.push_op(bytecode::OpCode::Call {
+                        func: bytecode::JumpTarget(fnid.0 as isize),
+                        args: args,
+                        ret: r,
+                    });
+                }
                 // ssa::OpCode::MemOp(MemOp::Drop, r) => {
                 //     emitter.push_op(bytecode::OpCode::Drop(layouter.get_value(*r)));
                 // }

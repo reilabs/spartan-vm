@@ -89,6 +89,11 @@ impl Frame {
     }
 
     #[inline(always)]
+    pub fn read_ptr<A>(&self, offset: isize) -> *mut A {
+        unsafe { *self.data.offset(offset) as *mut A }
+    }
+
+    #[inline(always)]
     pub fn write_u64(&self, offset: isize, value: u64) {
         unsafe {
             *self.data.offset(offset) = value;

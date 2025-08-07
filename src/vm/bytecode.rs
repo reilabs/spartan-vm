@@ -3,7 +3,10 @@
 use crate::vm::interpreter::dispatch;
 use opcode_gen::interpreter;
 
-use crate::{compiler::Field, vm::interpreter::{Frame, Handler}};
+use crate::{
+    compiler::Field,
+    vm::interpreter::{Frame, Handler},
+};
 
 use std::fmt::Display;
 
@@ -54,11 +57,7 @@ mod def {
         if_t: JumpTarget,
         if_f: JumpTarget,
     ) {
-        let target = if cond != 0 {
-            if_t
-        } else {
-            if_f
-        };
+        let target = if cond != 0 { if_t } else { if_f };
         let pc = unsafe { pc.offset(target.0) };
         dispatch(pc, frame, out_wit, out_a, out_b, out_c);
     }
@@ -75,7 +74,29 @@ mod def {
         args: &[(usize, FramePosition)],
         ret: FramePosition,
     ) {
-        todo!()
+        let func_pc = unsafe { pc.offset(func.0) };
+        let func_frame_size = unsafe { *func_pc.offset(-1) };
+        let new_frame = Frame::push(func_frame_size, frame);
+        let ret_data_ptr = unsafe { frame.data.offset(ret.0 as isize) };
+        let ret_pc = unsafe { pc.offset(4 + 2 * args.len() as isize) };
+
+        unsafe {
+            *new_frame.data = ret_data_ptr as u64;
+            *new_frame.data.offset(1) = ret_pc as u64;
+        };
+
+        let mut current_child = unsafe { new_frame.data.offset(2) };
+
+        for (i, (arg_size, arg_pos)) in args.iter().enumerate() {
+            frame.write_to(
+                current_child,
+                arg_pos.0 as isize,
+                *arg_size,
+            );
+            current_child = unsafe { current_child.offset(*arg_size as isize) };
+        }
+
+        dispatch(func_pc, new_frame, out_wit, out_a, out_b, out_c);
     }
 
     #[raw_opcode]
@@ -154,8 +175,11 @@ mod def {
     }
 
     #[opcode]
-    fn write_ptr(frame: Frame, ptr: FramePosition, offset: isize, src: FramePosition, size: usize) {
-        todo!()
+    fn write_ptr(frame: Frame, #[frame] ptr: *mut u64, offset: isize, src: FramePosition, size: usize) {
+        let ptr = unsafe {
+            ptr.offset(offset)
+        };
+        frame.write_to(ptr, src.0 as isize, size);
     }
 
     #[opcode]

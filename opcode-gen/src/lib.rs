@@ -9,6 +9,7 @@ use syn::{FnArg, Ident, Pat, parse_macro_input};
 enum GuestType {
     Field,
     U64,
+    Ptr,
 }
 
 #[derive(Debug)]
@@ -83,6 +84,15 @@ impl HostType {
                     }
                 }
             }
+            HostType::ISize => {
+                quote! {
+                    unsafe {
+                        let r = *#pc.offset(#offset) as isize;
+                        #offset += 1;
+                        r
+                    }
+                }
+            }
             HostType::Slice(ty) => {
                 let size = ty.measure_size() as isize;
                 quote! {
@@ -136,7 +146,7 @@ impl HostType {
                     #offset -= 1;
                 }
             }
-            HostType::USize => {
+            HostType::USize | HostType::ISize => {
                 let i = if is_ref { quote! { *#i } } else { quote! { #i } };
                 quote! {
                     #binary.push(#i as u64);
@@ -428,11 +438,17 @@ fn parse_guest_type(ty: &syn::Type) -> GuestType {
             return match ident.to_string().as_str() {
                 "Field" => GuestType::Field,
                 "u64" => GuestType::U64,
-                _ => panic!("unsupported type"),
+                _ => panic!("unsupported type {:?}", ty),
             };
         }
+        syn::Type::Ptr(ty) => {
+            if ty.mutability.is_none() {
+                panic!("ptr must be mutable");
+            }
+            GuestType::Ptr
+        }
         _ => {
-            panic!("unsupported type");
+            panic!("unsupported type {:?}", ty);
         }
     }
 }
@@ -481,6 +497,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
                 let getter = match tp {
                     GuestType::Field => format_ident!("read_field"),
                     GuestType::U64 => format_ident!("read_u64"),
+                    GuestType::Ptr => format_ident!("read_ptr"),
                 };
                 getters.extend(quote! {
                     let #i = unsafe {
@@ -497,6 +514,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
                 let getter = match tp {
                     GuestType::Field => format_ident!("read_field_mut"),
                     GuestType::U64 => format_ident!("read_u64_mut"),
+                    GuestType::Ptr => format_ident!("read_ptr_mut"),
                 };
                 getters.extend(quote! {
                     let #i = unsafe {
@@ -716,7 +734,7 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
         let name_str = code.name.clone();
         quote! {
             #matcher => {
-                write!(f, "{}", #name_str);
+                write!(f, "{}", #name_str).unwrap();
             }
         }
     });
