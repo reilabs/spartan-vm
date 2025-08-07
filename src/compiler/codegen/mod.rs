@@ -11,7 +11,7 @@ use crate::{
         },
         taint_analysis::ConstantTaint,
     },
-    vm::bytecode,
+    vm::{self, bytecode},
 };
 
 struct FrameLayouter {
@@ -248,7 +248,7 @@ impl CodeGen {
                     }
                     emitter.code[block_exit_start] = bytecode::OpCode::Jmp {
                         target: bytecode::JumpTarget(
-                            *emitter.block_entrances.get(&tgt).unwrap() as isize,
+                            *emitter.block_entrances.get(&tgt).unwrap() as isize
                         ),
                     };
                     block_exit_start += 1;
@@ -256,8 +256,12 @@ impl CodeGen {
                 Terminator::JmpIf(cond, if_t, if_f) => {
                     emitter.code[block_exit_start] = bytecode::OpCode::JmpIf {
                         cond: layouter.get_value(*cond),
-                        if_t: bytecode::JumpTarget(*emitter.block_entrances.get(&if_t).unwrap() as isize),
-                        if_f: bytecode::JumpTarget(*emitter.block_entrances.get(&if_f).unwrap() as isize),
+                        if_t: bytecode::JumpTarget(
+                            *emitter.block_entrances.get(&if_t).unwrap() as isize
+                        ),
+                        if_f: bytecode::JumpTarget(
+                            *emitter.block_entrances.get(&if_f).unwrap() as isize
+                        ),
                     };
                     block_exit_start += 1;
                 }
@@ -469,15 +473,16 @@ impl CodeGen {
                         val: layouter.get_value(*v),
                     });
                 }
-                // ssa::OpCode::ArrayGet(r, arr, idx) => {
-                //     let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
-                //     emitter.push_op(bytecode::OpCode::ArrayGet(
-                //         res,
-                //         layouter.get_value(*arr),
-                //         layouter.get_value(*idx),
-                //         layouter.type_size(&type_info.get_value_type(*arr).get_array_element()),
-                //     ));
-                // }
+                ssa::OpCode::ArrayGet(r, arr, idx) => {
+                    let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                    emitter.push_op(bytecode::OpCode::ArrayGet {
+                        res,
+                        array: layouter.get_value(*arr),
+                        index: layouter.get_value(*idx),
+                        stride: layouter
+                            .type_size(&type_info.get_value_type(*arr).get_array_element()),
+                    });
+                }
                 // ssa::OpCode::ArraySet(r, arr, idx, val) => {
                 //     let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
                 //     emitter.push_op(bytecode::OpCode::ArraySet(
@@ -488,19 +493,21 @@ impl CodeGen {
                 //         layouter.type_size(&type_info.get_value_type(*arr).get_array_element()),
                 //     ));
                 // }
-                // ssa::OpCode::MkSeq(r, vals, _, eltype) => {
-                //     let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
-                //     let args = vals
-                //         .iter()
-                //         .map(|a| layouter.get_value(*a))
-                //         .collect::<Vec<_>>();
-                //     emitter.push_op(bytecode::OpCode::MkArray(
-                //         res,
-                //         layouter.type_size(eltype),
-                //         args,
-                //     ));
-                // }
-
+                ssa::OpCode::MkSeq(r, vals, _, eltype) => {
+                    let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                    let args = vals
+                        .iter()
+                        .map(|a| layouter.get_value(*a))
+                        .collect::<Vec<_>>();
+                    let is_ptr = eltype.is_ref() || eltype.is_slice() || eltype.is_array();
+                    let stride = layouter.type_size(eltype);
+                    emitter.push_op(bytecode::OpCode::ArrayAlloc {
+                        res,
+                        stride: layouter.type_size(eltype),
+                        meta: vm::array::ArrayMeta::new(args.len() * stride, is_ptr),
+                        items: args,
+                    });
+                }
                 ssa::OpCode::Call(r, fnid, params) => {
                     let r = layouter.alloc_many_contiguous(
                         r.iter()
@@ -522,12 +529,19 @@ impl CodeGen {
                         ret: r,
                     });
                 }
-                // ssa::OpCode::MemOp(MemOp::Drop, r) => {
-                //     emitter.push_op(bytecode::OpCode::Drop(layouter.get_value(*r)));
-                // }
-                // ssa::OpCode::MemOp(MemOp::Bump(size), r) => {
-                //     emitter.push_op(bytecode::OpCode::IncRC(*size, layouter.get_value(*r)));
-                // }
+                ssa::OpCode::MemOp(MemOp::Drop, r) => {
+                    assert!(type_info.get_value_type(*r).is_array());
+                    emitter.push_op(bytecode::OpCode::DecArrayRc {
+                        array: layouter.get_value(*r),
+                    });
+                }
+                ssa::OpCode::MemOp(MemOp::Bump(size), r) => {
+                    assert!(type_info.get_value_type(*r).is_array());
+                    emitter.push_op(bytecode::OpCode::IncArrayRc {
+                        array: layouter.get_value(*r),
+                        amount: *size as u64,
+                    });
+                }
                 ssa::OpCode::AssertEq(_, _) => {
                     // TODO: Implement this
                 }

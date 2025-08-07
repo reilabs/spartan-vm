@@ -9,7 +9,7 @@ use tracing::instrument;
 
 use crate::{
     compiler::Field,
-    vm::bytecode::{self, OpCode},
+    vm::{array::Array, bytecode::{self, OpCode}},
 };
 
 pub type Handler = fn(*const u64, Frame, *mut Field, *mut Field, *mut Field, *mut Field);
@@ -91,6 +91,16 @@ impl Frame {
     #[inline(always)]
     pub fn read_ptr<A>(&self, offset: isize) -> *mut A {
         unsafe { *self.data.offset(offset) as *mut A }
+    }
+
+    #[inline(always)]
+    pub fn read_array(&self, offset: isize) -> Array {
+        unsafe { *self.read_array_mut(offset) }
+    }
+
+    #[inline(always)]
+    pub fn read_array_mut(&self, offset: isize) -> *mut Array {
+        unsafe { self.data.offset(offset) as *mut Array }
     }
 
     #[inline(always)]

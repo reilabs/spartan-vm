@@ -3,12 +3,14 @@
 use crate::vm::interpreter::dispatch;
 use opcode_gen::interpreter;
 
+use crate::vm::array::{Array, ArrayMeta};
 use crate::{
     compiler::Field,
     vm::interpreter::{Frame, Handler},
 };
 
 use std::fmt::Display;
+use std::{mem, ptr};
 
 pub const LIMBS: usize = 4;
 
@@ -88,11 +90,7 @@ mod def {
         let mut current_child = unsafe { new_frame.data.offset(2) };
 
         for (i, (arg_size, arg_pos)) in args.iter().enumerate() {
-            frame.write_to(
-                current_child,
-                arg_pos.0 as isize,
-                *arg_size,
-            );
+            frame.write_to(current_child, arg_pos.0 as isize, *arg_size);
             current_child = unsafe { current_child.offset(*arg_size as isize) };
         }
 
@@ -175,10 +173,14 @@ mod def {
     }
 
     #[opcode]
-    fn write_ptr(frame: Frame, #[frame] ptr: *mut u64, offset: isize, src: FramePosition, size: usize) {
-        let ptr = unsafe {
-            ptr.offset(offset)
-        };
+    fn write_ptr(
+        frame: Frame,
+        #[frame] ptr: *mut u64,
+        offset: isize,
+        src: FramePosition,
+        size: usize,
+    ) {
+        let ptr = unsafe { ptr.offset(offset) };
         frame.write_to(ptr, src.0 as isize, size);
     }
 
@@ -274,6 +276,43 @@ mod def {
         unsafe {
             *res = a * b;
         }
+    }
+
+    #[opcode]
+    fn array_alloc(
+        #[out] res: *mut Array,
+        stride: usize,
+        meta: ArrayMeta,
+        items: &[FramePosition],
+        frame: Frame,
+    ) {
+        let array = Array::alloc(meta);
+        println!("array_alloc: size={} stride={} has_ptr_elems={} @ {:?}", meta.size(), stride, meta.ptr_elems(), array.0);
+        for (i, item) in items.iter().enumerate() {
+            let tgt = array.idx(i, stride);
+            frame.write_to(tgt, item.0 as isize, stride);
+        }
+        unsafe {
+            *res = array;
+        }
+    }
+
+    #[opcode]
+    fn array_get(#[out] res: *mut u64, #[frame] array: Array, #[frame] index: u64, stride: usize) {
+        let src = array.idx(index as usize, stride);
+        unsafe {
+            ptr::copy_nonoverlapping(src, res, stride);
+        }
+    }
+
+    #[opcode]
+    fn inc_array_rc(#[frame] array: Array, amount: u64) {
+        array.inc_rc(amount);
+    }
+
+    #[opcode]
+    fn dec_array_rc(#[frame] array: Array) {
+        array.dec_rc();
     }
 }
 

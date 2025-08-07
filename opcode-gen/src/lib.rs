@@ -10,6 +10,7 @@ enum GuestType {
     Field,
     U64,
     Ptr,
+    Array,
 }
 
 #[derive(Debug)]
@@ -21,6 +22,7 @@ enum HostType {
     Slice(Box<HostType>),
     Tuple(Vec<HostType>),
     FramePosition,
+    ArrayMeta,
 }
 
 impl HostType {
@@ -39,6 +41,7 @@ impl HostType {
                 quote! { ( #(#children),* ) }
             }
             HostType::FramePosition => quote! { FramePosition },
+            HostType::ArrayMeta => quote! { ArrayMeta },
         }
     }
 
@@ -61,6 +64,15 @@ impl HostType {
                 quote! {
                     unsafe {
                         let r = FramePosition(*#pc.offset(#offset) as usize);
+                        #offset += 1;
+                        r
+                    }
+                }
+            }
+            HostType::ArrayMeta => {
+                quote! {
+                    unsafe {
+                        let r = ArrayMeta(*#pc.offset(#offset));
                         #offset += 1;
                         r
                     }
@@ -118,7 +130,8 @@ impl HostType {
             | HostType::USize
             | HostType::ISize
             | HostType::JumpTarget
-            | HostType::FramePosition => 1,
+            | HostType::FramePosition
+            | HostType::ArrayMeta => 1,
             HostType::Slice(_) => panic!("slice size is not known at compile time"),
             HostType::Tuple(ty) => ty.iter().map(|ty| ty.measure_size()).sum(),
         }
@@ -143,6 +156,12 @@ impl HostType {
             HostType::FramePosition => {
                 quote! {
                     #binary.push(#i.0 as u64);
+                    #offset -= 1;
+                }
+            }
+            HostType::ArrayMeta => {
+                quote! {
+                    #binary.push(#i.0);
                     #offset -= 1;
                 }
             }
@@ -195,6 +214,7 @@ impl HostType {
             | HostType::USize
             | HostType::ISize
             | HostType::JumpTarget
+            | HostType::ArrayMeta
             | HostType::FramePosition => {
                 quote! {
                     #ix += 1;
@@ -438,7 +458,8 @@ fn parse_guest_type(ty: &syn::Type) -> GuestType {
             return match ident.to_string().as_str() {
                 "Field" => GuestType::Field,
                 "u64" => GuestType::U64,
-                _ => panic!("unsupported type {:?}", ty),
+                "Array" => GuestType::Array,
+                _ => panic!("unsupported guest path type {:?}", ty),
             };
         }
         syn::Type::Ptr(ty) => {
@@ -448,7 +469,7 @@ fn parse_guest_type(ty: &syn::Type) -> GuestType {
             GuestType::Ptr
         }
         _ => {
-            panic!("unsupported type {:?}", ty);
+            panic!("unsupported guest type {:?}", ty);
         }
     }
 }
@@ -463,6 +484,7 @@ fn parse_host_type(ty: &syn::Type) -> HostType {
                 "isize" => HostType::ISize,
                 "JumpTarget" => HostType::JumpTarget,
                 "FramePosition" => HostType::FramePosition,
+                "ArrayMeta" => HostType::ArrayMeta,
                 _ => panic!("unsupported type {:?}", ty),
             };
         }
@@ -480,7 +502,7 @@ fn parse_host_type(ty: &syn::Type) -> HostType {
             HostType::Tuple(ty.elems.iter().map(|elem| parse_host_type(elem)).collect())
         }
         _ => {
-            panic!("unsupported type {:?}", ty);
+            panic!("unsupported host type {:?}", ty);
         }
     }
 }
@@ -498,6 +520,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
                     GuestType::Field => format_ident!("read_field"),
                     GuestType::U64 => format_ident!("read_u64"),
                     GuestType::Ptr => format_ident!("read_ptr"),
+                    GuestType::Array => format_ident!("read_array"),
                 };
                 getters.extend(quote! {
                     let #i = unsafe {
@@ -515,6 +538,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
                     GuestType::Field => format_ident!("read_field_mut"),
                     GuestType::U64 => format_ident!("read_u64_mut"),
                     GuestType::Ptr => format_ident!("read_ptr_mut"),
+                    GuestType::Array => format_ident!("read_array_mut"),
                 };
                 getters.extend(quote! {
                     let #i = unsafe {
