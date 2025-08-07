@@ -65,6 +65,24 @@ impl HostType {
                     }
                 }
             }
+            HostType::U64 => {
+                quote! {
+                    unsafe {
+                        let r = *#pc.offset(#offset);
+                        #offset += 1;
+                        r
+                    }
+                }
+            }
+            HostType::USize => {
+                quote! {
+                    unsafe {
+                        let r = *#pc.offset(#offset) as usize;
+                        #offset += 1;
+                        r
+                    }
+                }
+            }
             HostType::Slice(ty) => {
                 let size = ty.measure_size() as isize;
                 quote! {
@@ -122,6 +140,13 @@ impl HostType {
                 let i = if is_ref { quote! { *#i } } else { quote! { #i } };
                 quote! {
                     #binary.push(#i as u64);
+                    #offset -= 1;
+                }
+            }
+            HostType::U64 => {
+                let i = if is_ref { quote! { *#i } } else { quote! { #i } };
+                quote! {
+                    #binary.push(#i);
                     #offset -= 1;
                 }
             }
@@ -696,6 +721,14 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
         }
     });
 
+    let dsp_size = codes.len();
+    let dispatch_cases = codes.iter().map(|code| {
+        let name = format_ident!("{}_handler", code.name);
+        quote! {
+            #name
+        }
+    });
+
     quote! {
         impl OpCode {
             pub fn to_binary(&self, binary: &mut Vec<u64>, jumps_to_fix: &mut Vec<(usize, isize)>) {
@@ -723,5 +756,7 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
                 Ok(())
             }
         }
+
+        pub const DISPATCH: [Handler; #dsp_size] = [ #(#dispatch_cases),* ];
     }
 }

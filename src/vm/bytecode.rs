@@ -1,7 +1,9 @@
+#![allow(unused_variables)]
+
 use crate::vm::interpreter::dispatch;
 use opcode_gen::interpreter;
 
-use crate::{compiler::Field, vm::interpreter::Frame};
+use crate::{compiler::Field, vm::interpreter::{Frame, Handler}};
 
 use std::fmt::Display;
 
@@ -25,26 +27,6 @@ pub struct JumpTarget(pub isize);
 
 #[interpreter]
 mod def {
-    #[opcode]
-    fn add_u64(#[out] res: *mut u64, #[frame] a: u64, #[frame] b: u64) {
-        unsafe {
-            *res = a + b;
-        }
-    }
-
-    #[opcode]
-    fn mov_const(#[out] res: *mut u64, val: u64) {
-        unsafe {
-            *res = val;
-        }
-    }
-
-    #[opcode]
-    fn mov_frame(frame: Frame, target: FramePosition, source: FramePosition, size: usize) {
-        unsafe {
-            *res = a.as_ptr() as u64;
-        }
-    }
 
     #[raw_opcode]
     fn jmp(
@@ -72,7 +54,13 @@ mod def {
         if_t: JumpTarget,
         if_f: JumpTarget,
     ) {
-        todo!()
+        let target = if cond != 0 {
+            if_t
+        } else {
+            if_f
+        };
+        let pc = unsafe { pc.offset(target.0) };
+        dispatch(pc, frame, out_wit, out_a, out_b, out_c);
     }
 
     #[raw_opcode]
@@ -88,6 +76,180 @@ mod def {
         ret: FramePosition,
     ) {
         todo!()
+    }
+
+    #[raw_opcode]
+    fn ret(
+        _pc: *const u64,
+        frame: Frame,
+        out_wit: *mut Field,
+        out_a: *mut Field,
+        out_b: *mut Field,
+        out_c: *mut Field,
+    ) {
+        let ret_address = unsafe { *frame.data.offset(1) } as *mut u64;
+        let new_frame = frame.pop();
+        if new_frame.data.is_null() {
+            return;
+        }
+        dispatch(ret_address, new_frame, out_wit, out_a, out_b, out_c);
+    }
+
+    #[raw_opcode]
+    fn r1c(
+        pc: *const u64,
+        frame: Frame,
+        out_wit: *mut Field,
+        out_a: *mut Field,
+        out_b: *mut Field,
+        out_c: *mut Field,
+        #[frame] a: Field,
+        #[frame] b: Field,
+        #[frame] c: Field,
+    ) {
+        unsafe {
+            *out_a = a;
+            *out_b = b;
+            *out_c = c;
+        }
+
+        let out_a = unsafe { out_a.offset(1) };
+        let out_b = unsafe { out_b.offset(1) };
+        let out_c = unsafe { out_c.offset(1) };
+        let pc = unsafe { pc.offset(4) };
+        dispatch(pc, frame, out_wit, out_a, out_b, out_c);
+    }
+
+    #[raw_opcode]
+    fn write_witness(
+        pc: *const u64,
+        frame: Frame,
+        out_wit: *mut Field,
+        out_a: *mut Field,
+        out_b: *mut Field,
+        out_c: *mut Field,
+        #[frame] val: Field,
+    ) {
+        unsafe {
+            *out_wit = val;
+        }
+        let out_wit = unsafe { out_wit.offset(1) };
+        let pc = unsafe { pc.offset(2) };
+        dispatch(pc, frame, out_wit, out_a, out_b, out_c);
+    }
+
+    #[opcode]
+    fn nop() {}
+
+    #[opcode]
+    fn mov_const(#[out] res: *mut u64, val: u64) {
+        unsafe {
+            *res = val;
+        }
+    }
+
+    #[opcode]
+    fn mov_frame(frame: Frame, target: FramePosition, source: FramePosition, size: usize) {
+        frame.memcpy(target.0 as isize, source.0 as isize, size);
+    }
+
+    #[opcode]
+    fn write_ptr(frame: Frame, ptr: FramePosition, offset: isize, src: FramePosition, size: usize) {
+        todo!()
+    }
+
+    #[opcode]
+    fn add_u64(#[out] res: *mut u64, #[frame] a: u64, #[frame] b: u64) {
+        unsafe {
+            *res = a + b;
+        }
+    }
+
+    #[opcode]
+    fn sub_u64(#[out] res: *mut u64, #[frame] a: u64, #[frame] b: u64) {
+        unsafe {
+            *res = a - b;
+        }
+    }
+
+    #[opcode]
+    fn div_u64(#[out] res: *mut u64, #[frame] a: u64, #[frame] b: u64) {
+        unsafe {
+            *res = a / b;
+        }
+    }
+
+    #[opcode]
+    fn mul_u64(#[out] res: *mut u64, #[frame] a: u64, #[frame] b: u64) {
+        unsafe {
+            *res = a * b;
+        }
+    }
+
+    #[opcode]
+    fn and_u64(#[out] res: *mut u64, #[frame] a: u64, #[frame] b: u64) {
+        unsafe {
+            *res = a & b;
+        }
+    }
+
+    #[opcode]
+    fn not_u64(#[out] res: *mut u64, #[frame] a: u64) {
+        unsafe {
+            *res = !a;
+        }
+    }
+
+    #[opcode]
+    fn eq_u64(#[out] res: *mut u64, #[frame] a: u64, #[frame] b: u64) {
+        unsafe {
+            *res = (a == b) as u64;
+        }
+    }
+
+    #[opcode]
+    fn lt_u64(#[out] res: *mut u64, #[frame] a: u64, #[frame] b: u64) {
+        unsafe {
+            *res = (a < b) as u64;
+        }
+    }
+
+    #[opcode]
+    fn truncate_u64(#[out] res: *mut u64, #[frame] a: u64, to_bits: u64) {
+        todo!()
+    }
+
+    #[opcode]
+    fn truncate_f_to_u(#[out] res: *mut u64, #[frame] a: Field, to_bits: u64) {
+        todo!()
+    }
+
+    #[opcode]
+    fn add_field(#[out] res: *mut Field, #[frame] a: Field, #[frame] b: Field) {
+        unsafe {
+            *res = a + b;
+        }
+    }
+
+    #[opcode]
+    fn sub_field(#[out] res: *mut Field, #[frame] a: Field, #[frame] b: Field) {
+        unsafe {
+            *res = a - b;
+        }
+    }
+
+    #[opcode]
+    fn div_field(#[out] res: *mut Field, #[frame] a: Field, #[frame] b: Field) {
+        unsafe {
+            *res = a / b;
+        }
+    }
+
+    #[opcode]
+    fn mul_field(#[out] res: *mut Field, #[frame] a: Field, #[frame] b: Field) {
+        unsafe {
+            *res = a * b;
+        }
     }
 }
 
@@ -158,4 +320,3 @@ impl Program {
         binary
     }
 }
-
