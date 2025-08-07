@@ -6,7 +6,8 @@ use crate::{
         flow_analysis::{CFG, FlowAnalysis},
         ir::r#type::{Type, TypeExpr},
         ssa::{
-            self, BinaryArithOpKind, Block, BlockId, CmpKind, Const, Function, FunctionId, MemOp, SSA, Terminator, ValueId
+            self, BinaryArithOpKind, Block, BlockId, CmpKind, Const, Function, FunctionId, MemOp,
+            SSA, Terminator, ValueId,
         },
         taint_analysis::ConstantTaint,
     },
@@ -157,9 +158,8 @@ impl CodeGen {
         for function in functions.iter_mut() {
             for op in function.code.iter_mut() {
                 match op {
-                    bytecode::OpCode::Call(target, _, _) => {
-                        target.0 =
-                            *function_ids.get(&FunctionId(target.0 as u64)).unwrap() as isize;
+                    bytecode::OpCode::Call { func, .. } => {
+                        func.0 = *function_ids.get(&FunctionId(func.0 as u64)).unwrap() as isize;
                     }
                     _ => {}
                 }
@@ -189,15 +189,18 @@ impl CodeGen {
         // Consts get dumped in the first block
         for (val, constant) in function.iter_consts() {
             match constant {
-                Const::U(u, v) => emitter.push_op(bytecode::OpCode::Const(
-                    layouter.alloc_u64(*val, *u),
-                    *v as u64,
-                )),
+                Const::U(u, v) => emitter.push_op(bytecode::OpCode::MovConst {
+                    res: layouter.alloc_u64(*val, *u),
+                    val: *v as u64,
+                }),
                 Const::Field(v) => {
                     let start = layouter.alloc_field(*val);
                     for i in 0..bytecode::LIMBS {
                         // pushing in montgomery form
-                        emitter.push_op(bytecode::OpCode::Const(start.offset(i as isize), v.0.0[i]))
+                        emitter.push_op(bytecode::OpCode::MovConst {
+                            res: start.offset(i as isize),
+                            val: v.0.0[i],
+                        })
                     }
                 }
             }
@@ -445,10 +448,7 @@ impl CodeGen {
                 }
                 ssa::OpCode::Not(r, v) => {
                     let result = layouter.alloc_value(*r, &type_info.get_value_type(*r));
-                    emitter.push_op(bytecode::OpCode::Not(
-                        result,
-                        layouter.get_value(*v),
-                    ));
+                    emitter.push_op(bytecode::OpCode::Not(result, layouter.get_value(*v)));
                 }
                 ssa::OpCode::Constrain(a, b, c) => {
                     let a_type = type_info.get_value_type(*a);

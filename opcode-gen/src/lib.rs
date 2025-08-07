@@ -86,7 +86,7 @@ impl HostType {
 
     fn measure_size(&self) -> usize {
         match self {
-             HostType::U64
+            HostType::U64
             | HostType::USize
             | HostType::ISize
             | HostType::JumpTarget
@@ -102,6 +102,7 @@ impl HostType {
         offset: &proc_macro2::Ident,
         binary: &proc_macro2::Ident,
         jumps_to_fix: &proc_macro2::Ident,
+        is_ref: bool,
     ) -> proc_macro2::TokenStream {
         match self {
             HostType::JumpTarget => {
@@ -118,6 +119,7 @@ impl HostType {
                 }
             }
             HostType::USize => {
+                let i = if is_ref { quote! { *#i } } else { quote! { #i } };
                 quote! {
                     #binary.push(#i as u64);
                     #offset -= 1;
@@ -125,9 +127,10 @@ impl HostType {
             }
             HostType::Slice(intp) => {
                 let ixed = quote! { elem };
-                let child_serializer = intp.make_serializer(ixed.clone(), offset, binary, jumps_to_fix);
+                let child_serializer =
+                    intp.make_serializer(ixed.clone(), offset, binary, jumps_to_fix, true);
                 quote! {
-                    #binary.push(#ixed.len() as u64);
+                    #binary.push(#i.len() as u64);
                     #offset -= 1;
                     for elem in #i {
                         #child_serializer;
@@ -139,7 +142,7 @@ impl HostType {
                 for (ix, intp) in intps.iter().enumerate() {
                     let ix = syn::Index::from(ix);
                     let ixed = quote! { #i.#ix };
-                    result.extend(intp.make_serializer(ixed, offset, binary, jumps_to_fix));
+                    result.extend(intp.make_serializer(ixed, offset, binary, jumps_to_fix, false));
                 }
                 result
             }
@@ -153,7 +156,11 @@ impl HostType {
         ix: &proc_macro2::Ident,
     ) -> proc_macro2::TokenStream {
         match self {
-            HostType::U64 | HostType::USize | HostType::ISize | HostType::JumpTarget | HostType::FramePosition => {
+            HostType::U64
+            | HostType::USize
+            | HostType::ISize
+            | HostType::JumpTarget
+            | HostType::FramePosition => {
                 quote! {
                     #ix += 1;
                 }
@@ -170,7 +177,7 @@ impl HostType {
             }
             _ => quote! {
                 todo!();
-            }
+            },
         }
     }
 }
@@ -218,7 +225,7 @@ impl OpCodeDef {
             .struct_args()
             .map(|input| format_ident!("{}", input.name))
             .collect::<Vec<_>>();
-        let name = self.struct_name();
+        let name = format_ident!("{}", self.struct_name());
         quote! {
             OpCode::#name { #(#struct_args),* }
         }
@@ -345,10 +352,24 @@ fn parse_pat_type(pat: &syn::PatType) -> Input {
 }
 
 fn parse_unannotated(ident: Ident, ty: &syn::Type) -> Input {
-    Input::Struct(StructInput {
-        name: ident.to_string(),
-        val: StructInputType::Host(parse_host_type(ty)),
-    })
+    match ty {
+        syn::Type::Path(typath) => {
+            let ty_ident = typath.path.require_ident().unwrap();
+            if ty_ident == "Frame" {
+                return Input::Frame;
+            }
+            return Input::Struct(StructInput {
+                name: ident.to_string(),
+                val: StructInputType::Host(parse_host_type(ty)),
+            });
+        }
+        _ => {
+            return Input::Struct(StructInput {
+                name: ident.to_string(),
+                val: StructInputType::Host(parse_host_type(ty)),
+            });
+        }
+    }
 }
 
 fn parse_out(ident: Ident, ty: &syn::Type) -> Input {
@@ -616,7 +637,13 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
                             let offset = format_ident!("init_offset");
                             let binary = format_ident!("binary");
                             let jumps_to_fix = format_ident!("jumps_to_fix");
-                            htp.make_serializer(i.to_token_stream(), &offset, &binary, &jumps_to_fix)
+                            htp.make_serializer(
+                                i.to_token_stream(),
+                                &offset,
+                                &binary,
+                                &jumps_to_fix,
+                                true,
+                            )
                         }
                         _ => quote! { todo!(); },
                     }
@@ -659,6 +686,16 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
         }
     });
 
+    let opcode_display_cases = codes.iter().map(|code| {
+        let matcher = code.matcher();
+        let name_str = code.name.clone();
+        quote! {
+            #matcher => {
+                write!(f, "{}", #name_str);
+            }
+        }
+    });
+
     quote! {
         impl OpCode {
             pub fn to_binary(&self, binary: &mut Vec<u64>, jumps_to_fix: &mut Vec<(usize, isize)>) {
@@ -672,8 +709,18 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
                 ix += 1;
                 match op_code {
                     #(#opcode_measure_cases),*
+                    _ => panic!("unknown opcode"),
                 }
                 ix
+            }
+        }
+
+        impl std::fmt::Display for OpCode {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    #(#opcode_display_cases),*
+                }
+                Ok(())
             }
         }
     }
