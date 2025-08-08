@@ -223,17 +223,17 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
         );
 
-        fs::write(
-            debug_output_dir.join("r1cs.txt"),
-            r1cs_gen
-                .clone()
-                .get_r1cs()
-                .iter()
-                .map(|r1c| r1c.to_string())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
-        .unwrap();
+        // fs::write(
+        //     debug_output_dir.join("r1cs.txt"),
+        //     r1cs_gen
+        //         .clone()
+        //         .get_r1cs()
+        //         .iter()
+        //         .map(|r1c| r1c.to_string())
+        //         .collect::<Vec<_>>()
+        //         .join("\n"),
+        // )
+        // .unwrap();
 
         let r1cs_cleanup = R1CSCleanup::new();
         r1cs_cleanup.run(&mut custom_ssa);
