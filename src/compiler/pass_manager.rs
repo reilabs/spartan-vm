@@ -1,7 +1,10 @@
 use std::{fs, path::PathBuf};
 
 use crate::compiler::{
-    analysis::{instrumenter::{self, CostEstimator}, types::{TypeInfo, Types}},
+    analysis::{
+        instrumenter::{self, CostEstimator},
+        types::{TypeInfo, Types},
+    },
     flow_analysis::FlowAnalysis,
     ssa::{DefaultSsaAnnotator, SSA},
     taint_analysis::ConstantTaint,
@@ -101,9 +104,12 @@ impl PassManager<ConstantTaint> {
                     format!("before {}: {}", pass_index, pass_info.name),
                 );
                 fs::write(
-                    debug_output_dir.join(format!("before_pass_{}_{}", pass_index, pass_info.name)).join("code.txt"),
+                    debug_output_dir
+                        .join(format!("before_pass_{}_{}", pass_index, pass_info.name))
+                        .join("code.txt"),
                     format!("{}", ssa.to_string(&DefaultSsaAnnotator)),
-                ).unwrap();
+                )
+                .unwrap();
             }
         }
     }
@@ -126,7 +132,8 @@ impl PassManager<ConstantTaint> {
             fs::write(
                 debug_output_dir.join("final_result").join("code.txt"),
                 format!("{}", ssa.to_string(&DefaultSsaAnnotator)),
-            ).unwrap();
+            )
+            .unwrap();
         }
     }
 
@@ -212,7 +219,10 @@ impl<V> PassManager<V> {
         match &self.current_pass_info {
             Some(pass_info) => {
                 if !pass_info.needs.contains(&DataPoint::Types) {
-                    panic!("Pass {} does not need type information but tries to access it", pass_info.name);
+                    panic!(
+                        "Pass {} does not need type information but tries to access it",
+                        pass_info.name
+                    );
                 }
             }
             None => {}

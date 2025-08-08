@@ -250,6 +250,38 @@ struct StructInput {
     val: StructInputType,
 }
 
+impl StructInput {
+    fn make_printer(&self, fields_ident: &proc_macro2::Ident) -> proc_macro2::TokenStream {
+        let ident = format_ident!("{}", self.name);
+        match &self.val {
+            StructInputType::Host(HostType::JumpTarget) => quote! {
+                #fields_ident = format!("{} {}", #fields_ident, #ident.0);
+            },
+            StructInputType::Host(HostType::FramePosition) => quote! {
+                #fields_ident = format!("{} %{}", #fields_ident, #ident.0);
+            },
+            StructInputType::Host(HostType::U64) => quote! {
+                #fields_ident = format!("{} {}", #fields_ident, #ident);
+            },
+            StructInputType::Host(HostType::USize) => quote! {
+                #fields_ident = format!("{} {}", #fields_ident, #ident);
+            },
+            StructInputType::Host(HostType::ISize) => quote! {
+                #fields_ident = format!("{} {}", #fields_ident, #ident);
+            },
+            StructInputType::Frame(_) => quote! {
+                #fields_ident = format!("{} %{}", #fields_ident, #ident.0);
+            },
+            StructInputType::Out(_) => quote! {
+                #fields_ident = format!("{} %{}", #fields_ident, #ident.0);
+            },
+            _ => quote! {
+                #fields_ident = format!("{} _", #fields_ident);
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 enum Input {
     Struct(StructInput),
@@ -756,9 +788,15 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
     let opcode_display_cases = codes.iter().map(|code| {
         let matcher = code.matcher();
         let name_str = code.name.clone();
+        let fields_ident = format_ident!("fields");
+        let fields = code.struct_args().map(|field| 
+            field.make_printer(&fields_ident)
+        );
         quote! {
             #matcher => {
-                write!(f, "{}", #name_str).unwrap();
+                let mut #fields_ident = String::new();
+                #(#fields);*
+                write!(f, "{}{}", #name_str, #fields_ident).unwrap();
             }
         }
     });

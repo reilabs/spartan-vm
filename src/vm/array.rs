@@ -1,4 +1,4 @@
-use std::alloc::{self, Layout};
+use std::{alloc::{self, Layout}, ptr};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ArrayMeta(pub u64);
@@ -22,8 +22,8 @@ pub struct Array(pub *mut u64);
 
 impl Array {
     pub fn alloc(meta: ArrayMeta) -> Self {
-        let ptr = unsafe { alloc::alloc(Layout::array::<u64>(meta.size() + 2).unwrap()) }
-            as *mut u64;
+        let ptr =
+            unsafe { alloc::alloc(Layout::array::<u64>(meta.size() + 2).unwrap()) } as *mut u64;
         unsafe {
             *ptr = meta.0;
             *ptr.offset(1) = 1;
@@ -39,18 +39,22 @@ impl Array {
         self.0 as *mut ArrayMeta
     }
 
+    fn size(&self) -> usize {
+        unsafe { *self.meta() }.size()
+    }
+
     pub fn idx(&self, idx: usize, stride: usize) -> *mut u64 {
         unsafe { self.0.offset(2 + (idx as isize * stride as isize)) }
     }
 
     pub fn inc_rc(&self, by: u64) {
         let rc = self.rc();
-        println!(
-            "inc_array_rc from {} by {} at {:?}",
-            unsafe { *rc },
-            by,
-            self.0
-        );
+        // println!(
+        //     "inc_array_rc from {} by {} at {:?}",
+        //     unsafe { *rc },
+        //     by,
+        //     self.0
+        // );
         unsafe {
             *rc += by;
         }
@@ -59,29 +63,46 @@ impl Array {
     pub fn dec_rc(&self) {
         let rc = self.rc();
         let rc_val = unsafe { *rc };
-        println!(
-            "dec_array_rc from {} at {:?}",
-            unsafe { *rc },
-            self.0
-        );
+        // println!("dec_array_rc from {} at {:?}", unsafe { *rc }, self.0);
         if rc_val - 1 == 0 {
-            println!("Array @{:?} needs to be freed", self.0);
+            // println!("Array @{:?} needs to be freed", self.0);
             let meta = unsafe { *self.meta() };
             if meta.ptr_elems() {
-                println!("Array has ptr elements, dropping");
+                // println!("Array has ptr elements, dropping");
                 for i in 0..meta.size() {
-                    let elem = unsafe { *(self.idx(i, 1) as *mut Array)};
+                    let elem = unsafe { *(self.idx(i, 1) as *mut Array) };
                     elem.dec_rc();
                 }
             }
             unsafe {
-                alloc::dealloc(self.0 as *mut u8, Layout::array::<u64>(meta.size() + 2).unwrap());
+                alloc::dealloc(
+                    self.0 as *mut u8,
+                    Layout::array::<u64>(meta.size() + 2).unwrap(),
+                );
             }
         } else {
             unsafe {
                 *rc -= 1;
             }
         }
+    }
 
+    pub fn copy_if_reused(&self) -> Self {
+        let rc = self.rc();
+        let rc_val = unsafe { *rc };
+
+        if rc_val == 1 {
+            // println!("Array @{:?} is dying, move instead of copy", self.0);
+            *self
+        } else {
+            // println!("Array @{:?} is not dying, copy", self.0);
+            let new_array = Array::alloc(unsafe { *self.meta() });
+
+            unsafe {
+                ptr::copy_nonoverlapping(self.0, new_array.0, self.size() + 2);
+                *new_array.rc() = 1;
+            }
+            new_array
+        }
     }
 }

@@ -33,6 +33,7 @@ impl FrameLayouter {
 
     fn alloc_value(&mut self, value: ValueId, tp: &Type<ConstantTaint>) -> bytecode::FramePosition {
         self.variables.insert(value, self.next_free);
+        self.variables.insert(value, self.next_free);
         let r = self.next_free;
         self.next_free += self.type_size(&tp);
         bytecode::FramePosition(r)
@@ -155,15 +156,24 @@ impl CodeGen {
             functions.push(function);
         }
 
+        let mut cur_fun_off = 0;
         for function in functions.iter_mut() {
             for op in function.code.iter_mut() {
                 match op {
                     bytecode::OpCode::Call { func, .. } => {
                         func.0 = *function_ids.get(&FunctionId(func.0 as u64)).unwrap() as isize;
                     }
+                    bytecode::OpCode::Jmp { target } => {
+                        target.0 += cur_fun_off as isize;
+                    }
+                    bytecode::OpCode::JmpIf { if_t, if_f, .. } => {
+                        if_t.0 += cur_fun_off as isize;
+                        if_f.0 += cur_fun_off as isize;
+                    }
                     _ => {}
                 }
             }
+            cur_fun_off += function.code.len();
         }
 
         bytecode::Program {
@@ -443,6 +453,30 @@ impl CodeGen {
                 }
                 ssa::OpCode::Cast(r, v, tgt) => {
                     let result = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                    let l_type = type_info.get_value_type(*v);
+                    let r_type = type_info.get_value_type(*r);
+                    match (&l_type.expr, &r_type.expr) {
+                        (TypeExpr::U(_), TypeExpr::U(_)) => {
+                            emitter.push_op(bytecode::OpCode::MovFrame {
+                                target: result,
+                                source: layouter.get_value(*v),
+                                size: layouter.type_size(&l_type),
+                            })
+                        }
+                        (TypeExpr::Field, TypeExpr::U(_)) => {
+                            emitter.push_op(bytecode::OpCode::CastFieldToU64 {
+                                res: result,
+                                a: layouter.get_value(*v),
+                            });
+                        }
+                        (TypeExpr::U(_), TypeExpr::Field) => {
+                            emitter.push_op(bytecode::OpCode::CastU64ToField {
+                                res: result,
+                                a: layouter.get_value(*v),
+                            });
+                        }
+                        _ => panic!("Unsupported cast: {:?} -> {:?}", l_type, r_type),
+                    }
                     // TODO: Implement this, it _will_ break
                 }
                 ssa::OpCode::Not(r, v) => {
@@ -483,16 +517,17 @@ impl CodeGen {
                             .type_size(&type_info.get_value_type(*arr).get_array_element()),
                     });
                 }
-                // ssa::OpCode::ArraySet(r, arr, idx, val) => {
-                //     let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
-                //     emitter.push_op(bytecode::OpCode::ArraySet(
-                //         res,
-                //         layouter.get_value(*arr),
-                //         layouter.get_value(*idx),
-                //         layouter.get_value(*val),
-                //         layouter.type_size(&type_info.get_value_type(*arr).get_array_element()),
-                //     ));
-                // }
+                ssa::OpCode::ArraySet(r, arr, idx, val) => {
+                    let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                    emitter.push_op(bytecode::OpCode::ArraySet {
+                        res,
+                        array: layouter.get_value(*arr),
+                        index: layouter.get_value(*idx),
+                        source: layouter.get_value(*val),
+                        stride: layouter
+                            .type_size(&type_info.get_value_type(*arr).get_array_element()),
+                    });
+                }
                 ssa::OpCode::MkSeq(r, vals, _, eltype) => {
                     let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
                     let args = vals
@@ -530,13 +565,13 @@ impl CodeGen {
                     });
                 }
                 ssa::OpCode::MemOp(MemOp::Drop, r) => {
-                    assert!(type_info.get_value_type(*r).is_array());
+                    assert!(type_info.get_value_type(*r).is_array_or_slice());
                     emitter.push_op(bytecode::OpCode::DecArrayRc {
                         array: layouter.get_value(*r),
                     });
                 }
                 ssa::OpCode::MemOp(MemOp::Bump(size), r) => {
-                    assert!(type_info.get_value_type(*r).is_array());
+                    assert!(type_info.get_value_type(*r).is_array_or_slice());
                     emitter.push_op(bytecode::OpCode::IncArrayRc {
                         array: layouter.get_value(*r),
                         amount: *size as u64,

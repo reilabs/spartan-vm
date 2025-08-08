@@ -205,6 +205,10 @@ impl<V> Type<V> {
         matches!(self.expr, TypeExpr::Slice(_))
     }
 
+    pub fn is_array_or_slice(&self) -> bool {
+        matches!(self.expr, TypeExpr::Array(_, _) | TypeExpr::Slice(_))
+    }
+
     pub fn is_u(&self) -> bool {
         matches!(self.expr, TypeExpr::U(_))
     }

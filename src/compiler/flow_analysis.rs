@@ -698,28 +698,28 @@ impl FlowAnalysis {
         if !debug_output_dir.exists() {
             fs::create_dir(&debug_output_dir).unwrap();
         }
-        self.call_graph
-            .generate_image(debug_output_dir.join("call_graph.png"), ssa)
-            .unwrap();
-        for (func_id, _cfg) in &self.function_cfgs {
-            self.function_cfgs[func_id]
-                .generate_image(
-                    debug_output_dir.join(format!(
-                        "cfg_{}@{}.png",
-                        ssa.get_function(*func_id).get_name(),
-                        func_id.0
-                    )),
-                    ssa,
-                    ssa.get_function(*func_id),
-                    *func_id,
-                    format!(
-                        "CFG for {} {}",
-                        ssa.get_function(*func_id).get_name(),
-                        phase_label
-                    ),
-                )
-                .unwrap();
-        }
+        // self.call_graph
+        //     .generate_image(debug_output_dir.join("call_graph.png"), ssa)
+        //     .unwrap();
+        // for (func_id, _cfg) in &self.function_cfgs {
+        //     self.function_cfgs[func_id]
+        //         .generate_image(
+        //             debug_output_dir.join(format!(
+        //                 "cfg_{}@{}.png",
+        //                 ssa.get_function(*func_id).get_name(),
+        //                 func_id.0
+        //             )),
+        //             ssa,
+        //             ssa.get_function(*func_id),
+        //             *func_id,
+        //             format!(
+        //                 "CFG for {} {}",
+        //                 ssa.get_function(*func_id).get_name(),
+        //                 phase_label
+        //             ),
+        //         )
+        //         .unwrap();
+        // }
     }
 
     // pub fn to_graphviz(&self) -> String {

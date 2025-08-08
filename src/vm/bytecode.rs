@@ -44,6 +44,7 @@ mod def {
         target: JumpTarget,
     ) {
         let pc = unsafe { pc.offset(target.0) };
+        // println!("jmp: target={:?}", pc);
         dispatch(pc, frame, out_wit, out_a, out_b, out_c);
     }
 
@@ -61,6 +62,7 @@ mod def {
     ) {
         let target = if cond != 0 { if_t } else { if_f };
         let pc = unsafe { pc.offset(target.0) };
+        // println!("jmp_if: cond={} target={:?}", cond, pc);
         dispatch(pc, frame, out_wit, out_a, out_b, out_c);
     }
 
@@ -94,6 +96,9 @@ mod def {
             current_child = unsafe { current_child.offset(*arg_size as isize) };
         }
 
+        println!("call: func={:?} (size={})", func_pc, unsafe {*func_pc.offset(-1)});
+
+
         dispatch(func_pc, new_frame, out_wit, out_a, out_b, out_c);
     }
 
@@ -109,8 +114,10 @@ mod def {
         let ret_address = unsafe { *frame.data.offset(1) } as *mut u64;
         let new_frame = frame.pop();
         if new_frame.data.is_null() {
+            println!("finish return");
             return;
         }
+        println!("ret");
         dispatch(ret_address, new_frame, out_wit, out_a, out_b, out_c);
     }
 
@@ -126,6 +133,9 @@ mod def {
         #[frame] b: Field,
         #[frame] c: Field,
     ) {
+
+        // println!("r1cs");
+
         unsafe {
             *out_a = a;
             *out_b = b;
@@ -242,12 +252,16 @@ mod def {
 
     #[opcode]
     fn truncate_u64(#[out] res: *mut u64, #[frame] a: u64, to_bits: u64) {
-        todo!()
+        unsafe {
+            *res = a & ((1 << to_bits) - 1);
+        }
     }
 
     #[opcode]
-    fn truncate_f_to_u(#[out] res: *mut u64, #[frame] a: Field, to_bits: u64) {
-        todo!()
+    fn truncate_f_to_u(#[out] res: *mut Field, #[frame] a: Field, to_bits: u64) {
+        unsafe {
+            *res = From::from(ark_ff::PrimeField::into_bigint(a).0[0] & ((1 << to_bits) - 1));
+        }
     }
 
     #[opcode]
@@ -279,6 +293,20 @@ mod def {
     }
 
     #[opcode]
+    fn cast_field_to_u64(#[out] res: *mut u64, #[frame] a: Field) {
+        unsafe {
+            *res = ark_ff::PrimeField::into_bigint(a).0[0];
+        }
+    }
+
+    #[opcode]
+    fn cast_u64_to_field(#[out] res: *mut Field, #[frame] a: u64) {
+        unsafe {
+            *res = From::from(a);
+        }
+    }
+
+    #[opcode]
     fn array_alloc(
         #[out] res: *mut Array,
         stride: usize,
@@ -287,7 +315,13 @@ mod def {
         frame: Frame,
     ) {
         let array = Array::alloc(meta);
-        println!("array_alloc: size={} stride={} has_ptr_elems={} @ {:?}", meta.size(), stride, meta.ptr_elems(), array.0);
+        // println!(
+        //     "array_alloc: size={} stride={} has_ptr_elems={} @ {:?}",
+        //     meta.size(),
+        //     stride,
+        //     meta.ptr_elems(),
+        //     array.0
+        // );
         for (i, item) in items.iter().enumerate() {
             let tgt = array.idx(i, stride);
             frame.write_to(tgt, item.0 as isize, stride);
@@ -299,20 +333,45 @@ mod def {
 
     #[opcode]
     fn array_get(#[out] res: *mut u64, #[frame] array: Array, #[frame] index: u64, stride: usize) {
+        println!("arr_get_intro: array={:?} index={} stride={}", array.0, index, stride);
         let src = array.idx(index as usize, stride);
         unsafe {
             ptr::copy_nonoverlapping(src, res, stride);
         }
+        println!("arr_get_outro");
+    }
+
+    #[opcode]
+    fn array_set(
+        #[out] res: *mut Array,
+        #[frame] array: Array,
+        #[frame] index: u64,
+        source: FramePosition,
+        stride: usize,
+        frame: Frame,
+    ) {
+        println!("arr_set_intro");
+        let new_array = array.copy_if_reused();
+        let target = new_array.idx(index as usize, stride);
+        frame.write_to(target, source.0 as isize, stride);
+        unsafe {
+            *res = new_array;
+        }
+        println!("arr_set_outro");
     }
 
     #[opcode]
     fn inc_array_rc(#[frame] array: Array, amount: u64) {
+        println!("inc_array_rc_intro");
         array.inc_rc(amount);
+        println!("inc_array_rc_outro");
     }
 
     #[opcode]
     fn dec_array_rc(#[frame] array: Array) {
+        println!("dec_array_rc_intro");
         array.dec_rc();
+        println!("dec_array_rc_outro");
     }
 }
 
