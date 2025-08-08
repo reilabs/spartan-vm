@@ -251,6 +251,8 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         //     println!("{: >len_num_digits$}: {}", i, b);
         // }
 
+        println!("binary size: {} bytes", binary.len() * 8);
+
         let (out_wit, out_a, out_b, out_c) = interpreter::run(
             &mut binary,
             r1cs_gen.get_witness_size(),

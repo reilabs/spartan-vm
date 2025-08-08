@@ -96,8 +96,7 @@ mod def {
             current_child = unsafe { current_child.offset(*arg_size as isize) };
         }
 
-        println!("call: func={:?} (size={})", func_pc, unsafe {*func_pc.offset(-1)});
-
+        // println!("call: func={:?} (size={})", func_pc, unsafe {*func_pc.offset(-1)});
 
         dispatch(func_pc, new_frame, out_wit, out_a, out_b, out_c);
     }
@@ -114,10 +113,10 @@ mod def {
         let ret_address = unsafe { *frame.data.offset(1) } as *mut u64;
         let new_frame = frame.pop();
         if new_frame.data.is_null() {
-            println!("finish return");
+            // println!("finish return");
             return;
         }
-        println!("ret");
+        // println!("ret");
         dispatch(ret_address, new_frame, out_wit, out_a, out_b, out_c);
     }
 
@@ -333,12 +332,10 @@ mod def {
 
     #[opcode]
     fn array_get(#[out] res: *mut u64, #[frame] array: Array, #[frame] index: u64, stride: usize) {
-        println!("arr_get_intro: array={:?} index={} stride={}", array.0, index, stride);
         let src = array.idx(index as usize, stride);
         unsafe {
             ptr::copy_nonoverlapping(src, res, stride);
         }
-        println!("arr_get_outro");
     }
 
     #[opcode]
@@ -350,28 +347,27 @@ mod def {
         stride: usize,
         frame: Frame,
     ) {
-        println!("arr_set_intro");
         let new_array = array.copy_if_reused();
         let target = new_array.idx(index as usize, stride);
         frame.write_to(target, source.0 as isize, stride);
         unsafe {
             *res = new_array;
         }
-        println!("arr_set_outro");
+        // println!("arr_set_outro");
     }
 
     #[opcode]
     fn inc_array_rc(#[frame] array: Array, amount: u64) {
-        println!("inc_array_rc_intro");
+        // println!("inc_array_rc_intro");
         array.inc_rc(amount);
-        println!("inc_array_rc_outro");
+        // println!("inc_array_rc_outro");
     }
 
     #[opcode]
     fn dec_array_rc(#[frame] array: Array) {
-        println!("dec_array_rc_intro");
+        // println!("dec_array_rc_intro");
         array.dec_rc();
-        println!("dec_array_rc_outro");
+        // println!("dec_array_rc_outro");
     }
 }
 

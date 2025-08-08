@@ -35,7 +35,6 @@ impl Types {
         Types {}
     }
 
-    #[instrument(skip_all)]
     pub fn run<V: CommutativeMonoid + Display + Eq + Clone>(
         &self,
         ssa: &SSA<V>,
