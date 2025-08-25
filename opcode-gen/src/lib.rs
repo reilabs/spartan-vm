@@ -286,6 +286,7 @@ impl StructInput {
 enum Input {
     Struct(StructInput),
     Frame,
+    VM,
 }
 
 #[derive(Debug)]
@@ -401,7 +402,7 @@ fn expect_ident(pat: &syn::Pat) -> Ident {
 
 fn parse_signature(is_raw: bool, sig: &syn::Signature) -> OpCodeDef {
     let mut inputs = vec![];
-    let skip = if is_raw { 6 } else { 0 };
+    let skip = if is_raw { 3 } else { 0 };
     for arg in sig.inputs.iter().skip(skip) {
         match arg {
             FnArg::Receiver(_) => {
@@ -449,6 +450,27 @@ fn parse_unannotated(ident: Ident, ty: &syn::Type) -> Input {
                 name: ident.to_string(),
                 val: StructInputType::Host(parse_host_type(ty)),
             });
+        }
+        syn::Type::Reference(intype) => {
+            match intype.elem.as_ref() {
+                syn::Type::Path(typath) => {
+                    let ty_ident = typath.path.require_ident().unwrap();
+                    if ty_ident == "VM" {
+                        return Input::VM;
+                    } else {
+                        return Input::Struct(StructInput {
+                            name: ident.to_string(),
+                            val: StructInputType::Host(parse_host_type(ty)),
+                        });
+                    }
+                }
+                _ => {
+                    return Input::Struct(StructInput {
+                        name: ident.to_string(),
+                        val: StructInputType::Host(parse_host_type(ty)),
+                    });
+                }
+            }
         }
         _ => {
             return Input::Struct(StructInput {
@@ -599,10 +621,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
         vec![
             quote! {pc},
             quote! {frame},
-            quote! {out_wit},
-            quote! {out_a},
-            quote! {out_b},
-            quote! {out_c},
+            quote! {vm},
         ]
     } else {
         vec![]
@@ -633,6 +652,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
                     let i = format_ident!("{}", name);
                     quote! {#i}
                 }
+                Input::VM => quote! { vm },
                 Input::Frame => quote! { frame },
             })
             .collect::<Vec<_>>(),
@@ -648,7 +668,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
     } else {
         quote! {
             let pc = unsafe { pc.offset(current_field_offset) };
-            dispatch(pc, frame, out_wit, out_a, out_b, out_c)
+            dispatch(pc, frame, vm)
         }
     };
 
@@ -657,10 +677,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
         pub fn #handler_name(
             pc: *const u64,
             frame: Frame,
-            out_wit: *mut Field,
-            out_a: *mut Field,
-            out_b: *mut Field,
-            out_c: *mut Field,
+            vm: &mut VM,
         ) {
             let mut current_field_offset = 1isize;
             #getters
@@ -685,7 +702,6 @@ fn gen_opcode_enum(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
                         let ty = ty.to_def_tokens();
                         Some(quote! {#i: #ty})
                     }
-                    _ => todo!(),
                 }
             })
             .collect::<Vec<_>>();
@@ -744,7 +760,6 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
                                 true,
                             )
                         }
-                        _ => quote! { todo!(); },
                     }
                 })
                 .collect::<Vec<_>>();

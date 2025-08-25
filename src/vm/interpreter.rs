@@ -9,22 +9,19 @@ use tracing::instrument;
 
 use crate::{
     compiler::Field,
-    vm::{array::Array, bytecode::{self, OpCode}},
+    vm::{array::Array, bytecode::{self, AllocationInstrumenter, AllocationType, OpCode, VM}},
 };
 
-pub type Handler = fn(*const u64, Frame, *mut Field, *mut Field, *mut Field, *mut Field);
+pub type Handler = fn(*const u64, Frame, &mut VM);
 
 #[inline(always)]
 pub fn dispatch(
     pc: *const u64,
     frame: Frame,
-    out_wit: *mut Field,
-    out_a: *mut Field,
-    out_b: *mut Field,
-    out_c: *mut Field,
+    vm: &mut VM,
 ) {
     let opcode: Handler = unsafe { mem::transmute(*pc) };
-    opcode(pc, frame, out_wit, out_a, out_b, out_c);
+    opcode(pc, frame, vm);
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -33,19 +30,20 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub fn push(size: u64, parent: Frame) -> Self {
+    pub fn push(size: u64, parent: Frame, vm: &mut VM) -> Self {
         unsafe {
             let layout = Layout::array::<u64>(size as usize + 2).unwrap();
             let data = alloc::alloc(layout) as *mut u64;
             *data = size;
             *data.offset(1) = parent.data as u64;
             let data = data.offset(2);
+            vm.allocation_instrumenter.alloc(AllocationType::Stack, size as usize + 2);
             Frame { data }
         }
     }
 
     #[inline(always)]
-    pub fn pop(self) -> Frame {
+    pub fn pop(self, vm: &mut VM) -> Frame {
         unsafe {
             let real_data = self.data.offset(-2);
             let parent_data = *real_data.offset(1) as *mut u64;
@@ -54,6 +52,7 @@ impl Frame {
                 real_data as *mut u8,
                 Layout::array::<u64>(size as usize + 2).unwrap(),
             );
+            vm.allocation_instrumenter.free(AllocationType::Stack, size as usize + 2);
             Frame { data: parent_data }
         }
     }
@@ -159,12 +158,25 @@ pub fn run(
     witness_size: usize,
     r1cs_size: usize,
     inputs: &[Field],
-) -> (Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>) {
+) -> (Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, AllocationInstrumenter) {
+
+    let mut out_wit = vec![Field::ZERO; witness_size];
+    let mut out_a = vec![Field::ZERO; r1cs_size];
+    let mut out_b = vec![Field::ZERO; r1cs_size];
+    let mut out_c = vec![Field::ZERO; r1cs_size];
+    let mut vm = VM::new(
+        out_wit.as_mut_ptr(),
+        out_a.as_mut_ptr(),
+        out_b.as_mut_ptr(),
+        out_c.as_mut_ptr(),
+    );
+
     let frame = Frame::push(
         program[1],
         Frame {
             data: std::ptr::null_mut(),
         },
+        &mut vm
     );
     for (i, el) in inputs.iter().enumerate() {
         frame.write_field(2 + (i as isize) * 4, *el);
@@ -175,19 +187,12 @@ pub fn run(
 
     let pc = unsafe { program.as_mut_ptr().offset(2) };
 
-    let mut out_wit = vec![Field::ZERO; witness_size];
-    let mut out_a = vec![Field::ZERO; r1cs_size];
-    let mut out_b = vec![Field::ZERO; r1cs_size];
-    let mut out_c = vec![Field::ZERO; r1cs_size];
 
     dispatch(
         pc,
         frame,
-        out_wit.as_mut_ptr(),
-        out_a.as_mut_ptr(),
-        out_b.as_mut_ptr(),
-        out_c.as_mut_ptr(),
+        &mut vm
     );
 
-    (out_wit, out_a, out_b, out_c)
+    (out_wit, out_a, out_b, out_c, vm.allocation_instrumenter)
 }

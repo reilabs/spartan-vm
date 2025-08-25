@@ -10,7 +10,9 @@ use crate::{
 };
 
 use std::fmt::Display;
-use std::{mem, ptr};
+use std::path::Path;
+use std::ptr;
+use plotters::prelude::*;
 
 pub const LIMBS: usize = 4;
 
@@ -30,32 +32,244 @@ impl FramePosition {
 
 pub struct JumpTarget(pub isize);
 
+pub enum AllocationType {
+    Stack,
+    Heap,
+}
+
+pub enum AlocationEvent {
+    Alloc(AllocationType, usize),
+    Free(AllocationType, usize),
+}
+
+pub struct AllocationInstrumenter {
+    pub events: Vec<AlocationEvent>,
+}
+
+impl AllocationInstrumenter {
+    pub fn new() -> Self {
+        Self { events: vec![] }
+    }
+
+    pub fn alloc(&mut self, ty: AllocationType, size: usize) {
+        self.events.push(AlocationEvent::Alloc(ty, size));
+    }
+
+    pub fn free(&mut self, ty: AllocationType, size: usize) {
+        self.events.push(AlocationEvent::Free(ty, size));
+    }
+
+    pub fn plot(&self, path: &Path) -> bool {
+        // Calculate memory usage over time
+        let mut stack_usage = Vec::new();
+        let mut heap_usage = Vec::new();
+        let mut current_stack = 0usize;
+        let mut current_heap = 0usize;
+        
+        // Process allocation events to build memory usage timeline
+        for event in &self.events {
+            match event {
+                AlocationEvent::Alloc(AllocationType::Stack, size) => {
+                    current_stack += size * 8;
+                }
+                AlocationEvent::Alloc(AllocationType::Heap, size) => {
+                    current_heap += size * 8;
+                }
+                AlocationEvent::Free(AllocationType::Stack, size) => {
+                    current_stack = current_stack.saturating_sub(*size * 8);
+                }
+                AlocationEvent::Free(AllocationType::Heap, size) => {
+                    current_heap = current_heap.saturating_sub(*size * 8);
+                }
+            }
+            
+            stack_usage.push(current_stack);
+            heap_usage.push(current_heap);
+        }
+        
+        if stack_usage.is_empty() {
+            return true; // No events to plot
+        }
+        
+        // Calculate total memory usage
+        let total_usage: Vec<usize> = stack_usage.iter().zip(heap_usage.iter())
+            .map(|(s, h)| s + h)
+            .collect();
+        
+        // Find maximum values for each plot
+        let max_stack = *stack_usage.iter().max().unwrap_or(&1);
+        let max_heap = *heap_usage.iter().max().unwrap_or(&1);
+        let max_total = *total_usage.iter().max().unwrap_or(&1);
+        
+        // Create the chart with three subplots side by side
+        let root = BitMapBackend::new(path, (2400, 800)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        
+        // Split the drawing area into three equal horizontal sections
+        let (left, rest) = root.split_horizontally(800);
+        let (middle, right) = rest.split_horizontally(800);
+        
+        // Common Y-axis scale for all plots
+        let common_max = max_total.max(max_stack).max(max_heap);
+        
+        // Determine the best unit and conversion factor
+        let (unit, divisor, y_label) = if common_max >= 2 * 1024 * 1024 {
+            ("MB", 1024 * 1024, "Memory Size (MB)".to_string())
+        } else if common_max >= 2 * 1024 {
+            ("KB", 1024, "Memory Size (KB)".to_string())
+        } else {
+            ("B", 1, "Memory Size (bytes)".to_string())
+        };
+        
+        // Convert data to the appropriate unit
+        let total_data: Vec<(usize, f64)> = total_usage.iter().enumerate()
+            .map(|(i, &size)| (i, size as f64 / divisor as f64))
+            .collect();
+        
+        let stack_data: Vec<(usize, f64)> = stack_usage.iter().enumerate()
+            .map(|(i, &size)| (i, size as f64 / divisor as f64))
+            .collect();
+        
+        let heap_data: Vec<(usize, f64)> = heap_usage.iter().enumerate()
+            .map(|(i, &size)| (i, size as f64 / divisor as f64))
+            .collect();
+        
+        let y_max = common_max as f64 / divisor as f64;
+        
+        // Plot 1: Total Memory Usage
+        let mut chart1 = ChartBuilder::on(&left)
+            .caption("Total Memory Usage", ("sans-serif", 20))
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(50)
+            .build_cartesian_2d(0..total_usage.len(), 0.0..y_max)
+            .unwrap();
+        
+        chart1.configure_mesh()
+            .x_labels(5)
+            .y_labels(5)
+            .x_desc("Event Number")
+            .y_desc(y_label.clone())
+            .draw()
+            .unwrap();
+        
+        chart1.draw_series(
+            total_data.iter().map(|&(x, y)| {
+                Rectangle::new([(x, 0.0), (x + 1, y)], GREEN.filled())
+            })
+        ).unwrap()
+        .label("Total Memory")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], GREEN));
+        
+        chart1.configure_series_labels()
+            .background_style(&WHITE.mix(0.8))
+            .border_style(&BLACK)
+            .draw()
+            .unwrap();
+        
+        // Plot 2: Stack Memory Usage
+        let mut chart2 = ChartBuilder::on(&middle)
+            .caption("Stack Memory Usage", ("sans-serif", 20))
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(50)
+            .build_cartesian_2d(0..stack_usage.len(), 0.0..y_max)
+            .unwrap();
+        
+        chart2.configure_mesh()
+            .x_labels(5)
+            .y_labels(5)
+            .x_desc("Event Number")
+            .y_desc(y_label.clone())
+            .draw()
+            .unwrap();
+        
+        chart2.draw_series(
+            stack_data.iter().map(|&(x, y)| {
+                Rectangle::new([(x, 0.0), (x + 1, y)], BLUE.filled())
+            })
+        ).unwrap()
+        .label("Stack Memory")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
+        
+        chart2.configure_series_labels()
+            .background_style(&WHITE.mix(0.8))
+            .border_style(&BLACK)
+            .draw()
+            .unwrap();
+        
+        // Plot 3: Heap Memory Usage
+        let mut chart3 = ChartBuilder::on(&right)
+            .caption("Heap Memory Usage", ("sans-serif", 20))
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(50)
+            .build_cartesian_2d(0..heap_usage.len(), 0.0..y_max)
+            .unwrap();
+        
+        chart3.configure_mesh()
+            .x_labels(5)
+            .y_labels(5)
+            .x_desc("Event Number")
+            .y_desc(y_label.clone())
+            .draw()
+            .unwrap();
+        
+        chart3.draw_series(
+            heap_data.iter().map(|&(x, y)| {
+                Rectangle::new([(x, 0.0), (x + 1, y)], RED.filled())
+            })
+        ).unwrap()
+        .label("Heap Memory")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        
+        chart3.configure_series_labels()
+            .background_style(&WHITE.mix(0.8))
+            .border_style(&BLACK)
+            .draw()
+            .unwrap();
+        
+        root.present().unwrap();
+
+        *stack_usage.last().unwrap() == 0 && *heap_usage.last().unwrap() == 0
+    }
+}
+
+pub struct VM {
+    pub out_a: *mut Field,
+    pub out_b: *mut Field,
+    pub out_c: *mut Field,
+    pub out_wit: *mut Field,
+    pub allocation_instrumenter: AllocationInstrumenter,
+}
+
+impl VM {
+    pub fn new(out_a: *mut Field, out_b: *mut Field, out_c: *mut Field, out_wit: *mut Field) -> Self {
+        Self {
+            out_a,
+            out_b,
+            out_c,
+            out_wit,
+            allocation_instrumenter: AllocationInstrumenter::new(),
+        }
+    }
+}
+
 #[interpreter]
 mod def {
 
     #[raw_opcode]
-    fn jmp(
-        pc: *const u64,
-        frame: Frame,
-        out_wit: *mut Field,
-        out_a: *mut Field,
-        out_b: *mut Field,
-        out_c: *mut Field,
-        target: JumpTarget,
-    ) {
+    fn jmp(pc: *const u64, frame: Frame, vm: &mut VM, target: JumpTarget) {
         let pc = unsafe { pc.offset(target.0) };
         // println!("jmp: target={:?}", pc);
-        dispatch(pc, frame, out_wit, out_a, out_b, out_c);
+        dispatch(pc, frame, vm);
     }
 
     #[raw_opcode]
     fn jmp_if(
         pc: *const u64,
         frame: Frame,
-        out_wit: *mut Field,
-        out_a: *mut Field,
-        out_b: *mut Field,
-        out_c: *mut Field,
+        vm: &mut VM,
         #[frame] cond: u64,
         if_t: JumpTarget,
         if_f: JumpTarget,
@@ -63,24 +277,21 @@ mod def {
         let target = if cond != 0 { if_t } else { if_f };
         let pc = unsafe { pc.offset(target.0) };
         // println!("jmp_if: cond={} target={:?}", cond, pc);
-        dispatch(pc, frame, out_wit, out_a, out_b, out_c);
+        dispatch(pc, frame, vm);
     }
 
     #[raw_opcode]
     fn call(
         pc: *const u64,
         frame: Frame,
-        out_wit: *mut Field,
-        out_a: *mut Field,
-        out_b: *mut Field,
-        out_c: *mut Field,
+        vm: &mut VM,
         func: JumpTarget,
         args: &[(usize, FramePosition)],
         ret: FramePosition,
     ) {
         let func_pc = unsafe { pc.offset(func.0) };
         let func_frame_size = unsafe { *func_pc.offset(-1) };
-        let new_frame = Frame::push(func_frame_size, frame);
+        let new_frame = Frame::push(func_frame_size, frame, vm);
         let ret_data_ptr = unsafe { frame.data.offset(ret.0 as isize) };
         let ret_pc = unsafe { pc.offset(4 + 2 * args.len() as isize) };
 
@@ -98,72 +309,55 @@ mod def {
 
         // println!("call: func={:?} (size={})", func_pc, unsafe {*func_pc.offset(-1)});
 
-        dispatch(func_pc, new_frame, out_wit, out_a, out_b, out_c);
+        dispatch(func_pc, new_frame, vm);
     }
 
     #[raw_opcode]
-    fn ret(
-        _pc: *const u64,
-        frame: Frame,
-        out_wit: *mut Field,
-        out_a: *mut Field,
-        out_b: *mut Field,
-        out_c: *mut Field,
-    ) {
+    fn ret(_pc: *const u64, frame: Frame, vm: &mut VM) {
         let ret_address = unsafe { *frame.data.offset(1) } as *mut u64;
-        let new_frame = frame.pop();
+        let new_frame = frame.pop(vm);
         if new_frame.data.is_null() {
             // println!("finish return");
             return;
         }
         // println!("ret");
-        dispatch(ret_address, new_frame, out_wit, out_a, out_b, out_c);
+        dispatch(ret_address, new_frame, vm);
     }
 
     #[raw_opcode]
     fn r1c(
         pc: *const u64,
         frame: Frame,
-        out_wit: *mut Field,
-        out_a: *mut Field,
-        out_b: *mut Field,
-        out_c: *mut Field,
+        vm: &mut VM,
         #[frame] a: Field,
         #[frame] b: Field,
         #[frame] c: Field,
     ) {
-
         // println!("r1cs");
 
         unsafe {
-            *out_a = a;
-            *out_b = b;
-            *out_c = c;
+            *vm.out_a = a;
+            *vm.out_b = b;
+            *vm.out_c = c;
         }
 
-        let out_a = unsafe { out_a.offset(1) };
-        let out_b = unsafe { out_b.offset(1) };
-        let out_c = unsafe { out_c.offset(1) };
+        unsafe {
+            vm.out_a = vm.out_a.offset(1);
+            vm.out_b = vm.out_b.offset(1);
+            vm.out_c = vm.out_c.offset(1);
+        };
         let pc = unsafe { pc.offset(4) };
-        dispatch(pc, frame, out_wit, out_a, out_b, out_c);
+        dispatch(pc, frame, vm);
     }
 
     #[raw_opcode]
-    fn write_witness(
-        pc: *const u64,
-        frame: Frame,
-        out_wit: *mut Field,
-        out_a: *mut Field,
-        out_b: *mut Field,
-        out_c: *mut Field,
-        #[frame] val: Field,
-    ) {
+    fn write_witness(pc: *const u64, frame: Frame, vm: &mut VM, #[frame] val: Field) {
         unsafe {
-            *out_wit = val;
-        }
-        let out_wit = unsafe { out_wit.offset(1) };
+            *vm.out_wit = val;
+            vm.out_wit = vm.out_wit.offset(1)
+        };
         let pc = unsafe { pc.offset(2) };
-        dispatch(pc, frame, out_wit, out_a, out_b, out_c);
+        dispatch(pc, frame, vm);
     }
 
     #[opcode]
@@ -312,8 +506,9 @@ mod def {
         meta: ArrayMeta,
         items: &[FramePosition],
         frame: Frame,
+        vm: &mut VM,
     ) {
-        let array = Array::alloc(meta);
+        let array = Array::alloc(meta, vm);
         // println!(
         //     "array_alloc: size={} stride={} has_ptr_elems={} @ {:?}",
         //     meta.size(),
@@ -331,7 +526,7 @@ mod def {
     }
 
     #[opcode]
-    fn array_get(#[out] res: *mut u64, #[frame] array: Array, #[frame] index: u64, stride: usize) {
+    fn array_get(#[out] res: *mut u64, #[frame] array: Array, #[frame] index: u64, stride: usize, vm: &mut VM) {
         let src = array.idx(index as usize, stride);
         unsafe {
             ptr::copy_nonoverlapping(src, res, stride);
@@ -346,8 +541,9 @@ mod def {
         source: FramePosition,
         stride: usize,
         frame: Frame,
+        vm: &mut VM
     ) {
-        let new_array = array.copy_if_reused();
+        let new_array = array.copy_if_reused(vm);
         let target = new_array.idx(index as usize, stride);
         frame.write_to(target, source.0 as isize, stride);
         unsafe {
@@ -364,9 +560,9 @@ mod def {
     }
 
     #[opcode]
-    fn dec_array_rc(#[frame] array: Array) {
+    fn dec_array_rc(#[frame] array: Array, vm: &mut VM) {
         // println!("dec_array_rc_intro");
-        array.dec_rc();
+        array.dec_rc(vm);
         // println!("dec_array_rc_outro");
     }
 }

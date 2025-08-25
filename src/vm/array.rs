@@ -1,4 +1,9 @@
-use std::{alloc::{self, Layout}, ptr};
+use std::{
+    alloc::{self, Layout},
+    ptr,
+};
+
+use crate::vm::bytecode::{AllocationType, VM};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ArrayMeta(pub u64);
@@ -21,9 +26,11 @@ impl ArrayMeta {
 pub struct Array(pub *mut u64);
 
 impl Array {
-    pub fn alloc(meta: ArrayMeta) -> Self {
+    pub fn alloc(meta: ArrayMeta, vm: &mut VM) -> Self {
         let ptr =
             unsafe { alloc::alloc(Layout::array::<u64>(meta.size() + 2).unwrap()) } as *mut u64;
+        vm.allocation_instrumenter
+            .alloc(AllocationType::Heap, meta.size() + 2);
         unsafe {
             *ptr = meta.0;
             *ptr.offset(1) = 1;
@@ -60,7 +67,7 @@ impl Array {
         }
     }
 
-    pub fn dec_rc(&self) {
+    pub fn dec_rc(&self, vm: &mut VM) {
         let rc = self.rc();
         let rc_val = unsafe { *rc };
         // println!("dec_array_rc from {} at {:?}", unsafe { *rc }, self.0);
@@ -71,7 +78,7 @@ impl Array {
                 // println!("Array has ptr elements, dropping");
                 for i in 0..meta.size() {
                     let elem = unsafe { *(self.idx(i, 1) as *mut Array) };
-                    elem.dec_rc();
+                    elem.dec_rc(vm);
                 }
             }
             unsafe {
@@ -79,6 +86,8 @@ impl Array {
                     self.0 as *mut u8,
                     Layout::array::<u64>(meta.size() + 2).unwrap(),
                 );
+                vm.allocation_instrumenter
+                    .free(AllocationType::Heap, meta.size() + 2);
             }
         } else {
             unsafe {
@@ -87,7 +96,7 @@ impl Array {
         }
     }
 
-    pub fn copy_if_reused(&self) -> Self {
+    pub fn copy_if_reused(&self, vm: &mut VM) -> Self {
         let rc = self.rc();
         let rc_val = unsafe { *rc };
 
@@ -96,7 +105,7 @@ impl Array {
             *self
         } else {
             // println!("Array @{:?} is not dying, copy", self.0);
-            let new_array = Array::alloc(unsafe { *self.meta() });
+            let new_array = Array::alloc(unsafe { *self.meta() }, vm);
 
             unsafe {
                 ptr::copy_nonoverlapping(self.0, new_array.0, self.size() + 2);

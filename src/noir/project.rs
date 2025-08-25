@@ -253,7 +253,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         println!("binary size: {} bytes", binary.len() * 8);
 
-        let (out_wit, out_a, out_b, out_c) = interpreter::run(
+        let (out_wit, out_a, out_b, out_c, instrumenter) = interpreter::run(
             &mut binary,
             r1cs_gen.get_witness_size(),
             r1cs.len(),
@@ -265,6 +265,13 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
                 .unwrap(),
             ],
         );
+
+        let valid = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
+        if !valid {
+            warn!(message = %"VM memory leak detected");
+        } else {
+            info!(message = %"VM memory leak not detected");
+        }
 
         fs::write(
             debug_output_dir.join("witness_good.txt"),
