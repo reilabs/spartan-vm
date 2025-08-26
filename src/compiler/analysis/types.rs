@@ -3,9 +3,9 @@ use std::{collections::HashMap, fmt::Display};
 use tracing::{Level, instrument};
 
 use crate::compiler::{
-    flow_analysis::{FlowAnalysis, CFG},
+    flow_analysis::{CFG, FlowAnalysis},
     ir::r#type::{CommutativeMonoid, Type},
-    ssa::{CastTarget, Const, Function, FunctionId, OpCode, ValueId, SSA},
+    ssa::{CastTarget, Const, Function, FunctionId, OpCode, SSA, ValueId},
 };
 
 pub struct TypeInfo<V> {
@@ -76,6 +76,9 @@ impl Types {
                 Const::Field(_) => function_info
                     .values
                     .insert(*value_id, Type::field(V::empty())),
+                Const::BoxedField(_) => function_info
+                    .values
+                    .insert(*value_id, Type::boxed_field(V::empty())),
             };
         }
 
@@ -87,7 +90,8 @@ impl Types {
             }
 
             for instruction in block.get_instructions() {
-                self.run_opcode(instruction, &mut function_info, function_types).unwrap();
+                self.run_opcode(instruction, &mut function_info, function_types)
+                    .unwrap();
             }
         }
 
@@ -244,7 +248,16 @@ impl Types {
                 );
                 Ok(())
             }
+            OpCode::FreshWitness(r, tp) => {
+                function_info.values.insert(*r, tp.clone());
+                Ok(())
+            }
             OpCode::Constrain(_, _, _) => Ok(()),
+            OpCode::NextDCoeff(v) => {
+                function_info.values.insert(*v, Type::field(V::empty()));
+                Ok(())
+            }
+            OpCode::BumpD(_, _, _) => Ok(()),
             OpCode::MkSeq(r, _, top_tp, t) => {
                 function_info.values.insert(*r, top_tp.of(t.clone()));
                 Ok(())
@@ -289,6 +302,23 @@ impl Types {
                 let bit_type = Type::u(1, value_type.get_annotation().clone());
                 let result_type = Type::array_of(bit_type, *output_size, V::empty());
                 function_info.values.insert(*result, result_type);
+                Ok(())
+            }
+            OpCode::BoxField(result, _, annotation) => {
+                function_info
+                    .values
+                    .insert(*result, Type::boxed_field(annotation.clone()));
+                Ok(())
+            }
+            OpCode::UnboxField(result, _) => {
+                function_info
+                    .values
+                    .insert(*result, Type::field(V::empty()));
+                Ok(())
+            }
+            OpCode::MulConst(result, _, var) => {
+                let var_type = function_info.values.get(var).unwrap();
+                function_info.values.insert(*result, var_type.clone());
                 Ok(())
             }
         }

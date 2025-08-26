@@ -75,7 +75,14 @@ impl UntaintControlFlow {
                     OpCode::WriteWitness(r, l, _) => {
                         OpCode::WriteWitness(r, l, ConstantTaint::Witness)
                     }
+                    OpCode::FreshWitness(r, tp) => {
+                        let taint = function_taint.get_value_taint(r);
+                        let new_tp = self.typify_taint(tp, taint);
+                        OpCode::FreshWitness(r, new_tp)
+                    }
                     OpCode::Constrain(a, b, c) => OpCode::Constrain(a, b, c),
+                    OpCode::NextDCoeff(a) => OpCode::NextDCoeff(a),
+                    OpCode::BumpD(a, b, c) => OpCode::BumpD(a, b, c),
                     OpCode::MkSeq(r, l, stp, tp) => {
                         let r_taint = function_taint
                             .get_value_taint(r)
@@ -90,6 +97,16 @@ impl UntaintControlFlow {
                     OpCode::Not(r, l) => OpCode::Not(r, l),
                     OpCode::ToBits(r, l, e, s) => OpCode::ToBits(r, l, e, s),
                     OpCode::MemOp(kind, value) => OpCode::MemOp(kind, value),
+                    OpCode::BoxField(r, l, c) => OpCode::BoxField(
+                        r,
+                        l,
+                        function_taint
+                            .get_value_taint(r)
+                            .toplevel_taint()
+                            .expect_constant(),
+                    ),
+                    OpCode::UnboxField(r, l) => OpCode::UnboxField(r, l),
+                    OpCode::MulConst(r, l, c) => OpCode::MulConst(r, l, c),
                 };
                 new_instructions.push(new);
             }

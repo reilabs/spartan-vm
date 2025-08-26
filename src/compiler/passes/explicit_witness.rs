@@ -49,7 +49,8 @@ impl ExplicitWitness {
                         OpCode::Alloc { .. }
                         | OpCode::Call { .. }
                         | OpCode::Constrain { .. }
-                        | OpCode::WriteWitness { .. } => {
+                        | OpCode::WriteWitness { .. }
+                        | OpCode::FreshWitness(_, _) => {
                             new_instructions.push(instruction);
                         }
                         OpCode::Cmp(_, r, l, _) => {
@@ -127,6 +128,12 @@ impl ExplicitWitness {
                                 continue;
                             }
                             new_instructions.push(OpCode::Constrain(a, b, c));
+                        }
+                        OpCode::NextDCoeff(_) => {
+                            panic!("ICE: should not be present at this stage");
+                        }
+                        OpCode::BumpD(_, _, _) => {
+                            panic!("ICE: should not be present at this stage");
                         }
                         OpCode::ArrayGet(_, arr, idx) => {
                             let arr_taint = function_type_info.get_value_type(arr).get_annotation();
@@ -210,6 +217,15 @@ impl ExplicitWitness {
                             new_instructions.push(instruction);
                         }
                         OpCode::MemOp(_, _) => {
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::BoxField(_, _, _) => {
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::UnboxField(_, _) => {
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::MulConst(_, _, _) => {
                             new_instructions.push(instruction);
                         }
                     }

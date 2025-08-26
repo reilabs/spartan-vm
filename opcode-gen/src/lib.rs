@@ -10,7 +10,7 @@ enum GuestType {
     Field,
     U64,
     Ptr,
-    Array,
+    BoxedValue,
 }
 
 #[derive(Debug)]
@@ -18,11 +18,12 @@ enum HostType {
     U64,
     USize,
     ISize,
+    Field,
     JumpTarget,
     Slice(Box<HostType>),
     Tuple(Vec<HostType>),
     FramePosition,
-    ArrayMeta,
+    BoxedLayout,
 }
 
 impl HostType {
@@ -32,6 +33,7 @@ impl HostType {
             HostType::USize => quote! { usize },
             HostType::ISize => quote! { isize },
             HostType::JumpTarget => quote! { JumpTarget },
+            HostType::Field => quote! { Field },
             HostType::Slice(ty) => {
                 let child = ty.to_def_tokens();
                 quote! { Vec<#child> }
@@ -41,7 +43,7 @@ impl HostType {
                 quote! { ( #(#children),* ) }
             }
             HostType::FramePosition => quote! { FramePosition },
-            HostType::ArrayMeta => quote! { ArrayMeta },
+            HostType::BoxedLayout => quote! { BoxedLayout },
         }
     }
 
@@ -69,10 +71,10 @@ impl HostType {
                     }
                 }
             }
-            HostType::ArrayMeta => {
+            HostType::BoxedLayout => {
                 quote! {
                     unsafe {
-                        let r = ArrayMeta(*#pc.offset(#offset));
+                        let r = BoxedLayout(*#pc.offset(#offset));
                         #offset += 1;
                         r
                     }
@@ -120,7 +122,21 @@ impl HostType {
                     }
                 }
             }
-            _ => quote! { todo!() },
+            HostType::Field => {
+                quote! {
+                    unsafe {
+                        let r0 = *#pc.offset(#offset);
+                        let r1 = *#pc.offset(#offset + 1);
+                        let r2 = *#pc.offset(#offset + 2);
+                        let r3 = *#pc.offset(#offset + 3);
+                        #offset += 4;
+                        ark_ff::Fp(ark_ff::BigInt([r0, r1, r2, r3]), std::marker::PhantomData)
+                    }
+                }
+            }
+            HostType::Tuple(ty) => {
+                todo!("tuple getter");
+            }
         }
     }
 
@@ -131,7 +147,8 @@ impl HostType {
             | HostType::ISize
             | HostType::JumpTarget
             | HostType::FramePosition
-            | HostType::ArrayMeta => 1,
+            | HostType::BoxedLayout => 1,
+            HostType::Field => 4, // TODO parameterize
             HostType::Slice(_) => panic!("slice size is not known at compile time"),
             HostType::Tuple(ty) => ty.iter().map(|ty| ty.measure_size()).sum(),
         }
@@ -159,23 +176,40 @@ impl HostType {
                     #offset -= 1;
                 }
             }
-            HostType::ArrayMeta => {
+            HostType::BoxedLayout => {
                 quote! {
                     #binary.push(#i.0);
                     #offset -= 1;
                 }
             }
             HostType::USize | HostType::ISize => {
-                let i = if is_ref { quote! { *#i } } else { quote! { #i } };
+                let i = if is_ref {
+                    quote! { *#i }
+                } else {
+                    quote! { #i }
+                };
                 quote! {
                     #binary.push(#i as u64);
                     #offset -= 1;
                 }
             }
             HostType::U64 => {
-                let i = if is_ref { quote! { *#i } } else { quote! { #i } };
+                let i = if is_ref {
+                    quote! { *#i }
+                } else {
+                    quote! { #i }
+                };
                 quote! {
                     #binary.push(#i);
+                    #offset -= 1;
+                }
+            }
+            HostType::Field => {
+                quote! {
+                    #binary.push(#i.0.0[0] as u64);
+                    #binary.push(#i.0.0[1] as u64);
+                    #binary.push(#i.0.0[2] as u64);
+                    #binary.push(#i.0.0[3] as u64);
                     #offset -= 1;
                 }
             }
@@ -200,7 +234,6 @@ impl HostType {
                 }
                 result
             }
-            _ => quote! { todo!(); },
         }
     }
 
@@ -214,10 +247,15 @@ impl HostType {
             | HostType::USize
             | HostType::ISize
             | HostType::JumpTarget
-            | HostType::ArrayMeta
+            | HostType::BoxedLayout
             | HostType::FramePosition => {
                 quote! {
                     #ix += 1;
+                }
+            }
+            HostType::Field => {
+                quote! {
+                    #ix += 4;
                 }
             }
             HostType::Slice(child) => {
@@ -230,9 +268,9 @@ impl HostType {
                     };
                 }
             }
-            _ => quote! {
-                todo!();
-            },
+            HostType::Tuple(_children) => {
+                quote! { todo!("tuple measurer") }
+            }
         }
     }
 }
@@ -267,6 +305,9 @@ impl StructInput {
                 #fields_ident = format!("{} {}", #fields_ident, #ident);
             },
             StructInputType::Host(HostType::ISize) => quote! {
+                #fields_ident = format!("{} {}", #fields_ident, #ident);
+            },
+            StructInputType::Host(HostType::Field) => quote! {
                 #fields_ident = format!("{} {}", #fields_ident, #ident);
             },
             StructInputType::Frame(_) => quote! {
@@ -341,6 +382,7 @@ pub fn interpreter(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
 
                 let old_attrs = func.attrs;
+                let mut controls_inline = false;
                 let mut is_raw = false;
                 func.attrs = vec![];
                 for attr in old_attrs {
@@ -350,6 +392,9 @@ pub fn interpreter(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     if attr.path().is_ident("raw_opcode") {
                         is_raw = true;
                         continue;
+                    }
+                    if attr.path().is_ident("inline") {
+                        controls_inline = true;
                     }
                     func.attrs.push(attr);
                 }
@@ -370,9 +415,11 @@ pub fn interpreter(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
 
-                result.extend(quote! {
-                    #[inline(always)]
-                });
+                if !controls_inline {
+                    result.extend(quote! {
+                        #[inline(always)]
+                    });
+                }
                 result.extend(func.into_token_stream());
             }
             _ => {
@@ -451,27 +498,25 @@ fn parse_unannotated(ident: Ident, ty: &syn::Type) -> Input {
                 val: StructInputType::Host(parse_host_type(ty)),
             });
         }
-        syn::Type::Reference(intype) => {
-            match intype.elem.as_ref() {
-                syn::Type::Path(typath) => {
-                    let ty_ident = typath.path.require_ident().unwrap();
-                    if ty_ident == "VM" {
-                        return Input::VM;
-                    } else {
-                        return Input::Struct(StructInput {
-                            name: ident.to_string(),
-                            val: StructInputType::Host(parse_host_type(ty)),
-                        });
-                    }
-                }
-                _ => {
+        syn::Type::Reference(intype) => match intype.elem.as_ref() {
+            syn::Type::Path(typath) => {
+                let ty_ident = typath.path.require_ident().unwrap();
+                if ty_ident == "VM" {
+                    return Input::VM;
+                } else {
                     return Input::Struct(StructInput {
                         name: ident.to_string(),
                         val: StructInputType::Host(parse_host_type(ty)),
                     });
                 }
             }
-        }
+            _ => {
+                return Input::Struct(StructInput {
+                    name: ident.to_string(),
+                    val: StructInputType::Host(parse_host_type(ty)),
+                });
+            }
+        },
         _ => {
             return Input::Struct(StructInput {
                 name: ident.to_string(),
@@ -512,7 +557,7 @@ fn parse_guest_type(ty: &syn::Type) -> GuestType {
             return match ident.to_string().as_str() {
                 "Field" => GuestType::Field,
                 "u64" => GuestType::U64,
-                "Array" => GuestType::Array,
+                "BoxedValue" => GuestType::BoxedValue,
                 _ => panic!("unsupported guest path type {:?}", ty),
             };
         }
@@ -538,7 +583,8 @@ fn parse_host_type(ty: &syn::Type) -> HostType {
                 "isize" => HostType::ISize,
                 "JumpTarget" => HostType::JumpTarget,
                 "FramePosition" => HostType::FramePosition,
-                "ArrayMeta" => HostType::ArrayMeta,
+                "BoxedLayout" => HostType::BoxedLayout,
+                "Field" => HostType::Field,
                 _ => panic!("unsupported type {:?}", ty),
             };
         }
@@ -574,7 +620,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
                     GuestType::Field => format_ident!("read_field"),
                     GuestType::U64 => format_ident!("read_u64"),
                     GuestType::Ptr => format_ident!("read_ptr"),
-                    GuestType::Array => format_ident!("read_array"),
+                    GuestType::BoxedValue => format_ident!("read_array"),
                 };
                 getters.extend(quote! {
                     let #i = unsafe {
@@ -592,7 +638,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
                     GuestType::Field => format_ident!("read_field_mut"),
                     GuestType::U64 => format_ident!("read_u64_mut"),
                     GuestType::Ptr => format_ident!("read_ptr_mut"),
-                    GuestType::Array => format_ident!("read_array_mut"),
+                    GuestType::BoxedValue => format_ident!("read_array_mut"),
                 };
                 getters.extend(quote! {
                     let #i = unsafe {
@@ -618,11 +664,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
     }
 
     let mut call_params = if def.is_raw {
-        vec![
-            quote! {pc},
-            quote! {frame},
-            quote! {vm},
-        ]
+        vec![quote! {pc}, quote! {frame}, quote! {vm}]
     } else {
         vec![]
     };
@@ -679,6 +721,9 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
             frame: Frame,
             vm: &mut VM,
         ) {
+            // unsafe {
+            //     println!("opcode: {:?}", *(pc as *mut (*mut usize)));
+            // }
             let mut current_field_offset = 1isize;
             #getters
             #call_op
@@ -804,9 +849,9 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
         let matcher = code.matcher();
         let name_str = code.name.clone();
         let fields_ident = format_ident!("fields");
-        let fields = code.struct_args().map(|field| 
-            field.make_printer(&fields_ident)
-        );
+        let fields = code
+            .struct_args()
+            .map(|field| field.make_printer(&fields_ident));
         quote! {
             #matcher => {
                 let mut #fields_ident = String::new();

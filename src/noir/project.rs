@@ -2,9 +2,11 @@
 
 use std::fs;
 
-use crate::compiler::analysis::types::Types;
-use crate::compiler::passes::rc_insertion::RCInsertion;
+use crate::compiler::passes::box_fields::BoxFields;
 use crate::compiler::Field;
+use crate::compiler::analysis::instrumenter::CostEstimator;
+use crate::compiler::analysis::liveness::LivenessAnalysis;
+use crate::compiler::analysis::types::Types;
 use crate::compiler::codegen::CodeGen;
 use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::monomorphization::Monomorphization;
@@ -17,15 +19,18 @@ use crate::compiler::passes::explicit_witness::ExplicitWitness;
 use crate::compiler::passes::fix_double_jumps::FixDoubleJumps;
 use crate::compiler::passes::mem2reg::Mem2Reg;
 use crate::compiler::passes::pull_into_assert::PullIntoAssert;
+use crate::compiler::passes::rc_insertion::RCInsertion;
 use crate::compiler::passes::specializer::Specializer;
+use crate::compiler::passes::witness_write_to_fresh::WitnessWriteToFresh;
 use crate::compiler::r1cs_cleanup::R1CSCleanup;
-use crate::compiler::r1cs_gen::R1CGen;
+use crate::compiler::r1cs_gen::{R1C, R1CGen};
 use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
 use crate::compiler::taint_analysis::{ConstantTaint, TaintAnalysis};
 use crate::compiler::untaint_control_flow::UntaintControlFlow;
 use crate::compiler::witness_generation::WitnessGen;
 use crate::noir::error::compilation::{Error as CompileError, Result as CompileResult};
 use crate::vm::interpreter;
+use ark_ff::{AdditiveGroup, UniformRand};
 use fm::FileManager;
 use nargo::{
     insert_all_files_for_workspace_into_file_manager, package::Package, parse_all, prepare_package,
@@ -34,10 +39,11 @@ use nargo::{
 use noirc_driver::{CompileOptions, check_crate};
 use noirc_evaluator::ssa::ssa_gen::Ssa;
 use noirc_evaluator::ssa::{SsaBuilder, SsaLogging, SsaPass};
+use noirc_frontend::debug;
 use noirc_frontend::hir::ParsedFiles;
 use noirc_frontend::monomorphization::monomorphize;
 use std::str::FromStr;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// A manager for source files for the Noir project that we intend to extract.
 #[derive(Clone)]
@@ -122,6 +128,12 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let ssa = ssa.run_passes(&&passes).unwrap();
 
+        let debug_output_dir = package.root_dir.join("spartan_vm_debug");
+        if debug_output_dir.exists() {
+            fs::remove_dir_all(&debug_output_dir).unwrap();
+        }
+        fs::create_dir(&debug_output_dir).unwrap();
+
         // Convert to custom SSA
         let mut custom_ssa = SSA::from_noir(&ssa.ssa);
         println!(
@@ -187,6 +199,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         );
 
         let mut pass_manager = PassManager::<ConstantTaint>::new(
+            "initial".to_string(),
             draw_cfg,
             vec![
                 Box::new(FixDoubleJumps::new()),
@@ -202,15 +215,18 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
                 Box::new(Specializer::new(5.0)),
                 Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
                 Box::new(ExplicitWitness::new()),
-                Box::new(RCInsertion::new()),
+                // Box::new(RCInsertion::new()), // TODO: this is to be moved to phase 2
                 Box::new(FixDoubleJumps::new()),
             ],
         );
 
-        let debug_output_dir = package.root_dir.join("spartan_vm_debug");
-
         pass_manager.set_debug_output_dir(debug_output_dir.clone());
         pass_manager.run(&mut custom_ssa);
+
+        // R1CS IS FROZEN NOW
+        // ALL CONSTRAINTS AND WITNESS WRITES ARE NOW UN-MOVABLE SIDE EFFECTS!
+
+        let mut r1cs_ssa = custom_ssa.clone();
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         let type_info = Types::new().run(&custom_ssa, &flow_analysis);
@@ -218,24 +234,176 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let mut r1cs_gen = R1CGen::new();
         r1cs_gen.run(&custom_ssa, &type_info);
         let r1cs = r1cs_gen.clone().get_r1cs();
+        let mut num_non_zero_terms = 0;
+        for r1c in r1cs.iter() {
+            for (_, coeff) in r1c.a.iter() {
+                if *coeff != ark_bn254::Fr::ZERO {
+                    num_non_zero_terms += 1;
+                }
+            }
+            for (_, coeff) in r1c.b.iter() {
+                if *coeff != ark_bn254::Fr::ZERO {
+                    num_non_zero_terms += 1;
+                }
+            }
+            for (_, coeff) in r1c.c.iter() {
+                if *coeff != ark_bn254::Fr::ZERO {
+                    num_non_zero_terms += 1;
+                }
+            }
+        }
         info!(
-            message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
+            message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size(), num_non_zero_terms = num_non_zero_terms
         );
 
-        // fs::write(
-        //     debug_output_dir.join("r1cs.txt"),
-        //     r1cs_gen
-        //         .clone()
-        //         .get_r1cs()
-        //         .iter()
-        //         .map(|r1c| r1c.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
+        let mut r1cs_coeffs = vec![];
+        for _ in 0..r1cs.len() {
+            r1cs_coeffs.push(ark_bn254::Fr::rand(&mut rand::thread_rng()));
+        }
+
+        let mut res_a = vec![ark_bn254::Fr::ZERO; r1cs_gen.get_witness_size()];
+        let mut res_b = vec![ark_bn254::Fr::ZERO; r1cs_gen.get_witness_size()];
+        let mut res_c = vec![ark_bn254::Fr::ZERO; r1cs_gen.get_witness_size()];
+        self.compute_r1cs_derivatives(&r1cs, &r1cs_coeffs, &mut res_a, &mut res_b, &mut res_c);
+
+        fs::write(
+            debug_output_dir.join("deriv_coeffs.txt"),
+            r1cs_coeffs
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("deriv_a.txt"),
+            res_a
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("deriv_b.txt"),
+            res_b
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("deriv_c.txt"),
+            res_c
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+
+        let mut r1cs_phase_1 = PassManager::<ConstantTaint>::new(
+            "r1cs_phase_1".to_string(),
+            draw_cfg,
+            vec![
+                Box::new(WitnessWriteToFresh::new()),
+                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
+                Box::new(BoxFields::new()),
+                Box::new(RCInsertion::new()),
+                Box::new(FixDoubleJumps::new()),
+            ],
+        );
+        r1cs_phase_1.set_debug_output_dir(debug_output_dir.clone());
+        r1cs_phase_1.run(&mut r1cs_ssa);
+
+        {
+            let flow_analysis = FlowAnalysis::run(&r1cs_ssa);
+            let type_info = Types::new().run(&r1cs_ssa, &flow_analysis);
+
+            let codegen = CodeGen::new();
+            let program = codegen.run(&r1cs_ssa, &flow_analysis, &type_info);
+            fs::write(
+                debug_output_dir.join("ad_program.txt"),
+                format!("{}", program),
+            )
+            .unwrap();
+            let binary = program.to_binary();
+            let (da, db, dc, instrumenter) = interpreter::run_ad(
+                &binary,
+                r1cs_gen.get_witness_size(),
+                &r1cs_coeffs,
+            );
+            let leftover_memory = instrumenter.plot(&debug_output_dir.join("ad_vm_memory.png"));
+            if leftover_memory > 0 {
+                warn!(message = %"AD VM memory leak detected", leftover_memory);
+            } else {
+                info!(message = %"AD VM memory leak not detected");
+            }
+
+            if da != res_a {
+                error!(message = %"Derivative of A does not match");
+            } else {
+                info!(message = %"Derivative of A matches");
+            }
+
+            if db != res_b {
+                error!(message = %"Derivative of B does not match");
+            } else {
+                info!(message = %"Derivative of B matches");
+            }
+
+            if dc != res_c {
+                error!(message = %"Derivative of C does not match");
+            } else {
+                info!(message = %"Derivative of C matches");
+            }
+
+            fs::write(
+                debug_output_dir.join("deriv_a_vm.txt"),
+                da
+                    .iter()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .unwrap();
+            fs::write(
+                debug_output_dir.join("deriv_b_vm.txt"),
+                db
+                    .iter()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .unwrap();
+            fs::write(
+                debug_output_dir.join("deriv_c_vm.txt"),
+                dc
+                    .iter()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .unwrap();
+    
+        }
+
+        // let mut r1cs_phase_2 = PassManager::<ConstantTaint>::new(
 
         let r1cs_cleanup = R1CSCleanup::new();
         r1cs_cleanup.run(&mut custom_ssa);
+
+        let mut pass_manager = PassManager::<ConstantTaint>::new(
+            "witgen".to_string(),
+            draw_cfg,
+            vec![
+                Box::new(RCInsertion::new()),
+                Box::new(FixDoubleJumps::new()),
+            ],
+        );
+        pass_manager.set_debug_output_dir(debug_output_dir.clone());
+        pass_manager.run(&mut custom_ssa);
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         let type_info = Types::new().run(&custom_ssa, &flow_analysis);
@@ -245,10 +413,6 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
 
         let mut binary = program.to_binary();
-        // let len_num_digits = binary.len().to_string().len();
-        // for (i, b) in binary.iter().enumerate() {
-        //     println!("{: >len_num_digits$}: {}", i, b);
-        // }
 
         println!("binary size: {} bytes", binary.len() * 8);
 
@@ -265,9 +429,9 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             ],
         );
 
-        let valid = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
-        if !valid {
-            warn!(message = %"VM memory leak detected");
+        let leftover_memory = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
+        if leftover_memory > 0 {
+            warn!(message = %"VM memory leak detected", leftover_memory);
         } else {
             info!(message = %"VM memory leak not detected");
         }
@@ -360,6 +524,27 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         }
 
         Ok(())
+    }
+
+    fn compute_r1cs_derivatives(
+        &self,
+        r1cs: &[R1C],
+        coeffs: &[ark_bn254::Fr],
+        res_a: &mut [ark_bn254::Fr],
+        res_b: &mut [ark_bn254::Fr],
+        res_c: &mut [ark_bn254::Fr],
+    ) {
+        for (r1c, coeff) in r1cs.iter().zip(coeffs.iter()) {
+            for (a_ix, a_coeff) in r1c.a.iter() {
+                res_a[*a_ix] += *a_coeff * *coeff;
+            }
+            for (b_ix, b_coeff) in r1c.b.iter() {
+                res_b[*b_ix] += *b_coeff * *coeff;
+            }
+            for (c_ix, c_coeff) in r1c.c.iter() {
+                res_c[*c_ix] += *c_coeff * *coeff;
+            }
+        }
     }
 }
 

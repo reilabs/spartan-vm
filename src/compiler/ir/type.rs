@@ -28,6 +28,7 @@ impl Display for Empty {
 pub enum TypeExpr<V> {
     Field,
     U(usize),
+    BoxedField,
     Array(Box<Type<V>>, usize),
     Slice(Box<Type<V>>),
     Ref(Box<Type<V>>),
@@ -45,6 +46,7 @@ impl<V> TypeExpr<V> {
                 inner1.equal_up_to_annotation(inner2)
             }
             (TypeExpr::Ref(inner1), TypeExpr::Ref(inner2)) => inner1.equal_up_to_annotation(inner2),
+            (TypeExpr::BoxedField, TypeExpr::BoxedField) => true,
             _ => false,
         }
     }
@@ -86,6 +88,7 @@ impl<V: Display> Display for Type<V> {
             TypeExpr::Ref(inner) => {
                 write!(f, "Ref{}<{}>", format_annotation(&self.annotation), inner)
             }
+            TypeExpr::BoxedField => write!(f, "BoxedField{}", format_annotation(&self.annotation)),
         }
     }
 }
@@ -98,6 +101,9 @@ impl<V: CommutativeMonoid + Display> Type<V> {
             }
             (TypeExpr::U(size1), TypeExpr::U(size2)) => {
                 Type::u(*size1.max(size2), self.annotation.op(&other.annotation))
+            }
+            (TypeExpr::BoxedField, _) | (_, TypeExpr::BoxedField) => {
+                Type::boxed_field(self.annotation.op(&other.annotation))
             }
             _ => panic!("Cannot perform arithmetic on types {} and {}", self, other),
         }
@@ -117,6 +123,7 @@ impl<V: CommutativeMonoid + Display> Type<V> {
             TypeExpr::Slice(inner) => inner.contains_ptrs(),
             TypeExpr::Field => false,
             TypeExpr::U(_) => false,
+            TypeExpr::BoxedField => false,
         }
     }
 }
@@ -164,6 +171,13 @@ impl<V> Type<V> {
         }
     }
 
+    pub fn boxed_field(annotation: V) -> Self {
+        Type {
+            expr: TypeExpr::BoxedField,
+            annotation,
+        }
+    }
+
     pub fn u32(annotation: V) -> Self {
         Type::u(32, annotation)
     }
@@ -207,6 +221,10 @@ impl<V> Type<V> {
 
     pub fn is_array_or_slice(&self) -> bool {
         matches!(self.expr, TypeExpr::Array(_, _) | TypeExpr::Slice(_))
+    }
+
+    pub fn is_boxed_field(&self) -> bool {
+        matches!(self.expr, TypeExpr::BoxedField)
     }
 
     pub fn is_u(&self) -> bool {

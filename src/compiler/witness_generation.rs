@@ -148,6 +148,7 @@ impl WitnessGen {
                     scope.insert(*value_id, Value::Fp(ark_bn254::Fr::from(*value)))
                 }
                 Const::Field(value) => scope.insert(*value_id, Value::Fp(*value)),
+                Const::BoxedField(_) => panic!("ICE: boxed field shouldn't exist in witgen"),
             };
         }
 
@@ -265,12 +266,21 @@ impl WitnessGen {
                         self.b.push(b.expect_fp());
                         self.c.push(c.expect_fp());
                     }
+                    OpCode::NextDCoeff { .. } => {
+                        panic!("ICE: unexpected instruction: NextDCoeff");
+                    }
+                    OpCode::BumpD { .. } => {
+                        panic!("ICE: unexpected instruction: BumpD");
+                    }
                     OpCode::WriteWitness(result, v, _) => {
                         let v = scope.get(v).unwrap().clone();
                         if let Some(result) = result {
                             scope.insert(*result, v.clone());
                         }
                         self.witness.push(v.expect_fp());
+                    }
+                    OpCode::FreshWitness(_, _) => {
+                        panic!("ICE: unexpected instruction");
                     }
                     OpCode::Call(ret, tgt, args) => {
                         let args = args
@@ -368,6 +378,11 @@ impl WitnessGen {
                         scope.insert(*result, Value::Array(bit_values));
                     }
                     OpCode::MemOp(_, _) => {}
+                    OpCode::BoxField(_, _, _) |
+                    OpCode::UnboxField(_, _) |
+                    OpCode::MulConst(_, _, _) => {
+                        panic!("ICE: unexpected instruction");
+                    }
                 }
             }
 

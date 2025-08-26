@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::{
-    flow_analysis::{FlowAnalysis, CFG}, pass_manager::Pass, ssa::{BlockId, Function, OpCode, Terminator, ValueId, SSA}
+    flow_analysis::{CFG, FlowAnalysis},
+    pass_manager::Pass,
+    ssa::{BlockId, Function, OpCode, SSA, Terminator, ValueId},
 };
 
 pub struct DCE {
@@ -39,7 +41,7 @@ impl Config {
     }
 }
 
-impl <V: Clone> Pass<V> for DCE {
+impl<V: Clone> Pass<V> for DCE {
     fn run(&self, ssa: &mut SSA<V>, pass_manager: &crate::compiler::pass_manager::PassManager<V>) {
         self.do_run(ssa, pass_manager.get_cfg());
     }
@@ -96,10 +98,22 @@ impl DCE {
                         OpCode::Constrain { .. } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
+                        OpCode::NextDCoeff(_) => {
+                            // This also has the side-effect of bumping the counter, so we need to keep it live.
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
+                        OpCode::BumpD(_, _, _) => {
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
                         OpCode::WriteWitness { .. } => {
                             // Witness stores are critical after the constraint system is generated.
                             // Previously, they only matter if the result is used.
-                            if !self.config.witness_shape_frozen {
+                            if self.config.witness_shape_frozen {
+                                worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                            }
+                        }
+                        OpCode::FreshWitness(_, _) => {
+                            if self.config.witness_shape_frozen {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
                         }
@@ -121,7 +135,10 @@ impl DCE {
                         | OpCode::Cast { .. }
                         | OpCode::Truncate { .. }
                         | OpCode::Not { .. }
-                        | OpCode::ToBits { .. } => {}
+                        | OpCode::ToBits { .. }
+                        | OpCode::BoxField(_, _, _)
+                        | OpCode::UnboxField(_, _)
+                        | OpCode::MulConst(_, _, _) => {}
                     }
                 }
 
@@ -336,7 +353,10 @@ impl DCE {
         }
     }
 
-    fn generate_definitions<V: Clone>(&self, ssa: &Function<V>) -> HashMap<ValueId, ValueDefinition> {
+    fn generate_definitions<V: Clone>(
+        &self,
+        ssa: &Function<V>,
+    ) -> HashMap<ValueId, ValueDefinition> {
         let mut definitions = HashMap::new();
 
         for (value_id, _) in ssa.iter_consts() {

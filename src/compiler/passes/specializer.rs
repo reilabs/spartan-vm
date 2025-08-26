@@ -4,10 +4,19 @@ use ark_ff::{AdditiveGroup, BigInteger, PrimeField};
 use tracing::{info, instrument};
 
 use crate::compiler::{
+    Field,
     analysis::{
         instrumenter::{FunctionSignature, SpecializationSummary, ValueSignature},
-        symbolic_executor::{self, SymbolicExecutor}, types::TypeInfo,
-    }, ir::r#type::Type, pass_manager::{DataPoint, Pass, PassInfo}, ssa::{BinaryArithOpKind, CastTarget, Endianness, Function, FunctionId, MemOp, SeqType, ValueId, SSA}, taint_analysis::ConstantTaint, Field
+        symbolic_executor::{self, SymbolicExecutor},
+        types::TypeInfo,
+    },
+    ir::r#type::Type,
+    pass_manager::{DataPoint, Pass, PassInfo},
+    ssa::{
+        BinaryArithOpKind, CastTarget, Endianness, Function, FunctionId, MemOp, SSA, SeqType,
+        ValueId,
+    },
+    taint_analysis::ConstantTaint,
 };
 
 pub struct Specializer {
@@ -326,8 +335,13 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
         todo!()
     }
 
+    fn fresh_witness(_ctx: &mut SpecializationState) -> Self {
+        todo!()
+    }
+
     fn mem_op(&self, kind: MemOp, ctx: &mut SpecializationState) {
-        ctx.function.push_mem_op(ctx.function.get_entry_id(), self.0, kind);
+        ctx.function
+            .push_mem_op(ctx.function.get_entry_id(), self.0, kind);
     }
 }
 
@@ -465,7 +479,13 @@ impl Specializer {
             state.function.add_return_type(ret.clone());
         }
 
-        SymbolicExecutor::new().run(ssa, type_info, signature.get_fun_id(), call_params, &mut state);
+        SymbolicExecutor::new().run(
+            ssa,
+            type_info,
+            signature.get_fun_id(),
+            call_params,
+            &mut state,
+        );
 
         let code_bloat = state.function.code_size();
         let savings_to_code_ratio = summary.specialization_total_savings as f64 / code_bloat as f64;

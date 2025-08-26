@@ -48,6 +48,7 @@ where
     fn expect_constant_bool(&self, ctx: &mut Context) -> bool;
     fn select(&self, if_t: &Self, if_f: &Self, out_type: &Type<Taint>, ctx: &mut Context) -> Self;
     fn write_witness(&self, tp: Option<&Type<Taint>>, ctx: &mut Context) -> Self;
+    fn fresh_witness(ctx: &mut Context) -> Self;
     fn mem_op(&self, kind: MemOp, ctx: &mut Context);
 }
 
@@ -110,6 +111,7 @@ impl SymbolicExecutor {
             let v = match cst {
                 Const::U(s, v) => V::of_u(*s, *v, ctx),
                 Const::Field(f) => V::of_field(f.clone(), ctx),
+                Const::BoxedField(_) => todo!(),
             };
             scope[val.0 as usize] = Some(v);
         }
@@ -242,6 +244,9 @@ impl SymbolicExecutor {
                             a.write_witness(None, ctx);
                         }
                     }
+                    crate::compiler::ssa::OpCode::FreshWitness(r, _) => {
+                        scope[r.0 as usize] = Some(V::fresh_witness(ctx));
+                    }
                     crate::compiler::ssa::OpCode::Constrain(a, b, c) => {
                         let a = scope[a.0 as usize].as_ref().unwrap();
                         let b = scope[b.0 as usize].as_ref().unwrap();
@@ -256,6 +261,21 @@ impl SymbolicExecutor {
                     crate::compiler::ssa::OpCode::MemOp(kind, value) => {
                         let value = scope[value.0 as usize].as_ref().unwrap();
                         value.mem_op(*kind, ctx);
+                    }
+                    crate::compiler::ssa::OpCode::NextDCoeff(_a) => {
+                        todo!()
+                    }
+                    crate::compiler::ssa::OpCode::BumpD(_matrix, _a, _b) => {
+                        todo!()
+                    }
+                    crate::compiler::ssa::OpCode::BoxField(_, _, _) => {
+                        todo!()
+                    }
+                    crate::compiler::ssa::OpCode::UnboxField(_, _) => {
+                        todo!()
+                    }
+                    crate::compiler::ssa::OpCode::MulConst(_, _, _) => {
+                        todo!()
                     }
                 }
             }
