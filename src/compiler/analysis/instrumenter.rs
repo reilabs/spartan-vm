@@ -707,6 +707,13 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         }
     }
 
+    fn fresh_witness(_ctx: &mut CostAnalysis) -> Self {
+        Self {
+            unspecialized: Value::FWitness,
+            specialized: Value::FWitness,
+        }
+    }
+
     fn mem_op(&self, _kind: MemOp, _ctx: &mut CostAnalysis) {}
 }
 

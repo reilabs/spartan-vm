@@ -48,6 +48,7 @@ impl<'a> LocalFunctionAnnotator<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct SSA<V> {
     functions: HashMap<FunctionId, Function<V>>,
     main_id: FunctionId,
@@ -941,8 +942,8 @@ pub enum OpCode<V> {
     ToBits(ValueId, ValueId, Endianness, usize), // _1 = to_bits _2 (endianness, output_size)
     MemOp(MemOp, ValueId),                       // mem_op(kind, _2)
 
-    // Phase 2
     WriteWitness(Option<ValueId>, ValueId, V), // _1 = as_witness(_2)
+    FreshWitness(ValueId, V),                  // _1 = fresh_witness()
     Constrain(ValueId, ValueId, ValueId),      // assert(_1 * _2 - _3 == 0)
 }
 
@@ -1064,6 +1065,9 @@ impl<V: Display + Clone> OpCode<V> {
                 };
                 format!("{}write_witness(v{})", r_str, value.0)
             }
+            OpCode::FreshWitness(result, _annotation) => {
+                format!("v{}{} = fresh_witness()", result.0, annotate(value_annotator, *result))
+            }
             OpCode::Constrain(a, b, c) => {
                 format!("constrain_r1c(v{} * v{} - v{} == 0)", a.0, b.0, c.0)
             }
@@ -1129,7 +1133,7 @@ impl<V: Display + Clone> OpCode<V> {
 impl<V> OpCode<V> {
     pub fn get_operands_mut(&mut self) -> impl Iterator<Item = &mut ValueId> {
         match self {
-            Self::Alloc(r, _, _) | Self::MemOp(_, r) => vec![r].into_iter(),
+            Self::Alloc(r, _, _) | Self::MemOp(_, r) | Self::FreshWitness(r, _) => vec![r].into_iter(),
             Self::Cmp(_, a, b, c) | Self::BinaryArithOp(_, a, b, c) | Self::ArrayGet(a, b, c) => {
                 vec![a, b, c].into_iter()
             }
@@ -1162,7 +1166,7 @@ impl<V> OpCode<V> {
 
     pub fn get_inputs_mut(&mut self) -> impl Iterator<Item = &mut ValueId> {
         match self {
-            Self::Alloc(_, _, _) => vec![].into_iter(),
+            Self::Alloc(_, _, _) | Self::FreshWitness(_, _) => vec![].into_iter(),
             Self::Cmp(_, _, b, c) | Self::BinaryArithOp(_, _, b, c) | Self::ArrayGet(_, b, c) => {
                 vec![b, c].into_iter()
             }
@@ -1184,7 +1188,7 @@ impl<V> OpCode<V> {
 
     pub fn get_inputs(&self) -> impl Iterator<Item = &ValueId> {
         match self {
-            Self::Alloc(_, _, _) => vec![].into_iter(),
+            Self::Alloc(_, _, _) | Self::FreshWitness(_, _) => vec![].into_iter(),
             Self::Cmp(_, _, b, c) | Self::BinaryArithOp(_, _, b, c) | Self::ArrayGet(_, b, c) => {
                 vec![b, c].into_iter()
             }
@@ -1207,6 +1211,7 @@ impl<V> OpCode<V> {
     pub fn get_results(&self) -> impl Iterator<Item = &ValueId> {
         match self {
             Self::Alloc(r, _, _)
+            | Self::FreshWitness(r, _)
             | Self::Cmp(_, r, _, _)
             | Self::BinaryArithOp(_, r, _, _)
             | Self::ArrayGet(r, _, _)

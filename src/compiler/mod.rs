@@ -8,6 +8,7 @@ pub mod pass_manager;
 pub mod passes;
 pub mod r1cs_cleanup;
 pub mod r1cs_gen;
+pub mod retype_for_r1cs;
 pub mod ssa;
 pub mod ssa_gen;
 pub mod taint_analysis;

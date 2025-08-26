@@ -48,6 +48,7 @@ where
     fn expect_constant_bool(&self, ctx: &mut Context) -> bool;
     fn select(&self, if_t: &Self, if_f: &Self, out_type: &Type<Taint>, ctx: &mut Context) -> Self;
     fn write_witness(&self, tp: Option<&Type<Taint>>, ctx: &mut Context) -> Self;
+    fn fresh_witness(ctx: &mut Context) -> Self;
     fn mem_op(&self, kind: MemOp, ctx: &mut Context);
 }
 
@@ -241,6 +242,9 @@ impl SymbolicExecutor {
                         } else {
                             a.write_witness(None, ctx);
                         }
+                    }
+                    crate::compiler::ssa::OpCode::FreshWitness(r, _) => {
+                        scope[r.0 as usize] = Some(V::fresh_witness(ctx));
                     }
                     crate::compiler::ssa::OpCode::Constrain(a, b, c) => {
                         let a = scope[a.0 as usize].as_ref().unwrap();
