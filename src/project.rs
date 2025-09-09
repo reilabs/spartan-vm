@@ -28,15 +28,13 @@ pub struct Project {
 
     /// Nargo object keeping parsed files
     nargo_parsed_files: ParsedFiles,
+
+    /// Whether to draw CFG and call graph images
+    draw_cfg: bool,
 }
 
 impl Project {
-    /// Creates new Lampe project by reading Noir project.
-    ///
-    /// # Errors
-    ///
-    /// Will return `Error` if something goes wrong witch reading Noir project.
-    pub fn new(project_root: PathBuf) -> Result<Self, Error> {
+    pub fn new(project_root: PathBuf, draw_cfg: bool) -> Result<Self, Error> {
         // Workspace loading was done based on https://github.com/noir-lang/noir/blob/c3a43abf9be80c6f89560405b65f5241ed67a6b2/tooling/nargo_cli/src/cli/mod.rs#L180
         // It can be replaced when integrated into nargo tool.
         let toml_path = nargo_toml::get_package_manifest(&project_root)?;
@@ -50,6 +48,7 @@ impl Project {
             nargo_workspace,
             nargo_file_manager,
             nargo_parsed_files,
+            draw_cfg,
         })
     }
 
@@ -82,7 +81,7 @@ impl Project {
 
         let warnings = vec![];
 
-        let _res = Self::compile_package(noir_project, package, public_witness)?;
+        let _res = Self::compile_package(noir_project, package, public_witness, self.draw_cfg)?;
         // warnings.extend(res.warnings);
         // let extracted_code = res.data;
         // let additional_dependencies = Self::get_dependencies_with_lampe(package)?;
@@ -96,9 +95,10 @@ impl Project {
     fn compile_package(
         noir_project: &noir::Project,
         package: &Package,
-        public_witness: Vec<ark_bn254::Fr>
+        public_witness: Vec<ark_bn254::Fr>,
+        draw_cfg: bool,
     ) -> Result<(), Error> {
-        let _compile_result = noir_project.compile_package(package, public_witness)?;
+        let _compile_result = noir_project.compile_package(package, public_witness, draw_cfg)?;
         Ok(())
     }
 }

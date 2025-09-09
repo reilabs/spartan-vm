@@ -2,11 +2,9 @@
 
 use std::fs;
 
-use crate::compiler::analysis::liveness::LivenessAnalysis;
 use crate::compiler::analysis::types::Types;
 use crate::compiler::passes::rc_insertion::RCInsertion;
 use crate::compiler::Field;
-use crate::compiler::analysis::instrumenter::CostEstimator;
 use crate::compiler::codegen::CodeGen;
 use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::monomorphization::Monomorphization;
@@ -72,6 +70,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         &self,
         package: &Package,
         public_witness: Vec<ark_bn254::Fr>,
+        draw_cfg: bool,
     ) -> CompileResult<()> {
         let (mut context, crate_id) =
             prepare_package(self.nargo_file_manager, self.nargo_parsed_files, package);
@@ -131,7 +130,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         );
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        let type_info = Types::new().run(&custom_ssa, &flow_analysis);
+        let _type_info = Types::new().run(&custom_ssa, &flow_analysis);
         println!(
             "Converted SSA:\n{}",
             custom_ssa.to_string(&DefaultSsaAnnotator)
@@ -188,7 +187,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         );
 
         let mut pass_manager = PassManager::<ConstantTaint>::new(
-            true,
+            draw_cfg,
             vec![
                 Box::new(FixDoubleJumps::new()),
                 Box::new(Mem2Reg::new()),

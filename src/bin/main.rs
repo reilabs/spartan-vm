@@ -11,7 +11,7 @@
 // These occur in our Noir dependencies and cannot be avoided.
 #![allow(clippy::multiple_crate_versions)]
 
-use std::{fs, path::PathBuf, process::ExitCode, str::FromStr};
+use std::{path::PathBuf, process::ExitCode, str::FromStr};
 
 use clap::Parser;
 use spartan_vm::{Error, Project};
@@ -29,6 +29,10 @@ pub struct ProgramOptions {
 
     #[arg(long, value_name = "PUBLIC WITNESS", default_value = "", num_args = 0..)]
     pub public_witness: Vec<String>,
+
+    /// Enable debugging mode which will generate graphs
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub draw_graphs: bool,
 }
 
 /// The main function for the CLI utility, responsible for parsing program
@@ -52,12 +56,12 @@ fn main() -> ExitCode {
 ///
 /// - [`Error`] if the extraction process fails for any reason.
 pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
-    let project = Project::new(args.root.clone())?;
+    let project = Project::new(args.root.clone(), args.draw_graphs)?;
 
     let public_witness: Vec<_> = args.public_witness.iter().map(|s| ark_bn254::Fr::from_str(s).unwrap()).collect();
     println!("Public witness: {:?}", public_witness);
 
-    let result = project.extract(public_witness)?;
+    project.extract(public_witness)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -73,31 +77,4 @@ fn parse_path(path: &str) -> Result<PathBuf, String> {
         path = std::env::current_dir().unwrap().join(path).normalize();
     }
     Ok(path)
-}
-
-/// Generate a PNG image from a DOT graph string
-fn generate_graph_image(
-    dot_content: &str,
-    output_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use std::process::Command;
-
-    // Write DOT content to a temporary file
-    let temp_dot_path = "temp_graph.dot";
-    fs::write(temp_dot_path, dot_content)?;
-
-    // Use system dot command to generate PNG
-    let output = Command::new("dot")
-        .args(&["-Tpng", temp_dot_path, "-o", output_path])
-        .output()?;
-
-    // Clean up temporary file
-    let _ = fs::remove_file(temp_dot_path);
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        let error_msg = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Graphviz dot command failed: {}", error_msg).into())
-    }
 }
