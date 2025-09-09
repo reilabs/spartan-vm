@@ -5,7 +5,6 @@ use std::fs;
 use crate::compiler::analysis::liveness::LivenessAnalysis;
 use crate::compiler::analysis::types::Types;
 use crate::compiler::passes::rc_insertion::RCInsertion;
-use crate::compiler::passes::witness_write_to_fresh::WitnessWriteToFresh;
 use crate::compiler::Field;
 use crate::compiler::analysis::instrumenter::CostEstimator;
 use crate::compiler::codegen::CodeGen;
@@ -124,12 +123,6 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let ssa = ssa.run_passes(&&passes).unwrap();
 
-        let debug_output_dir = package.root_dir.join("spartan_vm_debug");
-        if debug_output_dir.exists() {
-            fs::remove_dir_all(&debug_output_dir).unwrap();
-        }
-        fs::create_dir(&debug_output_dir).unwrap();
-
         // Convert to custom SSA
         let mut custom_ssa = SSA::from_noir(&ssa.ssa);
         println!(
@@ -195,7 +188,6 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         );
 
         let mut pass_manager = PassManager::<ConstantTaint>::new(
-            "initial".to_string(),
             true,
             vec![
                 Box::new(FixDoubleJumps::new()),
@@ -211,42 +203,25 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
                 Box::new(Specializer::new(5.0)),
                 Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
                 Box::new(ExplicitWitness::new()),
-                // Box::new(RCInsertion::new()), // TODO: this is to be moved to phase 2
+                Box::new(RCInsertion::new()),
                 Box::new(FixDoubleJumps::new()),
             ],
         );
 
+        let debug_output_dir = package.root_dir.join("spartan_vm_debug");
+
         pass_manager.set_debug_output_dir(debug_output_dir.clone());
         pass_manager.run(&mut custom_ssa);
 
-        // R1CS IS FROZEN NOW
-        // ALL CONSTRAINTS AND WITNESS WRITES ARE NOW UN-MOVABLE SIDE EFFECTS!
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        let type_info = Types::new().run(&custom_ssa, &flow_analysis);
 
-        let mut r1cs_ssa = custom_ssa.clone();
-
-        let mut r1cs_phase_1 = PassManager::<ConstantTaint>::new(
-            "r1cs_phase_1".to_string(),
-            true,
-            vec![
-                Box::new(WitnessWriteToFresh::new()),
-                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
-            ],
+        let mut r1cs_gen = R1CGen::new();
+        r1cs_gen.run(&custom_ssa, &type_info);
+        let r1cs = r1cs_gen.clone().get_r1cs();
+        info!(
+            message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
         );
-        r1cs_phase_1.set_debug_output_dir(debug_output_dir.clone());
-        r1cs_phase_1.run(&mut r1cs_ssa);
-
-        // let mut r1cs_phase_2 = PassManager::<ConstantTaint>::new(
-
-
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        // let type_info = Types::new().run(&custom_ssa, &flow_analysis);
-
-        // let mut r1cs_gen = R1CGen::new();
-        // r1cs_gen.run(&custom_ssa, &type_info);
-        // let r1cs = r1cs_gen.clone().get_r1cs();
-        // info!(
-        //     message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
-        // );
 
         // fs::write(
         //     debug_output_dir.join("r1cs.txt"),
@@ -260,126 +235,130 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         // )
         // .unwrap();
 
-        // let r1cs_cleanup = R1CSCleanup::new();
-        // r1cs_cleanup.run(&mut custom_ssa);
+        let r1cs_cleanup = R1CSCleanup::new();
+        r1cs_cleanup.run(&mut custom_ssa);
 
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        // let type_info = Types::new().run(&custom_ssa, &flow_analysis);
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        let type_info = Types::new().run(&custom_ssa, &flow_analysis);
 
-        // let codegen = CodeGen::new();
-        // let program = codegen.run(&custom_ssa, &flow_analysis, &type_info);
-        // fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
+        let codegen = CodeGen::new();
+        let program = codegen.run(&custom_ssa, &flow_analysis, &type_info);
+        fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
 
-        // let mut binary = program.to_binary();
-
-        // println!("binary size: {} bytes", binary.len() * 8);
-
-        // let (out_wit, out_a, out_b, out_c, instrumenter) = interpreter::run(
-        //     &mut binary,
-        //     r1cs_gen.get_witness_size(),
-        //     r1cs.len(),
-        //     &[
-        //         Field::from(2),
-        //         Field::from_str(
-        //             "8828670086143533245061788684574618475763043903694187796770609410437484537737",
-        //         )
-        //         .unwrap(),
-        //     ],
-        // );
-
-        // let valid = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
-        // if !valid {
-        //     warn!(message = %"VM memory leak detected");
-        // } else {
-        //     info!(message = %"VM memory leak not detected");
+        let mut binary = program.to_binary();
+        // let len_num_digits = binary.len().to_string().len();
+        // for (i, b) in binary.iter().enumerate() {
+        //     println!("{: >len_num_digits$}: {}", i, b);
         // }
 
-        // fs::write(
-        //     debug_output_dir.join("witness_good.txt"),
-        //     out_wit
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("a_good.txt"),
-        //     out_a
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("b_good.txt"),
-        //     out_b
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("c_good.txt"),
-        //     out_c
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
+        println!("binary size: {} bytes", binary.len() * 8);
 
-        // let mut witness_gen = WitnessGen::new(public_witness);
-        // witness_gen.run(&custom_ssa, &type_info);
-        // let witness = witness_gen.get_witness();
-        // fs::write(
-        //     debug_output_dir.join("witness.txt"),
-        //     witness
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("a.txt"),
-        //     witness_gen
-        //         .get_a()
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("b.txt"),
-        //     witness_gen
-        //         .get_b()
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("c.txt"),
-        //     witness_gen
-        //         .get_c()
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
+        let (out_wit, out_a, out_b, out_c, instrumenter) = interpreter::run(
+            &mut binary,
+            r1cs_gen.get_witness_size(),
+            r1cs.len(),
+            &[
+                Field::from(2),
+                Field::from_str(
+                    "8828670086143533245061788684574618475763043903694187796770609410437484537737",
+                )
+                .unwrap(),
+            ],
+        );
 
-        // let success = r1cs_gen.verify(&witness);
-        // if success {
-        //     info!(message = %"R1CS verification succeeded");
-        // } else {
-        //     warn!(message = %"R1CS verification failed");
-        // }
+        let valid = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
+        if !valid {
+            warn!(message = %"VM memory leak detected");
+        } else {
+            info!(message = %"VM memory leak not detected");
+        }
+
+        fs::write(
+            debug_output_dir.join("witness_good.txt"),
+            out_wit
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("a_good.txt"),
+            out_a
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("b_good.txt"),
+            out_b
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("c_good.txt"),
+            out_c
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+
+        let mut witness_gen = WitnessGen::new(public_witness);
+        witness_gen.run(&custom_ssa, &type_info);
+        let witness = witness_gen.get_witness();
+        fs::write(
+            debug_output_dir.join("witness.txt"),
+            witness
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("a.txt"),
+            witness_gen
+                .get_a()
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("b.txt"),
+            witness_gen
+                .get_b()
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("c.txt"),
+            witness_gen
+                .get_c()
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+
+        let success = r1cs_gen.verify(&witness);
+        if success {
+            info!(message = %"R1CS verification succeeded");
+        } else {
+            warn!(message = %"R1CS verification failed");
+        }
 
         Ok(())
     }

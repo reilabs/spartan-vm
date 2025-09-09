@@ -37,11 +37,10 @@ pub struct PassManager<V> {
     type_info: Option<TypeInfo<V>>,
     constraint_instrumentation: Option<instrumenter::Summary>,
     debug_output_dir: Option<PathBuf>,
-    phase_label: String,
 }
 
 impl PassManager<ConstantTaint> {
-    pub fn new(phase_label: String, draw_cfg: bool, passes: Vec<Box<dyn Pass<ConstantTaint>>>) -> Self {
+    pub fn new(draw_cfg: bool, passes: Vec<Box<dyn Pass<ConstantTaint>>>) -> Self {
         Self {
             passes,
             current_pass_info: None,
@@ -50,20 +49,14 @@ impl PassManager<ConstantTaint> {
             type_info: None,
             constraint_instrumentation: None,
             debug_output_dir: None,
-            phase_label,
         }
     }
 
     pub fn set_debug_output_dir(&mut self, debug_output_dir: PathBuf) {
-        let specific_dir = debug_output_dir.join(self.phase_label.clone());
-        if !specific_dir.exists() {
-            fs::create_dir(&specific_dir).unwrap();
-        }
-        self.debug_output_dir = Some(specific_dir);
-
+        self.debug_output_dir = Some(debug_output_dir);
     }
 
-    #[tracing::instrument(skip_all, name = "PassManager::run", fields(phase = %self.phase_label))]
+    #[tracing::instrument(skip_all, name = "PassManager::run")]
     pub fn run(&mut self, ssa: &mut SSA<ConstantTaint>) {
         if let Some(debug_output_dir) = &self.debug_output_dir {
             if debug_output_dir.exists() {

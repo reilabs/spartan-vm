@@ -49,8 +49,7 @@ impl ExplicitWitness {
                         OpCode::Alloc { .. }
                         | OpCode::Call { .. }
                         | OpCode::Constrain { .. }
-                        | OpCode::WriteWitness { .. }
-                        | OpCode::FreshWitness(_, _) => {
+                        | OpCode::WriteWitness { .. } => {
                             new_instructions.push(instruction);
                         }
                         OpCode::Cmp(_, r, l, _) => {

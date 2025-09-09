@@ -75,7 +75,6 @@ impl UntaintControlFlow {
                     OpCode::WriteWitness(r, l, _) => {
                         OpCode::WriteWitness(r, l, ConstantTaint::Witness)
                     }
-                    OpCode::FreshWitness(r, _) => OpCode::FreshWitness(r, ConstantTaint::Witness),
                     OpCode::Constrain(a, b, c) => OpCode::Constrain(a, b, c),
                     OpCode::MkSeq(r, l, stp, tp) => {
                         let r_taint = function_taint

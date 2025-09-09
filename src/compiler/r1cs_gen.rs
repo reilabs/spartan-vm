@@ -398,11 +398,6 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
         Value::WitnessVar(witness_var)
     }
 
-    fn fresh_witness(ctx: &mut R1CGen) -> Self {
-        let witness_var = ctx.next_witness();
-        Value::WitnessVar(witness_var)
-    }
-
     fn mem_op(&self, _kind: MemOp, _ctx: &mut R1CGen) {}
 }
 

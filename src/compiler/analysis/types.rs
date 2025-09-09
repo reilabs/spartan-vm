@@ -244,7 +244,6 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::FreshWitness(_, _) => Ok(()),
             OpCode::Constrain(_, _, _) => Ok(()),
             OpCode::MkSeq(r, _, top_tp, t) => {
                 function_info.values.insert(*r, top_tp.of(t.clone()));

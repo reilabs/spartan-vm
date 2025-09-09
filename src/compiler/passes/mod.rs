@@ -8,4 +8,3 @@ pub mod mem2reg;
 pub mod pull_into_assert;
 pub mod rc_insertion;
 pub mod specializer;
-pub mod witness_write_to_fresh;

@@ -114,7 +114,6 @@ impl RCInsertion {
                     | OpCode::AssertR1C(_, _, _)
                     | OpCode::Constrain(_, _, _)
                     | OpCode::WriteWitness(_, _, _)
-                    | OpCode::FreshWitness(_, _)
                     | OpCode::Not(_, _) => new_instructions.push(instruction),
                     OpCode::MkSeq(result, inputs, _, elem_type) => {
                         // MkSeq should return an RC counter of 1.

@@ -272,9 +272,6 @@ impl WitnessGen {
                         }
                         self.witness.push(v.expect_fp());
                     }
-                    OpCode::FreshWitness(_, _) => {
-                        panic!("ICE: unexpected instruction");
-                    }
                     OpCode::Call(ret, tgt, args) => {
                         let args = args
                             .iter()
