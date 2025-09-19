@@ -115,10 +115,11 @@ impl Mem2Reg {
                     let tmp = vec![];
                     let additional_params = phi_map.get(tgt).unwrap_or(&tmp);
                     for (_, val) in additional_params {
-                        params.push(*values.get(val).expect(&format!(
+                        let param_val = values.get(val).expect(&format!(
                             "ICE: block {} has no value for v{}",
                             block_id.0, val.0
-                        )));
+                        ));
+                        params.push(value_replacements.get_replacement(*param_val));
                     }
                 }
                 Terminator::JmpIf(_cond, t1, t2) => {
@@ -129,10 +130,11 @@ impl Mem2Reg {
                             .unwrap()
                             .iter()
                             .map(|(_, val)| {
-                                *values.get(val).expect(&format!(
+                                let v = *values.get(val).expect(&format!(
                                     "ICE: block {} has no value for v{}",
                                     block_id.0, val.0
-                                ))
+                                ));
+                                value_replacements.get_replacement(v)
                             })
                             .collect::<Vec<_>>();
                         function.terminate_block_with_jmp(jumper, *t1, params);
@@ -145,10 +147,11 @@ impl Mem2Reg {
                             .unwrap()
                             .iter()
                             .map(|(_, val)| {
-                                *values.get(val).expect(&format!(
+                                let v = *values.get(val).expect(&format!(
                                     "ICE: block {} has no value for v{}",
                                     block_id.0, val.0
-                                ))
+                                ));
+                                value_replacements.get_replacement(v)
                             })
                             .collect::<Vec<_>>();
                         function.terminate_block_with_jmp(jumper, *t2, params);

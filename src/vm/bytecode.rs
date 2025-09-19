@@ -3,12 +3,13 @@
 use crate::vm::interpreter::dispatch;
 use opcode_gen::interpreter;
 
-use crate::vm::array::{BoxedValue, BoxedLayout};
+use crate::vm::array::{BoxedLayout, BoxedValue};
 use crate::{
     compiler::Field,
     vm::interpreter::{Frame, Handler},
 };
 
+use crate::vm::array::{ADConst, ADWitness};
 use plotters::prelude::*;
 use std::alloc::Layout;
 use std::fmt::Display;
@@ -315,7 +316,6 @@ impl VM {
 
 #[interpreter]
 mod def {
-
     #[raw_opcode]
     fn jmp(pc: *const u64, frame: Frame, vm: &mut VM, target: JumpTarget) {
         let pc = unsafe { pc.offset(target.0) };
@@ -575,8 +575,9 @@ mod def {
         //     array.0
         // );
         for (i, item) in items.iter().enumerate() {
-            let tgt = array.idx(i, stride);
-            frame.write_to(tgt, item.0 as isize, stride);
+            todo!("array alloc opcode")
+            // let tgt = array.idx(i, stride);
+            // frame.write_to(tgt, item.0 as isize, stride);
         }
         unsafe {
             *res = array;
@@ -591,10 +592,11 @@ mod def {
         stride: usize,
         vm: &mut VM,
     ) {
-        let src = array.idx(index as usize, stride);
-        unsafe {
-            ptr::copy_nonoverlapping(src, res, stride);
-        }
+        todo!("array get opcode")
+        // let src = array.idx(index as usize, stride);
+        // unsafe {
+        //     ptr::copy_nonoverlapping(src, res, stride);
+        // }
     }
 
     #[opcode]
@@ -607,42 +609,66 @@ mod def {
         frame: Frame,
         vm: &mut VM,
     ) {
-        let new_array = array.copy_if_reused(vm);
-        let target = new_array.idx(index as usize, stride);
-        frame.write_to(target, source.0 as isize, stride);
-        unsafe {
-            *res = new_array;
-        }
-        // println!("arr_set_outro");
+        todo!("array set opcode")
+        // let new_array = array.copy_if_reused(vm);
+        // let target = new_array.idx(index as usize, stride);
+        // frame.write_to(target, source.0 as isize, stride);
+        // unsafe {
+        //     *res = new_array;
+        // }
     }
 
     #[opcode]
-    fn inc_array_rc(#[frame] array: BoxedValue, amount: u64) {
+    fn inc_rc(#[frame] array: BoxedValue, amount: u64) {
         // println!("inc_array_rc_intro");
         array.inc_rc(amount);
         // println!("inc_array_rc_outro");
     }
 
     #[opcode]
-    fn dec_array_rc(#[frame] array: BoxedValue, vm: &mut VM) {
+    fn dec_rc(#[frame] array: BoxedValue, vm: &mut VM) {
         // println!("dec_array_rc_intro");
         array.dec_rc(vm);
         // println!("dec_array_rc_outro");
     }
 
     #[opcode]
-    fn boxed_field_alloc(#[out] res: *mut BoxedValue, data: Field) {
-        todo!("boxed_field_alloc");
+    fn boxed_field_alloc(#[out] res: *mut BoxedValue, data: Field, vm: &mut VM) {
+        let val = BoxedValue::alloc(BoxedLayout::ad_const(), vm);
+        let d = val.as_ad_const();
+        unsafe {
+            (*d).value = data;
+            *res = val;
+        };
     }
 
     #[opcode]
-    fn constraint_derivative(#[frame] a: BoxedValue, #[frame] b: BoxedValue, #[frame] c: BoxedValue, vm: &mut VM) {
-        todo!("constraint_derivative");
+    fn constraint_derivative(
+        #[frame] a: BoxedValue,
+        #[frame] b: BoxedValue,
+        #[frame] c: BoxedValue,
+        vm: &mut VM,
+    ) {
+        let coeff = unsafe {
+            let r = *vm.ad_coeffs;
+            vm.ad_coeffs = vm.ad_coeffs.offset(1);
+            r
+        };
+        a.bump_da(coeff, vm);
+        b.bump_db(coeff, vm);
+        c.bump_dc(coeff, vm);
     }
 
     #[opcode]
     fn fresh_witness(#[out] res: *mut BoxedValue, vm: &mut VM) {
-        todo!("fresh_witness");
+        let index = vm.current_wit_off as u64;
+        vm.current_wit_off += 1;
+        let val = BoxedValue::alloc(BoxedLayout::ad_witness(), vm);
+        let d = val.as_ad_witness();
+        unsafe {
+            (*d).index = index;
+            *res = val;
+        }
     }
 }
 

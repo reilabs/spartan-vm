@@ -42,7 +42,7 @@ use noirc_frontend::debug;
 use noirc_frontend::hir::ParsedFiles;
 use noirc_frontend::monomorphization::monomorphize;
 use std::str::FromStr;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// A manager for source files for the Noir project that we intend to extract.
 #[derive(Clone)]
@@ -331,6 +331,25 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             } else {
                 info!(message = %"AD VM memory leak not detected");
             }
+
+            if da != res_a {
+                error!(message = %"Derivative of A does not match");
+            } else {
+                info!(message = %"Derivative of A matches");
+            }
+
+            if db != res_b {
+                error!(message = %"Derivative of B does not match");
+            } else {
+                info!(message = %"Derivative of B matches");
+            }
+
+            if dc != res_c {
+                error!(message = %"Derivative of C does not match");
+            } else {
+                info!(message = %"Derivative of C matches");
+            }
+
             fs::write(
                 debug_output_dir.join("deriv_a_vm.txt"),
                 da

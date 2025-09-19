@@ -546,7 +546,7 @@ impl CodeGen {
                     emitter.push_op(bytecode::OpCode::ArrayAlloc {
                         res,
                         stride: layouter.type_size(eltype),
-                        meta: vm::array::BoxedLayout::new(args.len() * stride, is_ptr),
+                        meta: vm::array::BoxedLayout::array(args.len() * stride, is_ptr),
                         items: args,
                     });
                 }
@@ -573,13 +573,13 @@ impl CodeGen {
                 }
                 ssa::OpCode::MemOp(MemOp::Drop, r) => {
                     // assert!(type_info.get_value_type(*r).is_array_or_slice());
-                    emitter.push_op(bytecode::OpCode::DecArrayRc {
+                    emitter.push_op(bytecode::OpCode::DecRc {
                         array: layouter.get_value(*r),
                     });
                 }
                 ssa::OpCode::MemOp(MemOp::Bump(size), r) => {
                     // assert!(type_info.get_value_type(*r).is_array_or_slice());
-                    emitter.push_op(bytecode::OpCode::IncArrayRc {
+                    emitter.push_op(bytecode::OpCode::IncRc {
                         array: layouter.get_value(*r),
                         amount: *size as u64,
                     });

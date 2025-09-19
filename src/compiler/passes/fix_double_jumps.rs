@@ -51,7 +51,7 @@ impl ValueReplacements {
         }
     }
 
-    fn get_replacement(&self, value: ValueId) -> ValueId {
+    pub fn get_replacement(&self, value: ValueId) -> ValueId {
         let replacement = self.replacements.get(&value).unwrap_or(&value);
         *replacement
     }
