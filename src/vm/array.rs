@@ -6,9 +6,9 @@ use std::{
 use crate::vm::bytecode::{AllocationType, VM};
 
 #[derive(Debug, Clone, Copy)]
-pub struct ArrayMeta(pub u64);
+pub struct BoxedLayout(pub u64);
 
-impl ArrayMeta {
+impl BoxedLayout {
     pub fn new(size: usize, ptr_elems: bool) -> Self {
         Self(size as u64 | ((ptr_elems as u64) << 63))
     }
@@ -23,10 +23,10 @@ impl ArrayMeta {
 }
 
 #[derive(Clone, Copy)]
-pub struct Array(pub *mut u64);
+pub struct BoxedValue(pub *mut u64);
 
-impl Array {
-    pub fn alloc(meta: ArrayMeta, vm: &mut VM) -> Self {
+impl BoxedValue {
+    pub fn alloc(meta: BoxedLayout, vm: &mut VM) -> Self {
         let ptr =
             unsafe { alloc::alloc(Layout::array::<u64>(meta.size() + 2).unwrap()) } as *mut u64;
         vm.allocation_instrumenter
@@ -42,8 +42,8 @@ impl Array {
         unsafe { self.0.offset(1) }
     }
 
-    fn meta(&self) -> *mut ArrayMeta {
-        self.0 as *mut ArrayMeta
+    fn meta(&self) -> *mut BoxedLayout {
+        self.0 as *mut BoxedLayout
     }
 
     fn size(&self) -> usize {
@@ -77,7 +77,7 @@ impl Array {
             if meta.ptr_elems() {
                 // println!("Array has ptr elements, dropping");
                 for i in 0..meta.size() {
-                    let elem = unsafe { *(self.idx(i, 1) as *mut Array) };
+                    let elem = unsafe { *(self.idx(i, 1) as *mut BoxedValue) };
                     elem.dec_rc(vm);
                 }
             }
@@ -105,7 +105,7 @@ impl Array {
             *self
         } else {
             // println!("Array @{:?} is not dying, copy", self.0);
-            let new_array = Array::alloc(unsafe { *self.meta() }, vm);
+            let new_array = BoxedValue::alloc(unsafe { *self.meta() }, vm);
 
             unsafe {
                 ptr::copy_nonoverlapping(self.0, new_array.0, self.size() + 2);

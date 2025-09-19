@@ -35,6 +35,18 @@ impl WitnessWriteToFresh {
         ssa: &mut crate::compiler::ssa::SSA<ConstantTaint>,
         type_info: &crate::compiler::analysis::types::TypeInfo<ConstantTaint>,
     ) {
+
+        let main_id = ssa.get_main_id();
+        let main_function = ssa.get_function_mut(main_id);
+        let main_block = main_function.get_block_mut(main_function.get_entry_id());
+        let old_params = main_block.take_parameters();
+        let old_instructions = main_block.take_instructions();
+        let new_instructions = old_params.into_iter().map(|(r, tp)|{
+            assert!(matches!(tp.expr, TypeExpr::Field));
+            OpCode::FreshWitness(r, Type::boxed_field(ConstantTaint::Witness))
+        }).chain(old_instructions.into_iter()).collect();
+        main_block.put_instructions(new_instructions);
+
         for (function_id, function) in ssa.iter_functions_mut() {
             for (_, constant) in function.iter_consts_mut() {
                 let new = match constant {

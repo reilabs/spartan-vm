@@ -546,7 +546,7 @@ impl CodeGen {
                     emitter.push_op(bytecode::OpCode::ArrayAlloc {
                         res,
                         stride: layouter.type_size(eltype),
-                        meta: vm::array::ArrayMeta::new(args.len() * stride, is_ptr),
+                        meta: vm::array::BoxedLayout::new(args.len() * stride, is_ptr),
                         items: args,
                     });
                 }

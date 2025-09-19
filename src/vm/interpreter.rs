@@ -9,7 +9,7 @@ use tracing::instrument;
 
 use crate::{
     compiler::Field,
-    vm::{array::Array, bytecode::{self, AllocationInstrumenter, AllocationType, OpCode, VM}},
+    vm::{array::BoxedValue, bytecode::{self, AllocationInstrumenter, AllocationType, OpCode, VM}},
 };
 
 pub type Handler = fn(*const u64, Frame, &mut VM);
@@ -93,13 +93,13 @@ impl Frame {
     }
 
     #[inline(always)]
-    pub fn read_array(&self, offset: isize) -> Array {
+    pub fn read_array(&self, offset: isize) -> BoxedValue {
         unsafe { *self.read_array_mut(offset) }
     }
 
     #[inline(always)]
-    pub fn read_array_mut(&self, offset: isize) -> *mut Array {
-        unsafe { self.data.offset(offset) as *mut Array }
+    pub fn read_array_mut(&self, offset: isize) -> *mut BoxedValue {
+        unsafe { self.data.offset(offset) as *mut BoxedValue }
     }
 
     #[inline(always)]
@@ -164,7 +164,7 @@ pub fn run(
     let mut out_a = vec![Field::ZERO; r1cs_size];
     let mut out_b = vec![Field::ZERO; r1cs_size];
     let mut out_c = vec![Field::ZERO; r1cs_size];
-    let mut vm = VM::new(
+    let mut vm = VM::new_witgen(
         out_wit.as_mut_ptr(),
         out_a.as_mut_ptr(),
         out_b.as_mut_ptr(),
@@ -195,4 +195,43 @@ pub fn run(
     );
 
     (out_wit, out_a, out_b, out_c, vm.allocation_instrumenter)
+}
+
+#[instrument(skip_all, name = "Interpreter::run_ad")]
+pub fn run_ad(
+    program: &[u64],
+    witness_size: usize,
+    coeffs: &[Field],
+) -> (Vec<Field>, Vec<Field>, Vec<Field>, AllocationInstrumenter) {
+    let mut out_da = vec![Field::ZERO; witness_size];
+    let mut out_db = vec![Field::ZERO; witness_size];
+    let mut out_dc = vec![Field::ZERO; witness_size];
+    let mut vm = VM::new_ad(
+        out_da.as_mut_ptr(),
+        out_db.as_mut_ptr(),
+        out_dc.as_mut_ptr(),
+        coeffs.as_ptr(),
+    );
+
+    let frame = Frame::push(
+        program[1],
+        Frame {
+            data: std::ptr::null_mut(),
+        },
+        &mut vm
+    );
+
+    let mut program = program.to_vec();
+    prepare_dispatch(&mut program);
+
+    let pc = unsafe { program.as_mut_ptr().offset(2) };
+
+    dispatch(
+        pc,
+        frame,
+        &mut vm
+    );
+
+    (out_da, out_db, out_dc, vm.allocation_instrumenter)
+
 }

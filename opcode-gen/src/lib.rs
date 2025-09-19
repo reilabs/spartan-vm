@@ -10,7 +10,7 @@ enum GuestType {
     Field,
     U64,
     Ptr,
-    Array,
+    BoxedValue,
 }
 
 #[derive(Debug)]
@@ -23,7 +23,7 @@ enum HostType {
     Slice(Box<HostType>),
     Tuple(Vec<HostType>),
     FramePosition,
-    ArrayMeta,
+    BoxedLayout,
 }
 
 impl HostType {
@@ -43,7 +43,7 @@ impl HostType {
                 quote! { ( #(#children),* ) }
             }
             HostType::FramePosition => quote! { FramePosition },
-            HostType::ArrayMeta => quote! { ArrayMeta },
+            HostType::BoxedLayout => quote! { BoxedLayout },
         }
     }
 
@@ -71,10 +71,10 @@ impl HostType {
                     }
                 }
             }
-            HostType::ArrayMeta => {
+            HostType::BoxedLayout => {
                 quote! {
                     unsafe {
-                        let r = ArrayMeta(*#pc.offset(#offset));
+                        let r = BoxedLayout(*#pc.offset(#offset));
                         #offset += 1;
                         r
                     }
@@ -122,7 +122,21 @@ impl HostType {
                     }
                 }
             }
-            _ => quote! { todo!() },
+            HostType::Field => {
+                quote! {
+                    unsafe {
+                        let r0 = *#pc.offset(#offset);
+                        let r1 = *#pc.offset(#offset + 1);
+                        let r2 = *#pc.offset(#offset + 2);
+                        let r3 = *#pc.offset(#offset + 3);
+                        #offset += 4;
+                        ark_ff::Fp(ark_ff::BigInt([r0, r1, r2, r3]), std::marker::PhantomData)
+                    }
+                }
+            }
+            HostType::Tuple(ty) => {
+                todo!("tuple getter");
+            }
         }
     }
 
@@ -133,7 +147,7 @@ impl HostType {
             | HostType::ISize
             | HostType::JumpTarget
             | HostType::FramePosition
-            | HostType::ArrayMeta => 1,
+            | HostType::BoxedLayout => 1,
             HostType::Field => 4, // TODO parameterize
             HostType::Slice(_) => panic!("slice size is not known at compile time"),
             HostType::Tuple(ty) => ty.iter().map(|ty| ty.measure_size()).sum(),
@@ -162,7 +176,7 @@ impl HostType {
                     #offset -= 1;
                 }
             }
-            HostType::ArrayMeta => {
+            HostType::BoxedLayout => {
                 quote! {
                     #binary.push(#i.0);
                     #offset -= 1;
@@ -225,7 +239,7 @@ impl HostType {
             | HostType::USize
             | HostType::ISize
             | HostType::JumpTarget
-            | HostType::ArrayMeta
+            | HostType::BoxedLayout
             | HostType::FramePosition => {
                 quote! {
                     #ix += 1;
@@ -531,7 +545,7 @@ fn parse_guest_type(ty: &syn::Type) -> GuestType {
             return match ident.to_string().as_str() {
                 "Field" => GuestType::Field,
                 "u64" => GuestType::U64,
-                "Array" => GuestType::Array,
+                "BoxedValue" => GuestType::BoxedValue,
                 _ => panic!("unsupported guest path type {:?}", ty),
             };
         }
@@ -557,7 +571,7 @@ fn parse_host_type(ty: &syn::Type) -> HostType {
                 "isize" => HostType::ISize,
                 "JumpTarget" => HostType::JumpTarget,
                 "FramePosition" => HostType::FramePosition,
-                "ArrayMeta" => HostType::ArrayMeta,
+                "BoxedLayout" => HostType::BoxedLayout,
                 "Field" => HostType::Field,
                 _ => panic!("unsupported type {:?}", ty),
             };
@@ -594,7 +608,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
                     GuestType::Field => format_ident!("read_field"),
                     GuestType::U64 => format_ident!("read_u64"),
                     GuestType::Ptr => format_ident!("read_ptr"),
-                    GuestType::Array => format_ident!("read_array"),
+                    GuestType::BoxedValue => format_ident!("read_array"),
                 };
                 getters.extend(quote! {
                     let #i = unsafe {
@@ -612,7 +626,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
                     GuestType::Field => format_ident!("read_field_mut"),
                     GuestType::U64 => format_ident!("read_u64_mut"),
                     GuestType::Ptr => format_ident!("read_ptr_mut"),
-                    GuestType::Array => format_ident!("read_array_mut"),
+                    GuestType::BoxedValue => format_ident!("read_array_mut"),
                 };
                 getters.extend(quote! {
                     let #i = unsafe {
