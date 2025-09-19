@@ -3196,6 +3196,7 @@ dependencies = [
  "opcode-gen",
  "petgraph 0.6.5",
  "plotters",
+ "rand 0.8.5",
  "serde",
  "tempfile",
  "thiserror 2.0.12",

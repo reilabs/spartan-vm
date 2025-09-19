@@ -1,5 +1,7 @@
+use std::fmt::Display;
+
 use itertools::Itertools;
-use tracing::{debug, instrument, Level};
+use tracing::{debug, instrument, trace, Level};
 
 use crate::compiler::{
     analysis::{
@@ -14,7 +16,7 @@ use crate::compiler::{
 
 pub struct RCInsertion {}
 
-impl<V: Clone> Pass<V> for RCInsertion {
+impl<V: Clone + Display> Pass<V> for RCInsertion {
     fn pass_info(&self) -> PassInfo {
         PassInfo {
             name: "rc_insertion",
@@ -43,7 +45,7 @@ impl RCInsertion {
     }
 
     #[instrument(skip_all, level = Level::DEBUG, name = "RCInsertion::run_function", fields(function = function.get_name()))]
-    fn run_function<V: Clone>(
+    fn run_function<V: Clone + Display>(
         &self,
         function: &mut Function<V>,
         cfg: &CFG,
@@ -116,6 +118,14 @@ impl RCInsertion {
                     | OpCode::WriteWitness(_, _, _)
                     | OpCode::FreshWitness(_, _)
                     | OpCode::Not(_, _) => new_instructions.push(instruction),
+                    OpCode::ConstraintDerivative(a, b, c) => {
+                        for input in [a, b, c] {
+                            if !currently_live.contains(input) {
+                                new_instructions.push(OpCode::MemOp(MemOp::Drop, *input));
+                            }
+                        }
+                        new_instructions.push(instruction.clone());
+                    }
                     OpCode::MkSeq(result, inputs, _, elem_type) => {
                         // MkSeq should return an RC counter of 1.
                         new_instructions.push(instruction.clone());
@@ -236,6 +246,7 @@ impl RCInsertion {
             let live_out_source = &liveness.block_liveness[&source].live_out;
             let live_in_target = &liveness.block_liveness[&target].live_in;
             let diff = live_out_source.difference(live_in_target).filter(|v| self.needs_rc(type_info, v)).collect_vec();
+            trace!("Dying along edge {} -> {}: [{}]", source.0, target.0, diff.iter().map(|v| v.0).join(", "));
             if diff.is_empty() {  
                 continue;
             }
@@ -266,7 +277,7 @@ impl RCInsertion {
 
     }
 
-    fn needs_rc<V: Clone>(&self, type_info: &FunctionTypeInfo<V>, value: &ValueId) -> bool {
+    fn needs_rc<V: Clone + Display>(&self, type_info: &FunctionTypeInfo<V>, value: &ValueId) -> bool {
         let value_type = type_info.get_value_type(*value);
         self.type_needs_rc(&value_type)
     }
@@ -278,6 +289,7 @@ impl RCInsertion {
             TypeExpr::Slice(_) => true,
             TypeExpr::Field => false,
             TypeExpr::U(_) => false,
+            TypeExpr::BoxedField => true,
         }
     }
 }

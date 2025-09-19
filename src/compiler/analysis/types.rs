@@ -76,6 +76,7 @@ impl Types {
                 Const::Field(_) => function_info
                     .values
                     .insert(*value_id, Type::field(V::empty())),
+                Const::BoxedField(_) => function_info.values.insert(*value_id, Type::boxed_field(V::empty())),
             };
         }
 
@@ -244,8 +245,12 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::FreshWitness(_, _) => Ok(()),
+            OpCode::FreshWitness(r, tp) => {
+                function_info.values.insert(*r, tp.clone());
+                Ok(())
+            }
             OpCode::Constrain(_, _, _) => Ok(()),
+            OpCode::ConstraintDerivative(_, _, _) => Ok(()),
             OpCode::MkSeq(r, _, top_tp, t) => {
                 function_info.values.insert(*r, top_tp.of(t.clone()));
                 Ok(())

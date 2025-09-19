@@ -167,6 +167,7 @@ impl<V: Display + Clone> SSA<V> {
 pub enum Const {
     U(usize, u128),
     Field(ark_bn254::Fr),
+    BoxedField(ark_bn254::Fr),
 }
 
 #[derive(Clone)]
@@ -313,6 +314,10 @@ impl<V: Clone> Function<V> {
 
     pub fn iter_consts(&self) -> impl Iterator<Item = (&ValueId, &Const)> {
         self.consts.iter()
+    }
+
+    pub fn iter_consts_mut(&mut self) -> impl Iterator<Item = (&ValueId, &mut Const)> {
+        self.consts.iter_mut()
     }
 
     pub fn get_returns(&self) -> &[Type<V>] {
@@ -943,7 +948,8 @@ pub enum OpCode<V> {
     MemOp(MemOp, ValueId),                       // mem_op(kind, _2)
 
     WriteWitness(Option<ValueId>, ValueId, V), // _1 = as_witness(_2)
-    FreshWitness(ValueId, V),                  // _1 = fresh_witness()
+    FreshWitness(ValueId, Type<V>),                  // _1 = fresh_witness()
+    ConstraintDerivative(ValueId, ValueId, ValueId), // assert(_1 * _2 - _3 == 0)
     Constrain(ValueId, ValueId, ValueId),      // assert(_1 * _2 - _3 == 0)
 }
 
@@ -1065,11 +1071,14 @@ impl<V: Display + Clone> OpCode<V> {
                 };
                 format!("{}write_witness(v{})", r_str, value.0)
             }
-            OpCode::FreshWitness(result, _annotation) => {
-                format!("v{}{} = fresh_witness()", result.0, annotate(value_annotator, *result))
+            OpCode::FreshWitness(result, typ) => {
+                format!("v{}{} = fresh_witness(): {}", result.0, annotate(value_annotator, *result), typ)
             }
             OpCode::Constrain(a, b, c) => {
                 format!("constrain_r1c(v{} * v{} - v{} == 0)", a.0, b.0, c.0)
+            }
+            OpCode::ConstraintDerivative(a, b, c) => {
+                format!("∂constraint(v{} * v{} - v{} == 0)", a.0, b.0, c.0)
             }
             OpCode::MkSeq(result, values, seq_type, typ) => {
                 let values_str = values.iter().map(|v| format!("v{}", v.0)).join(", ");
@@ -1140,7 +1149,7 @@ impl<V> OpCode<V> {
             Self::Cast(a, b, _) => vec![a, b].into_iter(),
             Self::Truncate(a, b, _, _) => vec![a, b].into_iter(),
             Self::ArraySet(a, b, c, d) => vec![a, b, c, d].into_iter(),
-            Self::AssertR1C(a, b, c) | Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
+            Self::AssertR1C(a, b, c) | Self::Constrain(a, b, c) | Self::ConstraintDerivative(a, b, c) => vec![a, b, c].into_iter(),
             Self::Store(a, b) | Self::Load(a, b) | Self::AssertEq(a, b) => vec![a, b].into_iter(),
             Self::WriteWitness(a, b, _) => {
                 let mut ret_vec = a.iter_mut().collect::<Vec<_>>();
@@ -1178,7 +1187,7 @@ impl<V> OpCode<V> {
             | Self::Truncate(_, c, _, _) => vec![c].into_iter(),
             Self::Call(_, _, a) => a.iter_mut().collect::<Vec<_>>().into_iter(),
             Self::MkSeq(_, inputs, _, _) => inputs.iter_mut().collect::<Vec<_>>().into_iter(),
-            Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) | Self::Constrain(b, c, d) => {
+            Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) | Self::Constrain(b, c, d) | Self::ConstraintDerivative(b, c, d) => {
                 vec![b, c, d].into_iter()
             }
             Self::Not(_, v) => vec![v].into_iter(),
@@ -1200,7 +1209,7 @@ impl<V> OpCode<V> {
             | Self::Truncate(_, c, _, _) => vec![c].into_iter(),
             Self::Call(_, _, a) => a.iter().collect::<Vec<_>>().into_iter(),
             Self::MkSeq(_, inputs, _, _) => inputs.iter().collect::<Vec<_>>().into_iter(),
-            Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) | Self::Constrain(b, c, d) => {
+            Self::Select(_, b, c, d) | Self::AssertR1C(b, c, d) | Self::Constrain(b, c, d) | Self::ConstraintDerivative(b, c, d) => {
                 vec![b, c, d].into_iter()
             }
             Self::Not(_, v) => vec![v].into_iter(),
@@ -1230,7 +1239,8 @@ impl<V> OpCode<V> {
             | Self::MemOp(_, _)
             | Self::Store(_, _)
             | Self::AssertEq(_, _)
-            | Self::AssertR1C(_, _, _) => vec![].into_iter(),
+            | Self::AssertR1C(_, _, _)
+            | Self::ConstraintDerivative(_, _, _) => vec![].into_iter(),
             Self::Not(r, _) => vec![r].into_iter(),
             Self::ToBits(r, _, _, _) => vec![r].into_iter(),
         }

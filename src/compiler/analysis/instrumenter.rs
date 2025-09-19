@@ -362,6 +362,7 @@ impl Value {
         match &tp.expr {
             TypeExpr::U(s) => Value::UWitness(*s),
             TypeExpr::Field => Value::FWitness,
+            TypeExpr::BoxedField => Value::FWitness,
             TypeExpr::Array(tp, size) => {
                 let mut values = vec![];
                 for _ in 0..*size {
@@ -1105,6 +1106,7 @@ impl CostEstimator {
             TypeExpr::Array(internal, size) => {
                 ValueSignature::Array(vec![self.make_witness_sig(internal); *size])
             }
+            TypeExpr::BoxedField => ValueSignature::FWitness,
             TypeExpr::Slice(_) => panic!("slice not possible here"),
             TypeExpr::Ref(_) => panic!("ref not possible here"),
         }

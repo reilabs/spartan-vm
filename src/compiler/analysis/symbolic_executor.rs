@@ -111,6 +111,7 @@ impl SymbolicExecutor {
             let v = match cst {
                 Const::U(s, v) => V::of_u(*s, *v, ctx),
                 Const::Field(f) => V::of_field(f.clone(), ctx),
+                Const::BoxedField(_) => todo!(),
             };
             scope[val.0 as usize] = Some(v);
         }
@@ -260,6 +261,9 @@ impl SymbolicExecutor {
                     crate::compiler::ssa::OpCode::MemOp(kind, value) => {
                         let value = scope[value.0 as usize].as_ref().unwrap();
                         value.mem_op(*kind, ctx);
+                    }
+                    crate::compiler::ssa::OpCode::ConstraintDerivative(_a, _b, _c) => {
+                        todo!()
                     }
                 }
             }

@@ -75,8 +75,13 @@ impl UntaintControlFlow {
                     OpCode::WriteWitness(r, l, _) => {
                         OpCode::WriteWitness(r, l, ConstantTaint::Witness)
                     }
-                    OpCode::FreshWitness(r, _) => OpCode::FreshWitness(r, ConstantTaint::Witness),
+                    OpCode::FreshWitness(r, tp) => {
+                        let taint = function_taint.get_value_taint(r);
+                        let new_tp = self.typify_taint(tp, taint);
+                        OpCode::FreshWitness(r, new_tp)
+                    }
                     OpCode::Constrain(a, b, c) => OpCode::Constrain(a, b, c),
+                    OpCode::ConstraintDerivative(a, b, c) => OpCode::ConstraintDerivative(a, b, c),
                     OpCode::MkSeq(r, l, stp, tp) => {
                         let r_taint = function_taint
                             .get_value_taint(r)

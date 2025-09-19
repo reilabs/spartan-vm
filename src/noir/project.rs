@@ -22,13 +22,14 @@ use crate::compiler::passes::mem2reg::Mem2Reg;
 use crate::compiler::passes::pull_into_assert::PullIntoAssert;
 use crate::compiler::passes::specializer::Specializer;
 use crate::compiler::r1cs_cleanup::R1CSCleanup;
-use crate::compiler::r1cs_gen::R1CGen;
+use crate::compiler::r1cs_gen::{R1CGen, R1C};
 use crate::compiler::ssa::{DefaultSsaAnnotator, SSA};
 use crate::compiler::taint_analysis::{ConstantTaint, TaintAnalysis};
 use crate::compiler::untaint_control_flow::UntaintControlFlow;
 use crate::compiler::witness_generation::WitnessGen;
 use crate::noir::error::compilation::{Error as CompileError, Result as CompileResult};
 use crate::vm::interpreter;
+use ark_ff::{AdditiveGroup, UniformRand};
 use fm::FileManager;
 use nargo::{
     insert_all_files_for_workspace_into_file_manager, package::Package, parse_all, prepare_package,
@@ -37,6 +38,7 @@ use nargo::{
 use noirc_driver::{CompileOptions, check_crate};
 use noirc_evaluator::ssa::ssa_gen::Ssa;
 use noirc_evaluator::ssa::{SsaBuilder, SsaLogging, SsaPass};
+use noirc_frontend::debug;
 use noirc_frontend::hir::ParsedFiles;
 use noirc_frontend::monomorphization::monomorphize;
 use std::str::FromStr;
@@ -230,158 +232,215 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             vec![
                 Box::new(WitnessWriteToFresh::new()),
                 Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
+                Box::new(RCInsertion::new()),
+                Box::new(FixDoubleJumps::new())
             ],
         );
         r1cs_phase_1.set_debug_output_dir(debug_output_dir.clone());
         r1cs_phase_1.run(&mut r1cs_ssa);
 
+        { 
+            let flow_analysis = FlowAnalysis::run(&r1cs_ssa);
+            let type_info = Types::new().run(&r1cs_ssa, &flow_analysis);
+
+            let codegen = CodeGen::new();
+            let program = codegen.run(&r1cs_ssa, &flow_analysis, &type_info);
+            fs::write(debug_output_dir.join("ad_program.txt"), format!("{}", program)).unwrap();
+        }
+
         // let mut r1cs_phase_2 = PassManager::<ConstantTaint>::new(
 
 
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        // let type_info = Types::new().run(&custom_ssa, &flow_analysis);
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        let type_info = Types::new().run(&custom_ssa, &flow_analysis);
 
-        // let mut r1cs_gen = R1CGen::new();
-        // r1cs_gen.run(&custom_ssa, &type_info);
-        // let r1cs = r1cs_gen.clone().get_r1cs();
-        // info!(
-        //     message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
-        // );
+        let mut r1cs_gen = R1CGen::new();
+        r1cs_gen.run(&custom_ssa, &type_info);
+        let r1cs = r1cs_gen.clone().get_r1cs();
+        info!(
+            message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
+        );
 
-        // fs::write(
-        //     debug_output_dir.join("r1cs.txt"),
-        //     r1cs_gen
-        //         .clone()
-        //         .get_r1cs()
-        //         .iter()
-        //         .map(|r1c| r1c.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
+        let mut r1cs_coeffs = vec![];
+        for _ in 0..r1cs.len() {
+            r1cs_coeffs.push(ark_bn254::Fr::rand(&mut rand::thread_rng()));
+        }
 
-        // let r1cs_cleanup = R1CSCleanup::new();
-        // r1cs_cleanup.run(&mut custom_ssa);
+        let mut res_a = vec![ark_bn254::Fr::ZERO; r1cs_gen.get_witness_size()];
+        let mut res_b = vec![ark_bn254::Fr::ZERO; r1cs_gen.get_witness_size()];
+        let mut res_c = vec![ark_bn254::Fr::ZERO; r1cs_gen.get_witness_size()];
+        self.compute_r1cs_derivatives(&r1cs, &r1cs_coeffs, &mut res_a, &mut res_b, &mut res_c);
 
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        // let type_info = Types::new().run(&custom_ssa, &flow_analysis);
+        fs::write(
+            debug_output_dir.join("deriv_coeffs.txt"),
+            r1cs_coeffs.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("deriv_a.txt"),
+            res_a.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("deriv_b.txt"),
+            res_b.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("deriv_c.txt"),
+            res_c.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n"),
+        )
+        .unwrap();
 
-        // let codegen = CodeGen::new();
-        // let program = codegen.run(&custom_ssa, &flow_analysis, &type_info);
-        // fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
 
-        // let mut binary = program.to_binary();
+        fs::write(
+            debug_output_dir.join("r1cs.txt"),
+            r1cs_gen
+                .clone()
+                .get_r1cs()
+                .iter()
+                .map(|r1c| r1c.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
 
-        // println!("binary size: {} bytes", binary.len() * 8);
+        let r1cs_cleanup = R1CSCleanup::new();
+        r1cs_cleanup.run(&mut custom_ssa);
 
-        // let (out_wit, out_a, out_b, out_c, instrumenter) = interpreter::run(
-        //     &mut binary,
-        //     r1cs_gen.get_witness_size(),
-        //     r1cs.len(),
-        //     &[
-        //         Field::from(2),
-        //         Field::from_str(
-        //             "8828670086143533245061788684574618475763043903694187796770609410437484537737",
-        //         )
-        //         .unwrap(),
-        //     ],
-        // );
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        let type_info = Types::new().run(&custom_ssa, &flow_analysis);
 
-        // let valid = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
-        // if !valid {
-        //     warn!(message = %"VM memory leak detected");
-        // } else {
-        //     info!(message = %"VM memory leak not detected");
-        // }
+        let codegen = CodeGen::new();
+        let program = codegen.run(&custom_ssa, &flow_analysis, &type_info);
+        fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
 
-        // fs::write(
-        //     debug_output_dir.join("witness_good.txt"),
-        //     out_wit
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("a_good.txt"),
-        //     out_a
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("b_good.txt"),
-        //     out_b
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("c_good.txt"),
-        //     out_c
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
+        let mut binary = program.to_binary();
 
-        // let mut witness_gen = WitnessGen::new(public_witness);
-        // witness_gen.run(&custom_ssa, &type_info);
-        // let witness = witness_gen.get_witness();
-        // fs::write(
-        //     debug_output_dir.join("witness.txt"),
-        //     witness
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("a.txt"),
-        //     witness_gen
-        //         .get_a()
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("b.txt"),
-        //     witness_gen
-        //         .get_b()
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("c.txt"),
-        //     witness_gen
-        //         .get_c()
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
+        println!("binary size: {} bytes", binary.len() * 8);
 
-        // let success = r1cs_gen.verify(&witness);
-        // if success {
-        //     info!(message = %"R1CS verification succeeded");
-        // } else {
-        //     warn!(message = %"R1CS verification failed");
-        // }
+        let (out_wit, out_a, out_b, out_c, instrumenter) = interpreter::run(
+            &mut binary,
+            r1cs_gen.get_witness_size(),
+            r1cs.len(),
+            &[
+                Field::from(2),
+                Field::from_str(
+                    "8828670086143533245061788684574618475763043903694187796770609410437484537737",
+                )
+                .unwrap(),
+            ],
+        );
+
+        let valid = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
+        if !valid {
+            warn!(message = %"VM memory leak detected");
+        } else {
+            info!(message = %"VM memory leak not detected");
+        }
+
+        fs::write(
+            debug_output_dir.join("witness_good.txt"),
+            out_wit
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("a_good.txt"),
+            out_a
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("b_good.txt"),
+            out_b
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("c_good.txt"),
+            out_c
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+
+        let mut witness_gen = WitnessGen::new(public_witness);
+        witness_gen.run(&custom_ssa, &type_info);
+        let witness = witness_gen.get_witness();
+        fs::write(
+            debug_output_dir.join("witness.txt"),
+            witness
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("a.txt"),
+            witness_gen
+                .get_a()
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("b.txt"),
+            witness_gen
+                .get_b()
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("c.txt"),
+            witness_gen
+                .get_c()
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+
+        let success = r1cs_gen.verify(&witness);
+        if success {
+            info!(message = %"R1CS verification succeeded");
+        } else {
+            warn!(message = %"R1CS verification failed");
+        }
 
         Ok(())
+    }
+
+    fn compute_r1cs_derivatives(&self, r1cs: &[R1C], coeffs: &[ark_bn254::Fr], res_a: &mut [ark_bn254::Fr], res_b: &mut [ark_bn254::Fr], res_c: &mut [ark_bn254::Fr]) {
+        for (r1c, coeff) in r1cs.iter().zip(coeffs.iter()) {
+            for (a_ix, a_coeff) in r1c.a.iter() {
+                res_a[*a_ix] += *a_coeff * *coeff;
+            }
+            for (b_ix, b_coeff) in r1c.b.iter() {
+                res_b[*b_ix] += *b_coeff * *coeff;
+            }
+            for (c_ix, c_coeff) in r1c.c.iter() {
+                res_c[*c_ix] += *c_coeff * *coeff;
+            }
+        }
     }
 }
 

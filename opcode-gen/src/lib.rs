@@ -18,6 +18,7 @@ enum HostType {
     U64,
     USize,
     ISize,
+    Field,
     JumpTarget,
     Slice(Box<HostType>),
     Tuple(Vec<HostType>),
@@ -32,6 +33,7 @@ impl HostType {
             HostType::USize => quote! { usize },
             HostType::ISize => quote! { isize },
             HostType::JumpTarget => quote! { JumpTarget },
+            HostType::Field => quote! { Field },
             HostType::Slice(ty) => {
                 let child = ty.to_def_tokens();
                 quote! { Vec<#child> }
@@ -132,6 +134,7 @@ impl HostType {
             | HostType::JumpTarget
             | HostType::FramePosition
             | HostType::ArrayMeta => 1,
+            HostType::Field => 4, // TODO parameterize
             HostType::Slice(_) => panic!("slice size is not known at compile time"),
             HostType::Tuple(ty) => ty.iter().map(|ty| ty.measure_size()).sum(),
         }
@@ -179,6 +182,15 @@ impl HostType {
                     #offset -= 1;
                 }
             }
+            HostType::Field => {
+                quote! {
+                    #binary.push(#i.0.0[0] as u64);
+                    #binary.push(#i.0.0[1] as u64);
+                    #binary.push(#i.0.0[2] as u64);
+                    #binary.push(#i.0.0[3] as u64);
+                    #offset -= 1;
+                }
+            }
             HostType::Slice(intp) => {
                 let ixed = quote! { elem };
                 let child_serializer =
@@ -200,7 +212,6 @@ impl HostType {
                 }
                 result
             }
-            _ => quote! { todo!(); },
         }
     }
 
@@ -220,6 +231,11 @@ impl HostType {
                     #ix += 1;
                 }
             }
+            HostType::Field => {
+                quote! {
+                    #ix += 4;
+                }
+            }
             HostType::Slice(child) => {
                 let child_size = child.measure_size();
                 quote! {
@@ -230,9 +246,9 @@ impl HostType {
                     };
                 }
             }
-            _ => quote! {
-                todo!();
-            },
+            HostType::Tuple(_children) => {
+                quote! { todo!("tuple measurer") }
+            }
         }
     }
 }
@@ -267,6 +283,9 @@ impl StructInput {
                 #fields_ident = format!("{} {}", #fields_ident, #ident);
             },
             StructInputType::Host(HostType::ISize) => quote! {
+                #fields_ident = format!("{} {}", #fields_ident, #ident);
+            },
+            StructInputType::Host(HostType::Field) => quote! {
                 #fields_ident = format!("{} {}", #fields_ident, #ident);
             },
             StructInputType::Frame(_) => quote! {
@@ -539,6 +558,7 @@ fn parse_host_type(ty: &syn::Type) -> HostType {
                 "JumpTarget" => HostType::JumpTarget,
                 "FramePosition" => HostType::FramePosition,
                 "ArrayMeta" => HostType::ArrayMeta,
+                "Field" => HostType::Field,
                 _ => panic!("unsupported type {:?}", ty),
             };
         }

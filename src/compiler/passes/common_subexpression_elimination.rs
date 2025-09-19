@@ -272,6 +272,7 @@ impl CSE {
             match const_ {
                 Const::U(size, value) => exprs.insert(*value_id, Expr::UConst(*size, *value)),
                 Const::Field(value) => exprs.insert(*value_id, Expr::fconst(*value)),
+                Const::BoxedField(_) => todo!(),
             };
         }
 
@@ -390,6 +391,7 @@ impl CSE {
                     OpCode::WriteWitness { .. } // TODO: is witness store a subexpression to be optimized?
                     | OpCode::FreshWitness(_, _)
                     | OpCode::Constrain { .. }
+                    | OpCode::ConstraintDerivative(_, _, _)
                     | OpCode::Alloc { .. }
                     | OpCode::Store { .. }
                     | OpCode::Load { .. }

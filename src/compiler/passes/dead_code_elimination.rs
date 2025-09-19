@@ -98,6 +98,9 @@ impl DCE {
                         OpCode::Constrain { .. } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
+                        OpCode::ConstraintDerivative(_, _, _) => {
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
                         OpCode::WriteWitness { .. } => {
                             // Witness stores are critical after the constraint system is generated.
                             // Previously, they only matter if the result is used.

@@ -129,6 +129,9 @@ impl ExplicitWitness {
                             }
                             new_instructions.push(OpCode::Constrain(a, b, c));
                         }
+                        OpCode::ConstraintDerivative(_a, _b, _c) => {
+                            panic!("ICE: should not be present at this stage");
+                        }
                         OpCode::ArrayGet(_, arr, idx) => {
                             let arr_taint = function_type_info.get_value_type(arr).get_annotation();
                             let idx_taint = function_type_info.get_value_type(idx).get_annotation();

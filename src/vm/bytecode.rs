@@ -565,6 +565,21 @@ mod def {
         array.dec_rc(vm);
         // println!("dec_array_rc_outro");
     }
+
+    #[opcode]
+    fn boxed_field_alloc(#[out] res: *mut Array, data: Field) {
+        todo!("boxed_field_alloc");
+    }
+
+    #[opcode]
+    fn constraint_derivative(#[frame] a: Array, #[frame] b: Array, #[frame] c: Array, vm: &mut VM) {
+        todo!("constraint_derivative");
+    }
+
+    #[opcode]
+    fn fresh_witness(#[out] res: *mut Array, vm: &mut VM) {
+        todo!("fresh_witness");
+    }
 }
 
 pub struct Function {

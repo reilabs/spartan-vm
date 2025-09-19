@@ -70,6 +70,7 @@ impl FrameLayouter {
             }
             TypeExpr::Array(_, _) => 1, // Ptr
             TypeExpr::Slice(_) => 1,    // Ptr
+            TypeExpr::BoxedField => 1,  // Ptr
             _ => todo!(),
         }
     }
@@ -212,6 +213,12 @@ impl CodeGen {
                             val: v.0.0[i],
                         })
                     }
+                }
+                Const::BoxedField(v) => {
+                    emitter.push_op(bytecode::OpCode::BoxedFieldAlloc {
+                        res: layouter.alloc_ptr(*val),
+                        data: *v,
+                    });
                 }
             }
         }
@@ -534,7 +541,7 @@ impl CodeGen {
                         .iter()
                         .map(|a| layouter.get_value(*a))
                         .collect::<Vec<_>>();
-                    let is_ptr = eltype.is_ref() || eltype.is_slice() || eltype.is_array();
+                    let is_ptr = eltype.is_ref() || eltype.is_slice() || eltype.is_array() || eltype.is_boxed_field();
                     let stride = layouter.type_size(eltype);
                     emitter.push_op(bytecode::OpCode::ArrayAlloc {
                         res,
@@ -565,13 +572,13 @@ impl CodeGen {
                     });
                 }
                 ssa::OpCode::MemOp(MemOp::Drop, r) => {
-                    assert!(type_info.get_value_type(*r).is_array_or_slice());
+                    // assert!(type_info.get_value_type(*r).is_array_or_slice());
                     emitter.push_op(bytecode::OpCode::DecArrayRc {
                         array: layouter.get_value(*r),
                     });
                 }
                 ssa::OpCode::MemOp(MemOp::Bump(size), r) => {
-                    assert!(type_info.get_value_type(*r).is_array_or_slice());
+                    // assert!(type_info.get_value_type(*r).is_array_or_slice());
                     emitter.push_op(bytecode::OpCode::IncArrayRc {
                         array: layouter.get_value(*r),
                         amount: *size as u64,
@@ -583,6 +590,19 @@ impl CodeGen {
                 ssa::OpCode::ToBits(r, _, _, _) => {
                     // This will bite me soon
                     _ = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                }
+                ssa::OpCode::ConstraintDerivative(a, b, c) => {
+                    emitter.push_op(bytecode::OpCode::ConstraintDerivative {
+                        a: layouter.get_value(*a),
+                        b: layouter.get_value(*b),
+                        c: layouter.get_value(*c),
+                    });
+                }
+                ssa::OpCode::FreshWitness(r, tp) => {
+                    assert!(matches!(tp.expr, TypeExpr::BoxedField));
+                    emitter.push_op(bytecode::OpCode::FreshWitness {
+                        res: layouter.alloc_ptr(*r),
+                    });
                 }
                 other => panic!("Unsupported instruction: {:?}", other),
             }

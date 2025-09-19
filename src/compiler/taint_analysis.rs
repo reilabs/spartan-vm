@@ -666,7 +666,10 @@ impl TaintAnalysis {
                         let value_taint = function_taint.value_taints.get(value).unwrap();
                         let arr_elem_taint = arr_taint.child_taint_type().unwrap();
                         let result_arr_taint = idx_taint.union(&arr_elem_taint).union(value_taint);
-                        let result_taint = TaintType::NestedImmutable(arr_taint.toplevel_taint(), Box::new(result_arr_taint));
+                        let result_taint = TaintType::NestedImmutable(
+                            arr_taint.toplevel_taint(),
+                            Box::new(result_arr_taint),
+                        );
                         function_taint.value_taints.insert(*r, result_taint);
                     }
                     OpCode::Call(outputs, func, inputs) => {
@@ -740,7 +743,10 @@ impl TaintAnalysis {
                         function_taint.value_taints.insert(*result, result_taint);
                     }
                     OpCode::MemOp(_, _) => {}
-                    OpCode::WriteWitness { .. } | OpCode::Constrain { .. } | OpCode::FreshWitness(_, _) => {
+                    OpCode::WriteWitness { .. }
+                    | OpCode::Constrain { .. }
+                    | OpCode::FreshWitness(_, _)
+                    | OpCode::ConstraintDerivative(_, _, _) => {
                         panic!("Should not be present at this stage {:?}", instruction);
                     }
                 }
@@ -874,6 +880,9 @@ impl TaintAnalysis {
                 Taint::Variable(self.fresh_ty_var()),
                 Box::new(self.construct_free_taint_for_type(i)),
             ),
+            TypeExpr::BoxedField => {
+                panic!("ICE: WitnessVal should not be present at this stage");
+            }
         }
     }
 
@@ -894,6 +903,9 @@ impl TaintAnalysis {
                 Taint::Constant(ConstantTaint::Pure),
                 Box::new(self.construct_pure_taint_for_type(i)),
             ),
+            TypeExpr::BoxedField => {
+                panic!("ICE: WitnessVal should not be present at this stage");
+            }
         }
     }
 }

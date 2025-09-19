@@ -148,6 +148,7 @@ impl WitnessGen {
                     scope.insert(*value_id, Value::Fp(ark_bn254::Fr::from(*value)))
                 }
                 Const::Field(value) => scope.insert(*value_id, Value::Fp(*value)),
+                Const::BoxedField(_) => panic!("ICE: boxed field shouldn't exist in witgen"),
             };
         }
 
@@ -264,6 +265,9 @@ impl WitnessGen {
                         self.a.push(a.expect_fp());
                         self.b.push(b.expect_fp());
                         self.c.push(c.expect_fp());
+                    }
+                    OpCode::ConstraintDerivative(a, b, c) => {
+                        panic!("ICE: unexpected instruction");
                     }
                     OpCode::WriteWitness(result, v, _) => {
                         let v = scope.get(v).unwrap().clone();
