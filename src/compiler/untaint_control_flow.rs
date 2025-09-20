@@ -81,7 +81,8 @@ impl UntaintControlFlow {
                         OpCode::FreshWitness(r, new_tp)
                     }
                     OpCode::Constrain(a, b, c) => OpCode::Constrain(a, b, c),
-                    OpCode::ConstraintDerivative(a, b, c) => OpCode::ConstraintDerivative(a, b, c),
+                    OpCode::NextDCoeff(a) => OpCode::NextDCoeff(a),
+                    OpCode::BumpD(a, b, c) => OpCode::BumpD(a, b, c),
                     OpCode::MkSeq(r, l, stp, tp) => {
                         let r_taint = function_taint
                             .get_value_taint(r)

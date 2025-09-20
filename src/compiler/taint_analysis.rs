@@ -746,7 +746,8 @@ impl TaintAnalysis {
                     OpCode::WriteWitness { .. }
                     | OpCode::Constrain { .. }
                     | OpCode::FreshWitness(_, _)
-                    | OpCode::ConstraintDerivative(_, _, _) => {
+                    | OpCode::BumpD(_, _, _)
+                    | OpCode::NextDCoeff(_) => {
                         panic!("Should not be present at this stage {:?}", instruction);
                     }
                 }

@@ -2,6 +2,7 @@
 
 use std::fs;
 
+use crate::compiler::passes::box_fields::BoxFields;
 use crate::compiler::Field;
 use crate::compiler::analysis::instrumenter::CostEstimator;
 use crate::compiler::analysis::liveness::LivenessAnalysis;
@@ -301,6 +302,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             vec![
                 Box::new(WitnessWriteToFresh::new()),
                 Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
+                Box::new(BoxFields::new()),
                 Box::new(RCInsertion::new()),
                 Box::new(FixDoubleJumps::new()),
             ],

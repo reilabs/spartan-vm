@@ -262,7 +262,10 @@ impl SymbolicExecutor {
                         let value = scope[value.0 as usize].as_ref().unwrap();
                         value.mem_op(*kind, ctx);
                     }
-                    crate::compiler::ssa::OpCode::ConstraintDerivative(_a, _b, _c) => {
+                    crate::compiler::ssa::OpCode::NextDCoeff(_a) => {
+                        todo!()
+                    }
+                    crate::compiler::ssa::OpCode::BumpD(_matrix, _a, _b) => {
                         todo!()
                     }
                 }

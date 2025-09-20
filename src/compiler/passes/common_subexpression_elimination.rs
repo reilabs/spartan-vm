@@ -391,7 +391,8 @@ impl CSE {
                     OpCode::WriteWitness { .. } // TODO: is witness store a subexpression to be optimized?
                     | OpCode::FreshWitness(_, _)
                     | OpCode::Constrain { .. }
-                    | OpCode::ConstraintDerivative(_, _, _)
+                    | OpCode::NextDCoeff(_)
+                    | OpCode::BumpD(_, _, _)
                     | OpCode::Alloc { .. }
                     | OpCode::Store { .. }
                     | OpCode::Load { .. }

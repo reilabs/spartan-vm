@@ -266,8 +266,11 @@ impl WitnessGen {
                         self.b.push(b.expect_fp());
                         self.c.push(c.expect_fp());
                     }
-                    OpCode::ConstraintDerivative(a, b, c) => {
-                        panic!("ICE: unexpected instruction");
+                    OpCode::NextDCoeff { .. } => {
+                        panic!("ICE: unexpected instruction: NextDCoeff");
+                    }
+                    OpCode::BumpD { .. } => {
+                        panic!("ICE: unexpected instruction: BumpD");
                     }
                     OpCode::WriteWitness(result, v, _) => {
                         let v = scope.get(v).unwrap().clone();

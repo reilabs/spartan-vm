@@ -98,7 +98,11 @@ impl DCE {
                         OpCode::Constrain { .. } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
-                        OpCode::ConstraintDerivative(_, _, _) => {
+                        OpCode::NextDCoeff(_) => {
+                            // This also has the side-effect of bumping the counter, so we need to keep it live.
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
+                        OpCode::BumpD(_, _, _) => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
                         OpCode::WriteWitness { .. } => {

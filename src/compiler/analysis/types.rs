@@ -250,7 +250,11 @@ impl Types {
                 Ok(())
             }
             OpCode::Constrain(_, _, _) => Ok(()),
-            OpCode::ConstraintDerivative(_, _, _) => Ok(()),
+            OpCode::NextDCoeff(v) => {
+                function_info.values.insert(*v, Type::field(V::empty()));
+                Ok(())
+            }
+            OpCode::BumpD(_, _, _) => Ok(()),
             OpCode::MkSeq(r, _, top_tp, t) => {
                 function_info.values.insert(*r, top_tp.of(t.clone()));
                 Ok(())
@@ -264,6 +268,7 @@ impl Types {
                 let result_type = match target {
                     CastTarget::Field => Type::field(value_type.get_annotation().clone()),
                     CastTarget::U(size) => Type::u(*size, value_type.get_annotation().clone()),
+                    CastTarget::BoxedField => Type::boxed_field(value_type.get_annotation().clone()),
                 };
 
                 function_info.values.insert(*result, result_type);

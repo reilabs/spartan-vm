@@ -1,7 +1,7 @@
 use crate::compiler::{
     ir::r#type::{Type, TypeExpr},
     pass_manager::{DataPoint, Pass},
-    ssa::{Const, OpCode},
+    ssa::{CastTarget, Const, OpCode},
     taint_analysis::ConstantTaint,
 };
 
@@ -35,34 +35,23 @@ impl WitnessWriteToFresh {
         ssa: &mut crate::compiler::ssa::SSA<ConstantTaint>,
         type_info: &crate::compiler::analysis::types::TypeInfo<ConstantTaint>,
     ) {
-
         let main_id = ssa.get_main_id();
         let main_function = ssa.get_function_mut(main_id);
         let main_block = main_function.get_block_mut(main_function.get_entry_id());
         let old_params = main_block.take_parameters();
         let old_instructions = main_block.take_instructions();
-        let new_instructions = old_params.into_iter().map(|(r, tp)|{
-            assert!(matches!(tp.expr, TypeExpr::Field));
-            OpCode::FreshWitness(r, Type::boxed_field(ConstantTaint::Witness))
-        }).chain(old_instructions.into_iter()).collect();
+        let new_instructions = old_params
+            .into_iter()
+            .map(|(r, tp)| {
+                assert!(matches!(tp.expr, TypeExpr::Field));
+                OpCode::FreshWitness(r, Type::field(ConstantTaint::Witness))
+            })
+            .chain(old_instructions.into_iter())
+            .collect();
         main_block.put_instructions(new_instructions);
 
         for (function_id, function) in ssa.iter_functions_mut() {
-            for (_, constant) in function.iter_consts_mut() {
-                let new = match constant {
-                    Const::U(s, value) => Const::U(*s, *value),
-                    Const::Field(value) => Const::BoxedField(*value),
-                    Const::BoxedField(value) => Const::BoxedField(*value),
-                };
-                *constant = new;
-            }
             for (_, block) in function.get_blocks_mut() {
-                let old_params = block.take_parameters();
-                let new_params = old_params
-                    .into_iter()
-                    .map(|(r, tp)| (r, self.box_fields_in_type(&tp)))
-                    .collect();
-                block.put_parameters(new_params);
                 for instruction in block.get_instructions_mut() {
                     let new_instruction = match instruction {
                         OpCode::WriteWitness(r, _, _) => {
@@ -72,34 +61,33 @@ impl WitnessWriteToFresh {
                             if !matches!(tp.expr, TypeExpr::Field) {
                                 panic!("Expected field type, got {:?}", tp);
                             }
-                            OpCode::FreshWitness(
-                                r.unwrap(),
-                                Type::boxed_field(ConstantTaint::Witness),
-                            )
+                            OpCode::FreshWitness(r.unwrap(), Type::field(ConstantTaint::Witness))
                         }
-                        OpCode::Constrain(a, b, c) => OpCode::ConstraintDerivative(*a, *b, *c),
-                        _ => instruction.clone(),
+                        OpCode::Cmp { .. }
+                        | OpCode::Cast { .. }
+                        | OpCode::MkSeq { .. }
+                        | OpCode::Alloc { .. }
+                        | OpCode::BinaryArithOp { .. }
+                        | OpCode::Truncate { .. }
+                        | OpCode::Not { .. }
+                        | OpCode::Store { .. }
+                        | OpCode::Load { .. }
+                        | OpCode::AssertEq { .. }
+                        | OpCode::AssertR1C { .. }
+                        | OpCode::Call { .. }
+                        | OpCode::ArrayGet { .. }
+                        | OpCode::ArraySet { .. }
+                        | OpCode::Select { .. }
+                        | OpCode::ToBits { .. }
+                        | OpCode::MemOp { .. }
+                        | OpCode::FreshWitness { .. }
+                        | OpCode::Constrain { .. }
+                        | OpCode::NextDCoeff { .. }
+                        | OpCode::BumpD { .. } => instruction.clone(),
                     };
                     *instruction = new_instruction;
                 }
             }
-        }
-    }
-
-    fn box_fields_in_type(&self, tp: &Type<ConstantTaint>) -> Type<ConstantTaint> {
-        match &tp.expr {
-            TypeExpr::Field => Type::boxed_field(tp.annotation.clone()),
-            TypeExpr::U(_) => tp.clone(),
-            TypeExpr::Array(inner, size) => {
-                Type::array_of(self.box_fields_in_type(inner), *size, tp.annotation.clone())
-            }
-            TypeExpr::Slice(inner) => {
-                Type::slice_of(self.box_fields_in_type(inner), tp.annotation.clone())
-            }
-            TypeExpr::Ref(inner) => {
-                Type::ref_of(self.box_fields_in_type(inner), tp.annotation.clone())
-            }
-            TypeExpr::BoxedField => tp.clone(),
         }
     }
 }

@@ -643,20 +643,26 @@ mod def {
     }
 
     #[opcode]
-    fn constraint_derivative(
-        #[frame] a: BoxedValue,
-        #[frame] b: BoxedValue,
-        #[frame] c: BoxedValue,
-        vm: &mut VM,
-    ) {
-        let coeff = unsafe {
-            let r = *vm.ad_coeffs;
+    fn bump_da(#[frame] v: BoxedValue, #[frame] coeff: Field, vm: &mut VM) {
+        v.bump_da(coeff, vm);
+    }
+
+    #[opcode]
+    fn bump_db(#[frame] v: BoxedValue, #[frame] coeff: Field, vm: &mut VM) {
+        v.bump_db(coeff, vm);
+    }
+
+    #[opcode]
+    fn bump_dc(#[frame] v: BoxedValue, #[frame] coeff: Field, vm: &mut VM) {
+        v.bump_dc(coeff, vm);
+    }
+
+    #[opcode]
+    fn next_d_coeff(#[out] v: *mut Field, vm: &mut VM) {
+        unsafe {
+            *v = *vm.ad_coeffs;
             vm.ad_coeffs = vm.ad_coeffs.offset(1);
-            r
         };
-        a.bump_da(coeff, vm);
-        b.bump_db(coeff, vm);
-        c.bump_dc(coeff, vm);
     }
 
     #[opcode]

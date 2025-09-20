@@ -6,8 +6,8 @@ use crate::{
         flow_analysis::{CFG, FlowAnalysis},
         ir::r#type::{Type, TypeExpr},
         ssa::{
-            self, BinaryArithOpKind, Block, BlockId, CmpKind, Const, Function, FunctionId, MemOp,
-            SSA, Terminator, ValueId,
+            self, BinaryArithOpKind, Block, BlockId, CmpKind, Const, DMatrix, Function, FunctionId,
+            MemOp, SSA, Terminator, ValueId,
         },
         taint_analysis::ConstantTaint,
     },
@@ -541,7 +541,10 @@ impl CodeGen {
                         .iter()
                         .map(|a| layouter.get_value(*a))
                         .collect::<Vec<_>>();
-                    let is_ptr = eltype.is_ref() || eltype.is_slice() || eltype.is_array() || eltype.is_boxed_field();
+                    let is_ptr = eltype.is_ref()
+                        || eltype.is_slice()
+                        || eltype.is_array()
+                        || eltype.is_boxed_field();
                     let stride = layouter.type_size(eltype);
                     emitter.push_op(bytecode::OpCode::ArrayAlloc {
                         res,
@@ -591,11 +594,24 @@ impl CodeGen {
                     // This will bite me soon
                     _ = layouter.alloc_value(*r, &type_info.get_value_type(*r));
                 }
-                ssa::OpCode::ConstraintDerivative(a, b, c) => {
-                    emitter.push_op(bytecode::OpCode::ConstraintDerivative {
-                        a: layouter.get_value(*a),
-                        b: layouter.get_value(*b),
-                        c: layouter.get_value(*c),
+                // ssa::OpCode::ConstraintDerivative(a, b, c) => {
+                //     emitter.push_op(bytecode::OpCode::ConstraintDerivative {
+                //         a: layouter.get_value(*a),
+                //         b: layouter.get_value(*b),
+                //         c: layouter.get_value(*c),
+                //     });
+                // }
+                ssa::OpCode::NextDCoeff(out) => {
+                    let v = layouter.alloc_field(*out);
+                    emitter.push_op(bytecode::OpCode::NextDCoeff { v });
+                }
+                ssa::OpCode::BumpD(m, var, coeff) => {
+                    let v = layouter.get_value(*var);
+                    let coeff = layouter.get_value(*coeff);
+                    emitter.push_op(match m {
+                        DMatrix::A => bytecode::OpCode::BumpDa { v, coeff },
+                        DMatrix::B => bytecode::OpCode::BumpDb { v, coeff },
+                        DMatrix::C => bytecode::OpCode::BumpDc { v, coeff },
                     });
                 }
                 ssa::OpCode::FreshWitness(r, tp) => {

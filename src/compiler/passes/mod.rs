@@ -1,3 +1,4 @@
+pub mod box_fields;
 pub mod common_subexpression_elimination;
 pub mod condition_propagation;
 pub mod dead_code_elimination;

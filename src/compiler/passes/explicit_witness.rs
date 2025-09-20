@@ -129,7 +129,10 @@ impl ExplicitWitness {
                             }
                             new_instructions.push(OpCode::Constrain(a, b, c));
                         }
-                        OpCode::ConstraintDerivative(_a, _b, _c) => {
+                        OpCode::NextDCoeff(_) => {
+                            panic!("ICE: should not be present at this stage");
+                        }
+                        OpCode::BumpD(_, _, _) => {
                             panic!("ICE: should not be present at this stage");
                         }
                         OpCode::ArrayGet(_, arr, idx) => {

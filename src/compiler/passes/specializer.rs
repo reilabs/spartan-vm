@@ -214,6 +214,9 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
                     ctx.const_vals.insert(res_v, ConstVal::Field(res));
                     Self(res_v)
                 }
+                CastTarget::BoxedField => {
+                    todo!()
+                }
             },
             _ => todo!(),
         }

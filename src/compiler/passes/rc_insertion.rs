@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use itertools::Itertools;
-use tracing::{debug, instrument, trace, Level};
+use tracing::{Level, debug, instrument, trace};
 
 use crate::compiler::{
     analysis::{
@@ -107,7 +107,6 @@ impl RCInsertion {
 
             for instruction in block.take_instructions().into_iter().rev() {
                 match &instruction {
-                    // The arithmetic block can easily be ignored.
                     OpCode::BinaryArithOp(_, _, _, _)
                     | OpCode::AssertEq(_, _)
                     | OpCode::Cast(_, _, _)
@@ -117,12 +116,11 @@ impl RCInsertion {
                     | OpCode::Constrain(_, _, _)
                     | OpCode::WriteWitness(_, _, _)
                     | OpCode::FreshWitness(_, _)
+                    | OpCode::NextDCoeff(_)
                     | OpCode::Not(_, _) => new_instructions.push(instruction),
-                    OpCode::ConstraintDerivative(a, b, c) => {
-                        for input in [a, b, c] {
-                            if !currently_live.contains(input) {
-                                new_instructions.push(OpCode::MemOp(MemOp::Drop, *input));
-                            }
+                    OpCode::BumpD(_, v, _) => {
+                        if !currently_live.contains(v) {
+                            new_instructions.push(OpCode::MemOp(MemOp::Drop, *v));
                         }
                         new_instructions.push(instruction.clone());
                     }
@@ -134,13 +132,19 @@ impl RCInsertion {
                         if self.type_needs_rc(elem_type) {
                             // This is an aliasing operation. Each use in the array needs a bump.
                             // We then decrease by one, if the original value dies here.
-                            for (input, count) in inputs.iter().sorted_by_key(|v| v.0).chunk_by(|v1| *v1).into_iter() {
+                            for (input, count) in inputs
+                                .iter()
+                                .sorted_by_key(|v| v.0)
+                                .chunk_by(|v1| *v1)
+                                .into_iter()
+                            {
                                 let mut count = count.count();
                                 if !currently_live.contains(input) {
                                     count -= 1;
                                 }
                                 if count > 0 {
-                                    new_instructions.push(OpCode::MemOp(MemOp::Bump(count), *input));
+                                    new_instructions
+                                        .push(OpCode::MemOp(MemOp::Bump(count), *input));
                                 }
                             }
                         }
@@ -171,7 +175,12 @@ impl RCInsertion {
                         new_instructions.push(instruction.clone());
                         // This is an aliasing operation. We need a +1 bump for each use.
                         // We then decrease by one, if the original value dies here.
-                        for (param, count) in params.iter().sorted_by_key(|v| v.0).chunk_by(|v1| *v1).into_iter() {
+                        for (param, count) in params
+                            .iter()
+                            .sorted_by_key(|v| v.0)
+                            .chunk_by(|v1| *v1)
+                            .into_iter()
+                        {
                             let mut count = count.count();
                             if !currently_live.contains(param) {
                                 count -= 1;
@@ -193,7 +202,10 @@ impl RCInsertion {
                                 // it's now both accessed here and in the array.
                                 new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *result));
                             } else {
-                                panic!("ICE: Result of ArrayGet is not live. This is a bug.")
+                                panic!(
+                                    "ICE: Result of ArrayGet (V{} in block {}) is not live. This is a bug.",
+                                    result.0, block_id.0
+                                )
                             }
                         }
                         new_instructions.push(instruction.clone());
@@ -202,7 +214,7 @@ impl RCInsertion {
                     OpCode::ArraySet(result, array, _index, value) => {
                         new_instructions.push(instruction.clone());
                         if currently_live.contains(array) {
-                            // Array set will decrease the RC and oportunistically reuse the storage, 
+                            // Array set will decrease the RC and oportunistically reuse the storage,
                             // if it notices a refcount of 0. So we need to bump _before_
                             // we enter it.
                             new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *array));
@@ -245,9 +257,17 @@ impl RCInsertion {
         for (source, target) in cfg.get_edges() {
             let live_out_source = &liveness.block_liveness[&source].live_out;
             let live_in_target = &liveness.block_liveness[&target].live_in;
-            let diff = live_out_source.difference(live_in_target).filter(|v| self.needs_rc(type_info, v)).collect_vec();
-            trace!("Dying along edge {} -> {}: [{}]", source.0, target.0, diff.iter().map(|v| v.0).join(", "));
-            if diff.is_empty() {  
+            let diff = live_out_source
+                .difference(live_in_target)
+                .filter(|v| self.needs_rc(type_info, v))
+                .collect_vec();
+            trace!(
+                "Dying along edge {} -> {}: [{}]",
+                source.0,
+                target.0,
+                diff.iter().map(|v| v.0).join(", ")
+            );
+            if diff.is_empty() {
                 continue;
             }
             let intermediate_block = function.add_block();
@@ -255,14 +275,32 @@ impl RCInsertion {
                 Terminator::JmpIf(cond, t1, t2) => {
                     let t1 = if t1 == target { intermediate_block } else { t1 };
                     let t2 = if t2 == target { intermediate_block } else { t2 };
-                    function.get_block_mut(source).set_terminator(Terminator::JmpIf(cond, t1, t2));
+                    function
+                        .get_block_mut(source)
+                        .set_terminator(Terminator::JmpIf(cond, t1, t2));
                 }
                 Terminator::Jmp(_, _) => {
                     debug!("Will panic: {} -> {}", source.0, target.0);
-                    debug!("Source live out: [{}]", liveness.block_liveness[&source].live_out.iter().map(|v| v.0).join(", "));
-                    debug!("Target live in: [{}]", liveness.block_liveness[&target].live_in.iter().map(|v| v.0).join(", "));
+                    debug!(
+                        "Source live out: [{}]",
+                        liveness.block_liveness[&source]
+                            .live_out
+                            .iter()
+                            .map(|v| v.0)
+                            .join(", ")
+                    );
+                    debug!(
+                        "Target live in: [{}]",
+                        liveness.block_liveness[&target]
+                            .live_in
+                            .iter()
+                            .map(|v| v.0)
+                            .join(", ")
+                    );
                     debug!("Difference: [{}]", diff.iter().map(|v| v.0).join(", "));
-                    panic!("ICE: Jmp is not expected - the value should have died in the source block.");
+                    panic!(
+                        "ICE: Jmp is not expected - the value should have died in the source block."
+                    );
                 }
                 Terminator::Return(_) => {
                     panic!("ICE: Impossible, CFG says there's an edge here.");
@@ -274,10 +312,13 @@ impl RCInsertion {
                 intermediate.push_instruction(OpCode::MemOp(MemOp::Drop, *value));
             }
         }
-
     }
 
-    fn needs_rc<V: Clone + Display>(&self, type_info: &FunctionTypeInfo<V>, value: &ValueId) -> bool {
+    fn needs_rc<V: Clone + Display>(
+        &self,
+        type_info: &FunctionTypeInfo<V>,
+        value: &ValueId,
+    ) -> bool {
         let value_type = type_info.get_value_type(*value);
         self.type_needs_rc(&value_type)
     }
