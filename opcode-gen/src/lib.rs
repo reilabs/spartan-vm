@@ -183,14 +183,22 @@ impl HostType {
                 }
             }
             HostType::USize | HostType::ISize => {
-                let i = if is_ref { quote! { *#i } } else { quote! { #i } };
+                let i = if is_ref {
+                    quote! { *#i }
+                } else {
+                    quote! { #i }
+                };
                 quote! {
                     #binary.push(#i as u64);
                     #offset -= 1;
                 }
             }
             HostType::U64 => {
-                let i = if is_ref { quote! { *#i } } else { quote! { #i } };
+                let i = if is_ref {
+                    quote! { *#i }
+                } else {
+                    quote! { #i }
+                };
                 quote! {
                     #binary.push(#i);
                     #offset -= 1;
@@ -374,6 +382,7 @@ pub fn interpreter(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
 
                 let old_attrs = func.attrs;
+                let mut controls_inline = false;
                 let mut is_raw = false;
                 func.attrs = vec![];
                 for attr in old_attrs {
@@ -383,6 +392,9 @@ pub fn interpreter(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     if attr.path().is_ident("raw_opcode") {
                         is_raw = true;
                         continue;
+                    }
+                    if attr.path().is_ident("inline") {
+                        controls_inline = true;
                     }
                     func.attrs.push(attr);
                 }
@@ -403,9 +415,11 @@ pub fn interpreter(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
 
-                result.extend(quote! {
-                    #[inline(always)]
-                });
+                if !controls_inline {
+                    result.extend(quote! {
+                        #[inline(always)]
+                    });
+                }
                 result.extend(func.into_token_stream());
             }
             _ => {
@@ -484,27 +498,25 @@ fn parse_unannotated(ident: Ident, ty: &syn::Type) -> Input {
                 val: StructInputType::Host(parse_host_type(ty)),
             });
         }
-        syn::Type::Reference(intype) => {
-            match intype.elem.as_ref() {
-                syn::Type::Path(typath) => {
-                    let ty_ident = typath.path.require_ident().unwrap();
-                    if ty_ident == "VM" {
-                        return Input::VM;
-                    } else {
-                        return Input::Struct(StructInput {
-                            name: ident.to_string(),
-                            val: StructInputType::Host(parse_host_type(ty)),
-                        });
-                    }
-                }
-                _ => {
+        syn::Type::Reference(intype) => match intype.elem.as_ref() {
+            syn::Type::Path(typath) => {
+                let ty_ident = typath.path.require_ident().unwrap();
+                if ty_ident == "VM" {
+                    return Input::VM;
+                } else {
                     return Input::Struct(StructInput {
                         name: ident.to_string(),
                         val: StructInputType::Host(parse_host_type(ty)),
                     });
                 }
             }
-        }
+            _ => {
+                return Input::Struct(StructInput {
+                    name: ident.to_string(),
+                    val: StructInputType::Host(parse_host_type(ty)),
+                });
+            }
+        },
         _ => {
             return Input::Struct(StructInput {
                 name: ident.to_string(),
@@ -652,11 +664,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
     }
 
     let mut call_params = if def.is_raw {
-        vec![
-            quote! {pc},
-            quote! {frame},
-            quote! {vm},
-        ]
+        vec![quote! {pc}, quote! {frame}, quote! {vm}]
     } else {
         vec![]
     };
@@ -713,6 +721,9 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
             frame: Frame,
             vm: &mut VM,
         ) {
+            // unsafe {
+            //     println!("opcode: {:?}", *(pc as *mut (*mut usize)));
+            // }
             let mut current_field_offset = 1isize;
             #getters
             #call_op
@@ -838,9 +849,9 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
         let matcher = code.matcher();
         let name_str = code.name.clone();
         let fields_ident = format_ident!("fields");
-        let fields = code.struct_args().map(|field| 
-            field.make_printer(&fields_ident)
-        );
+        let fields = code
+            .struct_args()
+            .map(|field| field.make_printer(&fields_ident));
         quote! {
             #matcher => {
                 let mut #fields_ident = String::new();

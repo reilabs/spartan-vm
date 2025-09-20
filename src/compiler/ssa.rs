@@ -320,6 +320,10 @@ impl<V: Clone> Function<V> {
         self.consts.iter_mut()
     }
 
+    pub fn iter_returns_mut(&mut self) -> impl Iterator<Item = &mut Type<V>> {
+        self.returns.iter_mut()
+    }
+
     pub fn get_returns(&self) -> &[Type<V>] {
         &self.returns
     }
@@ -877,7 +881,6 @@ pub enum SeqType {
 pub enum CastTarget {
     Field,
     U(usize),
-    BoxedField,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -891,7 +894,6 @@ impl Display for CastTarget {
         match self {
             CastTarget::Field => write!(f, "Field"),
             CastTarget::U(size) => write!(f, "u{}", size),
-            CastTarget::BoxedField => write!(f, "BoxedField"),
         }
     }
 }
@@ -961,6 +963,9 @@ pub enum OpCode<V> {
     NextDCoeff(ValueId),                       // _1 = next_d_coeff()
     BumpD(DMatrix, ValueId, ValueId),          // d _1 / d _2 += d_3
     Constrain(ValueId, ValueId, ValueId),      // assert(_1 * _2 - _3 == 0)
+    BoxField(ValueId, ValueId, V),             // _1 = box_field(_2) as BoxedField[_3]
+    UnboxField(ValueId, ValueId),              // _1 = unbox_field(_2)
+    MulConst(ValueId, ValueId, ValueId), // _1 = _2 * _3, where _2 is a constant and _3 is a box
 }
 
 impl<V: Display + Clone> OpCode<V> {
@@ -1162,6 +1167,32 @@ impl<V: Display + Clone> OpCode<V> {
                 };
                 format!("{}(v{})", name, value.0)
             }
+            OpCode::BoxField(result, value, annotation) => {
+                format!(
+                    "v{}{} = box_field(v{}) as {}",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    value.0,
+                    annotation
+                )
+            }
+            OpCode::UnboxField(result, value) => {
+                format!(
+                    "v{}{} = unbox_field(v{})",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    value.0
+                )
+            }
+            OpCode::MulConst(result, constant, var) => {
+                format!(
+                    "v{}{} = mul_const(v{}, v{})",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    constant.0,
+                    var.0
+                )
+            }
         }
     }
 }
@@ -1173,10 +1204,13 @@ impl<V> OpCode<V> {
             | Self::MemOp(_, r)
             | Self::FreshWitness(r, _)
             | Self::NextDCoeff(r) => vec![r].into_iter(),
-            Self::Cmp(_, a, b, c) | Self::BinaryArithOp(_, a, b, c) | Self::ArrayGet(a, b, c) => {
-                vec![a, b, c].into_iter()
+            Self::Cmp(_, a, b, c)
+            | Self::BinaryArithOp(_, a, b, c)
+            | Self::ArrayGet(a, b, c)
+            | Self::MulConst(a, b, c) => vec![a, b, c].into_iter(),
+            Self::Cast(a, b, _) | Self::BoxField(a, b, _) | Self::UnboxField(a, b) => {
+                vec![a, b].into_iter()
             }
-            Self::Cast(a, b, _) => vec![a, b].into_iter(),
             Self::Truncate(a, b, _, _) => vec![a, b].into_iter(),
             Self::ArraySet(a, b, c, d) => vec![a, b, c, d].into_iter(),
             Self::AssertR1C(a, b, c) | Self::Constrain(a, b, c) => vec![a, b, c].into_iter(),
@@ -1210,9 +1244,10 @@ impl<V> OpCode<V> {
             Self::Alloc(_, _, _) | Self::FreshWitness(_, _) | Self::NextDCoeff(_) => {
                 vec![].into_iter()
             }
-            Self::Cmp(_, _, b, c) | Self::BinaryArithOp(_, _, b, c) | Self::ArrayGet(_, b, c) => {
-                vec![b, c].into_iter()
-            }
+            Self::Cmp(_, _, b, c)
+            | Self::BinaryArithOp(_, _, b, c)
+            | Self::ArrayGet(_, b, c)
+            | Self::MulConst(_, b, c) => vec![b, c].into_iter(),
             Self::ArraySet(_, b, c, d) => vec![b, c, d].into_iter(),
             Self::AssertEq(b, c) | Self::Store(b, c) | Self::BumpD(_, b, c) => {
                 vec![b, c].into_iter()
@@ -1220,6 +1255,8 @@ impl<V> OpCode<V> {
             Self::Load(_, c)
             | Self::WriteWitness(_, c, _)
             | Self::Cast(_, c, _)
+            | Self::BoxField(_, c, _)
+            | Self::UnboxField(_, c)
             | Self::Truncate(_, c, _, _) => vec![c].into_iter(),
             Self::Call(_, _, a) => a.iter_mut().collect::<Vec<_>>().into_iter(),
             Self::MkSeq(_, inputs, _, _) => inputs.iter_mut().collect::<Vec<_>>().into_iter(),
@@ -1240,12 +1277,15 @@ impl<V> OpCode<V> {
                 vec![b, c].into_iter()
             }
             Self::ArraySet(_, b, c, d) => vec![b, c, d].into_iter(),
-            Self::AssertEq(b, c) | Self::Store(b, c) | Self::BumpD(_, b, c) => {
-                vec![b, c].into_iter()
-            }
+            Self::AssertEq(b, c)
+            | Self::Store(b, c)
+            | Self::BumpD(_, b, c)
+            | Self::MulConst(_, b, c) => vec![b, c].into_iter(),
             Self::Load(_, c)
             | Self::WriteWitness(_, c, _)
             | Self::Cast(_, c, _)
+            | Self::BoxField(_, c, _)
+            | Self::UnboxField(_, c)
             | Self::Truncate(_, c, _, _) => vec![c].into_iter(),
             Self::Call(_, _, a) => a.iter().collect::<Vec<_>>().into_iter(),
             Self::MkSeq(_, inputs, _, _) => inputs.iter().collect::<Vec<_>>().into_iter(),
@@ -1270,6 +1310,9 @@ impl<V> OpCode<V> {
             | Self::Select(r, _, _, _)
             | Self::Cast(r, _, _)
             | Self::Truncate(r, _, _, _)
+            | Self::MulConst(r, _, _)
+            | Self::BoxField(r, _, _)
+            | Self::UnboxField(r, _)
             | Self::NextDCoeff(r) => vec![r].into_iter(),
             Self::WriteWitness(r, _, _) => {
                 let ret_vec = r.iter().collect::<Vec<_>>();

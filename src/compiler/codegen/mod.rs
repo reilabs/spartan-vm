@@ -325,6 +325,14 @@ impl CodeGen {
                                 b: layouter.get_value(*op2),
                             });
                         }
+                        TypeExpr::BoxedField => {
+                            let result = layouter.alloc_ptr(*val);
+                            emitter.push_op(bytecode::OpCode::AddBoxed {
+                                res: result,
+                                a: layouter.get_value(*op1),
+                                b: layouter.get_value(*op2),
+                            });
+                        }
                         t => panic!("Unsupported type for addition: {:?}", t),
                     }
                 }
@@ -346,7 +354,7 @@ impl CodeGen {
                                 b: layouter.get_value(*op2),
                             });
                         }
-                        t => panic!("Unsupported type for addition: {:?}", t),
+                        t => panic!("Unsupported type for subtraction: {:?}", t),
                     }
                 }
                 ssa::OpCode::BinaryArithOp(BinaryArithOpKind::Div, val, op1, op2) => {
@@ -367,7 +375,7 @@ impl CodeGen {
                                 b: layouter.get_value(*op2),
                             });
                         }
-                        t => panic!("Unsupported type for addition: {:?}", t),
+                        t => panic!("Unsupported type for division: {:?}", t),
                     }
                 }
                 ssa::OpCode::BinaryArithOp(BinaryArithOpKind::Mul, val, op1, op2) => {
@@ -594,13 +602,6 @@ impl CodeGen {
                     // This will bite me soon
                     _ = layouter.alloc_value(*r, &type_info.get_value_type(*r));
                 }
-                // ssa::OpCode::ConstraintDerivative(a, b, c) => {
-                //     emitter.push_op(bytecode::OpCode::ConstraintDerivative {
-                //         a: layouter.get_value(*a),
-                //         b: layouter.get_value(*b),
-                //         c: layouter.get_value(*c),
-                //     });
-                // }
                 ssa::OpCode::NextDCoeff(out) => {
                     let v = layouter.alloc_field(*out);
                     emitter.push_op(bytecode::OpCode::NextDCoeff { v });
@@ -618,6 +619,25 @@ impl CodeGen {
                     assert!(matches!(tp.expr, TypeExpr::BoxedField));
                     emitter.push_op(bytecode::OpCode::FreshWitness {
                         res: layouter.alloc_ptr(*r),
+                    });
+                }
+                ssa::OpCode::BoxField(r, v, _) => {
+                    emitter.push_op(bytecode::OpCode::BoxField {
+                        res: layouter.alloc_ptr(*r),
+                        v: layouter.get_value(*v),
+                    });
+                }
+                ssa::OpCode::UnboxField(r, v) => {
+                    emitter.push_op(bytecode::OpCode::UnboxField {
+                        res: layouter.alloc_field(*r),
+                        v: layouter.get_value(*v),
+                    });
+                }
+                ssa::OpCode::MulConst(r, c, v) => {
+                    emitter.push_op(bytecode::OpCode::MulConst {
+                        res: layouter.alloc_ptr(*r),
+                        coeff: layouter.get_value(*c),
+                        v: layouter.get_value(*v),
                     });
                 }
                 other => panic!("Unsupported instruction: {:?}", other),

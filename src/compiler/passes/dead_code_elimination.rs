@@ -135,7 +135,10 @@ impl DCE {
                         | OpCode::Cast { .. }
                         | OpCode::Truncate { .. }
                         | OpCode::Not { .. }
-                        | OpCode::ToBits { .. } => {}
+                        | OpCode::ToBits { .. }
+                        | OpCode::BoxField(_, _, _)
+                        | OpCode::UnboxField(_, _)
+                        | OpCode::MulConst(_, _, _) => {}
                     }
                 }
 

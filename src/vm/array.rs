@@ -1,7 +1,10 @@
 use std::{
     alloc::{self, Layout},
+    collections::VecDeque,
     ptr,
 };
+
+use nargo::foreign_calls::print;
 
 use crate::{
     compiler::Field,
@@ -12,13 +15,13 @@ use crate::{
 pub struct BoxedLayout(pub u64);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum DataType {
+pub enum DataType {
     PrimArray = 0,
     BoxedArray = 1,
     ADConst = 2,
     ADWitness = 3,
     ADSum = 4,
-    ADConstProd = 5,
+    ADMulConst = 5,
 }
 
 struct Array {}
@@ -54,7 +57,15 @@ impl BoxedLayout {
         Self::new(DataType::ADWitness)
     }
 
-    fn data_type(&self) -> DataType {
+    pub fn mul_const() -> Self {
+        Self::new(DataType::ADMulConst)
+    }
+
+    pub fn ad_sum() -> Self {
+        Self::new(DataType::ADSum)
+    }
+
+    pub fn data_type(&self) -> DataType {
         let disciminator = self.0 as u8;
         unsafe { std::mem::transmute(disciminator) }
     }
@@ -75,6 +86,7 @@ impl BoxedLayout {
         let base_byte_size = match self.data_type() {
             DataType::ADConst => size_of::<ADConst>(),
             DataType::ADWitness => size_of::<ADWitness>(),
+            DataType::BoxedArray | DataType::PrimArray => 8 * self.array_size(),
             _ => todo!("underlying_array_size"),
         };
         let arr_size = ((base_byte_size + 7) / 8) + 2;
@@ -90,6 +102,24 @@ pub struct ADConst {
 #[derive(Clone, Copy)]
 pub struct ADWitness {
     pub index: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct ADMulConst {
+    pub coeff: Field,
+    pub value: BoxedValue,
+    pub da: Field,
+    pub db: Field,
+    pub dc: Field,
+}
+
+#[derive(Clone, Copy)]
+pub struct ADSum {
+    pub a: BoxedValue,
+    pub b: BoxedValue,
+    pub da: Field,
+    pub db: Field,
+    pub dc: Field,
 }
 
 #[derive(Clone, Copy)]
@@ -112,7 +142,7 @@ impl BoxedValue {
         unsafe { self.0.offset(1) }
     }
 
-    fn layout(&self) -> BoxedLayout {
+    pub fn layout(&self) -> BoxedLayout {
         unsafe { *(self.0 as *mut BoxedLayout) }
     }
 
@@ -128,23 +158,25 @@ impl BoxedValue {
         self.data() as *mut ADWitness
     }
 
+    pub fn as_mul_const(&self) -> *mut ADMulConst {
+        self.data() as *mut ADMulConst
+    }
+
+    pub fn as_ad_sum(&self) -> *mut ADSum {
+        self.data() as *mut ADSum
+    }
+
     #[inline(always)]
     pub fn bump_da(&self, amount: Field, vm: &mut VM) {
         match self.layout().data_type() {
-            DataType::ADConst => {
-                unsafe {
-                    *vm.out_da += amount * (*self.as_ad_const()).value
-                }
+            DataType::ADConst => unsafe { *vm.out_da += amount * (*self.as_ad_const()).value },
+            DataType::ADWitness => unsafe {
+                *vm.out_da.offset((*self.as_ad_witness()).index as isize) += amount
             },
-            DataType::ADWitness => {
-                unsafe {
-                    *vm.out_da.offset((*self.as_ad_witness()).index as isize) += amount
-                }
-            }
             DataType::ADSum => {
                 todo!("bump_da for ADSum")
             }
-            DataType::ADConstProd => {
+            DataType::ADMulConst => {
                 todo!("bump_da for ADConstProd")
             }
             DataType::PrimArray => {
@@ -159,20 +191,14 @@ impl BoxedValue {
     #[inline(always)]
     pub fn bump_db(&self, amount: Field, vm: &mut VM) {
         match self.layout().data_type() {
-            DataType::ADConst => {
-                unsafe {
-                    *vm.out_db += amount * (*self.as_ad_const()).value
-                }
+            DataType::ADConst => unsafe { *vm.out_db += amount * (*self.as_ad_const()).value },
+            DataType::ADWitness => unsafe {
+                *vm.out_db.offset((*self.as_ad_witness()).index as isize) += amount
             },
-            DataType::ADWitness => {
-                unsafe {
-                    *vm.out_db.offset((*self.as_ad_witness()).index as isize) += amount
-                }
-            }
             DataType::ADSum => {
                 todo!("bump_db for ADSum")
             }
-            DataType::ADConstProd => {
+            DataType::ADMulConst => {
                 todo!("bump_db for ADConstProd")
             }
             DataType::PrimArray => {
@@ -187,20 +213,14 @@ impl BoxedValue {
     #[inline(always)]
     pub fn bump_dc(&self, amount: Field, vm: &mut VM) {
         match self.layout().data_type() {
-            DataType::ADConst => {
-                unsafe {
-                    *vm.out_dc += amount * (*self.as_ad_const()).value
-                }
+            DataType::ADConst => unsafe { *vm.out_dc += amount * (*self.as_ad_const()).value },
+            DataType::ADWitness => unsafe {
+                *vm.out_dc.offset((*self.as_ad_witness()).index as isize) += amount
             },
-            DataType::ADWitness => {
-                unsafe {
-                    *vm.out_dc.offset((*self.as_ad_witness()).index as isize) += amount
-                }
-            }
             DataType::ADSum => {
                 todo!("bump_dc for ADSum")
             }
-            DataType::ADConstProd => {
+            DataType::ADMulConst => {
                 todo!("bump_dc for ADConstProd")
             }
             DataType::PrimArray => {
@@ -216,9 +236,9 @@ impl BoxedValue {
     //     unsafe { *self.meta() }.size()
     // }
 
-    // pub fn idx(&self, idx: usize, stride: usize) -> *mut u64 {
-    //     unsafe { self.0.offset(2 + (idx as isize * stride as isize)) }
-    // }
+    pub fn array_idx(&self, idx: usize, stride: usize) -> *mut u64 {
+        unsafe { self.data().offset(idx as isize * stride as isize) }
+    }
 
     pub fn inc_rc(&self, by: u64) {
         let rc = self.rc();
@@ -237,33 +257,46 @@ impl BoxedValue {
         let arr_size = self.layout().underlying_array_size();
         unsafe {
             alloc::dealloc(self.0 as *mut u8, Layout::array::<u64>(arr_size).unwrap());
-            vm.allocation_instrumenter.free(AllocationType::Heap, arr_size);
+            vm.allocation_instrumenter
+                .free(AllocationType::Heap, arr_size);
         }
     }
 
+    // #[inline(always)]
     pub fn dec_rc(&self, vm: &mut VM) {
-        let rc = self.rc();
-        let rc_val = unsafe { *rc };
-        if rc_val == 1 {
-            let layout = self.layout();
-            match layout.data_type() {
-                DataType::PrimArray => todo!("dec_rc for PrimArray"),
-                DataType::BoxedArray => todo!("dec_rc for BoxedArray"),
-                DataType::ADConst => {
-                    self.free(vm);
-                },
-                DataType::ADWitness => {
-                    self.free(vm);
-                },
-                DataType::ADSum => todo!("dec_rc for ADSum"),
-                DataType::ADConstProd => todo!("dec_rc for ADConstProd"),
-            }
-        } else {
-            unsafe {
-                *rc -= 1;
+        let mut queue = VecDeque::<BoxedValue>::new();
+        queue.push_back(*self);
+        while let Some(item) = queue.pop_front() {
+            let rc = item.rc();
+            // println!("dec_rc: array={:?} rc={}", item.0, unsafe { *rc });
+            let rc_val = unsafe { *rc };
+            if rc_val == 1 {
+                let layout = item.layout();
+                match layout.data_type() {
+                    DataType::PrimArray => todo!("dec_rc for PrimArray"),
+                    DataType::BoxedArray => {
+                        // println!("freeing boxed array");
+                        for i in 0..layout.array_size() {
+                            let elem = unsafe { *(item.array_idx(i, 1) as *mut BoxedValue) };
+                            queue.push_back(elem);
+                        }
+                        item.free(vm);
+                    }
+                    DataType::ADConst => {
+                        item.free(vm);
+                    }
+                    DataType::ADWitness => {
+                        item.free(vm);
+                    }
+                    DataType::ADSum => todo!("dec_rc for ADSum"),
+                    DataType::ADMulConst => todo!("dec_rc for ADConstProd"),
+                }
+            } else {
+                unsafe {
+                    *rc -= 1;
+                }
             }
         }
-
 
         // let rc = self.rc();
         // let rc_val = unsafe { *rc };
@@ -293,22 +326,22 @@ impl BoxedValue {
         // }
     }
 
-    // pub fn copy_if_reused(&self, vm: &mut VM) -> Self {
-    //     let rc = self.rc();
-    //     let rc_val = unsafe { *rc };
+    pub fn copy_if_reused(&self, vm: &mut VM) -> Self {
+        let rc = self.rc();
+        let rc_val = unsafe { *rc };
 
-    //     if rc_val == 1 {
-    //         // println!("Array @{:?} is dying, move instead of copy", self.0);
-    //         *self
-    //     } else {
-    //         // println!("Array @{:?} is not dying, copy", self.0);
-    //         let new_array = BoxedValue::alloc(unsafe { *self.meta() }, vm);
+        if rc_val == 1 {
+            // println!("Array @{:?} is dying, move instead of copy", self.0);
+            *self
+        } else {
+            // println!("Array @{:?} is not dying, copy", self.0);
+            let layout = self.layout();
+            let new_array = BoxedValue::alloc(layout, vm);
 
-    //         unsafe {
-    //             ptr::copy_nonoverlapping(self.0, new_array.0, self.size() + 2);
-    //             *new_array.rc() = 1;
-    //         }
-    //         new_array
-    //     }
-    // }
+            unsafe {
+                ptr::copy_nonoverlapping(self.data(), new_array.data(), layout.array_size());
+            }
+            new_array
+        }
+    }
 }

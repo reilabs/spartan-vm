@@ -187,7 +187,6 @@ pub fn run(
 
     let pc = unsafe { program.as_mut_ptr().offset(2) };
 
-
     dispatch(
         pc,
         frame,
@@ -220,6 +219,10 @@ pub fn run_ad(
         },
         &mut vm
     );
+
+    // for (i, el) in bytecode::DISPATCH.iter().enumerate() {
+    //     println!("{}: {:?}", i, el);
+    // }
 
     let mut program = program.to_vec();
     prepare_dispatch(&mut program);

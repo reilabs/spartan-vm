@@ -3,11 +3,11 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use crate::compiler::{pass_manager::Pass, passes::fix_double_jumps::ValueReplacements};
 use crate::compiler::{
     flow_analysis::{CFG, FlowAnalysis},
     ssa::{BinaryArithOpKind, BlockId, CmpKind, Const, Function, OpCode, SSA, ValueId},
 };
+use crate::compiler::{pass_manager::Pass, passes::fix_double_jumps::ValueReplacements};
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Expr {
@@ -164,7 +164,7 @@ impl Debug for Expr {
 
 pub struct CSE {}
 
-impl <V: Clone> Pass<V> for CSE {
+impl<V: Clone> Pass<V> for CSE {
     fn run(&self, ssa: &mut SSA<V>, pass_manager: &crate::compiler::pass_manager::PassManager<V>) {
         self.do_run(ssa, pass_manager.get_cfg());
     }
@@ -405,6 +405,9 @@ impl CSE {
                     | OpCode::Truncate { .. }
                     | OpCode::MemOp(_, _)
                     | OpCode::ToBits { .. } => {}
+                     OpCode::BoxField(_, _, _)
+                    | OpCode::UnboxField(_, _)
+                    | OpCode::MulConst(_, _, _) => { todo!() }
                     OpCode::Not(r, value) => {
                         let value_expr = get_expr(&exprs, value);
                         let result_expr = value_expr.not();

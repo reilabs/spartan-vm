@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 use itertools::Itertools;
 use tracing::{Level, debug, instrument, trace};
@@ -16,7 +16,7 @@ use crate::compiler::{
 
 pub struct RCInsertion {}
 
-impl<V: Clone + Display> Pass<V> for RCInsertion {
+impl<V: Clone + Display + Debug> Pass<V> for RCInsertion {
     fn pass_info(&self) -> PassInfo {
         PassInfo {
             name: "rc_insertion",
@@ -45,7 +45,7 @@ impl RCInsertion {
     }
 
     #[instrument(skip_all, level = Level::DEBUG, name = "RCInsertion::run_function", fields(function = function.get_name()))]
-    fn run_function<V: Clone + Display>(
+    fn run_function<V: Clone + Display + Debug>(
         &self,
         function: &mut Function<V>,
         cfg: &CFG,
@@ -89,7 +89,7 @@ impl RCInsertion {
                         // This is a potentially aliasing operation, so we need
                         // to bump RC by 1 for each repetition. Then, if the value
                         // dies here, we remove 1 bump.
-                        let mut count = count.count();
+                        let mut count: usize = count.count();
                         if !currently_live.contains(value) {
                             count -= 1;
                         }
@@ -107,22 +107,61 @@ impl RCInsertion {
 
             for instruction in block.take_instructions().into_iter().rev() {
                 match &instruction {
-                    OpCode::BinaryArithOp(_, _, _, _)
-                    | OpCode::AssertEq(_, _)
+                    OpCode::BinaryArithOp(_, _, _, _) => {
+                        new_instructions.push(instruction.clone());
+                        let rcd_inputs = instruction
+                            .get_inputs()
+                            .filter(|v| self.needs_rc(type_info, v))
+                            .copied()
+                            .collect_vec();
+                        for input in rcd_inputs.iter() {
+                            if currently_live.contains(input) {
+                                new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *input));
+                            }
+                        }
+                        currently_live.extend(rcd_inputs);
+                    }
+                    OpCode::UnboxField(_, v) => {
+                        if !currently_live.contains(v) {
+                            new_instructions.push(OpCode::MemOp(MemOp::Drop, *v));
+                        }
+                        new_instructions.push(instruction.clone());
+                        currently_live.insert(*v);
+                    }
+                    // These need to mark their inputs as live, but do not need to bump RCs
+                    OpCode::AssertEq(_, _)
                     | OpCode::Cast(_, _, _)
                     | OpCode::Cmp(_, _, _, _)
                     | OpCode::Truncate(_, _, _, _)
                     | OpCode::AssertR1C(_, _, _)
                     | OpCode::Constrain(_, _, _)
                     | OpCode::WriteWitness(_, _, _)
-                    | OpCode::FreshWitness(_, _)
                     | OpCode::NextDCoeff(_)
-                    | OpCode::Not(_, _) => new_instructions.push(instruction),
+                    | OpCode::BoxField(_, _, _)
+                    | OpCode::MulConst(_, _, _)
+                    | OpCode::Not(_, _) => {
+                        let rcd_inputs = instruction
+                            .get_inputs()
+                            .filter(|v| self.needs_rc(type_info, v))
+                            .copied()
+                            .collect_vec();
+                        currently_live.extend(rcd_inputs);
+                        new_instructions.push(instruction)
+                    }
+                    OpCode::FreshWitness(r, _) => {
+                        // it is possible that fresh_witness is only used for the side effect,
+                        // but the actual value is not used.
+                        if !currently_live.contains(r) {
+                            new_instructions.push(OpCode::MemOp(MemOp::Drop, *r));
+                        }
+                        new_instructions.push(instruction.clone());
+                    }
                     OpCode::BumpD(_, v, _) => {
                         if !currently_live.contains(v) {
                             new_instructions.push(OpCode::MemOp(MemOp::Drop, *v));
                         }
                         new_instructions.push(instruction.clone());
+                        currently_live.insert(*v);
                     }
                     OpCode::MkSeq(result, inputs, _, elem_type) => {
                         // MkSeq should return an RC counter of 1.
@@ -207,6 +246,8 @@ impl RCInsertion {
                                     result.0, block_id.0
                                 )
                             }
+                        } else {
+                            trace!("ArrayGet: result={} of type {:?} does not need RC", result.0, type_info.get_value_type(*result));
                         }
                         new_instructions.push(instruction.clone());
                         currently_live.insert(*array);

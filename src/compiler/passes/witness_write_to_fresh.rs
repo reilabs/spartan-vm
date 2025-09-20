@@ -83,6 +83,9 @@ impl WitnessWriteToFresh {
                         | OpCode::FreshWitness { .. }
                         | OpCode::Constrain { .. }
                         | OpCode::NextDCoeff { .. }
+                        | OpCode::BoxField { .. }
+                        | OpCode::UnboxField { .. }
+                        | OpCode::MulConst { .. }
                         | OpCode::BumpD { .. } => instruction.clone(),
                     };
                     *instruction = new_instruction;

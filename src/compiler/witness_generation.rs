@@ -378,6 +378,11 @@ impl WitnessGen {
                         scope.insert(*result, Value::Array(bit_values));
                     }
                     OpCode::MemOp(_, _) => {}
+                    OpCode::BoxField(_, _, _) |
+                    OpCode::UnboxField(_, _) |
+                    OpCode::MulConst(_, _, _) => {
+                        panic!("ICE: unexpected instruction");
+                    }
                 }
             }
 

@@ -199,7 +199,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let mut pass_manager = PassManager::<ConstantTaint>::new(
             "initial".to_string(),
-            true,
+            false,
             vec![
                 Box::new(FixDoubleJumps::new()),
                 Box::new(Mem2Reg::new()),
@@ -298,7 +298,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let mut r1cs_phase_1 = PassManager::<ConstantTaint>::new(
             "r1cs_phase_1".to_string(),
-            true,
+            false,
             vec![
                 Box::new(WitnessWriteToFresh::new()),
                 Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
@@ -327,9 +327,9 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
                 r1cs_gen.get_witness_size(),
                 &r1cs_coeffs,
             );
-            let valid = instrumenter.plot(&debug_output_dir.join("ad_vm_memory.png"));
-            if !valid {
-                warn!(message = %"AD VM memory leak detected");
+            let leftover_memory = instrumenter.plot(&debug_output_dir.join("ad_vm_memory.png"));
+            if leftover_memory > 0 {
+                warn!(message = %"AD VM memory leak detected", leftover_memory);
             } else {
                 info!(message = %"AD VM memory leak not detected");
             }
@@ -411,9 +411,9 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             ],
         );
 
-        let valid = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
-        if !valid {
-            warn!(message = %"VM memory leak detected");
+        let leftover_memory = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
+        if leftover_memory > 0 {
+            warn!(message = %"VM memory leak detected", leftover_memory);
         } else {
             info!(message = %"VM memory leak not detected");
         }

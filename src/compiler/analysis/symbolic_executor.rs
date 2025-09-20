@@ -268,6 +268,15 @@ impl SymbolicExecutor {
                     crate::compiler::ssa::OpCode::BumpD(_matrix, _a, _b) => {
                         todo!()
                     }
+                    crate::compiler::ssa::OpCode::BoxField(_, _, _) => {
+                        todo!()
+                    }
+                    crate::compiler::ssa::OpCode::UnboxField(_, _) => {
+                        todo!()
+                    }
+                    crate::compiler::ssa::OpCode::MulConst(_, _, _) => {
+                        todo!()
+                    }
                 }
             }
 

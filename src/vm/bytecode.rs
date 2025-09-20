@@ -1,6 +1,7 @@
 #![allow(unused_variables)]
 
 use crate::vm::interpreter::dispatch;
+use ark_ff::AdditiveGroup as _;
 use opcode_gen::interpreter;
 
 use crate::vm::array::{BoxedLayout, BoxedValue};
@@ -9,6 +10,7 @@ use crate::{
     vm::interpreter::{Frame, Handler},
 };
 
+use crate::vm::array::DataType;
 use crate::vm::array::{ADConst, ADWitness};
 use plotters::prelude::*;
 use std::alloc::Layout;
@@ -61,7 +63,7 @@ impl AllocationInstrumenter {
         self.events.push(AlocationEvent::Free(ty, size));
     }
 
-    pub fn plot(&self, path: &Path) -> bool {
+    pub fn plot(&self, path: &Path) -> usize {
         // Calculate memory usage over time
         let mut stack_usage = Vec::new();
         let mut heap_usage = Vec::new();
@@ -90,7 +92,7 @@ impl AllocationInstrumenter {
         }
 
         if stack_usage.is_empty() {
-            return true; // No events to plot
+            return 0; // No events to plot
         }
 
         // Calculate total memory usage
@@ -253,7 +255,7 @@ impl AllocationInstrumenter {
 
         root.present().unwrap();
 
-        *stack_usage.last().unwrap() == 0 && *heap_usage.last().unwrap() == 0
+        *stack_usage.last().unwrap() + *heap_usage.last().unwrap()
     }
 }
 
@@ -575,10 +577,16 @@ mod def {
         //     array.0
         // );
         for (i, item) in items.iter().enumerate() {
-            todo!("array alloc opcode")
-            // let tgt = array.idx(i, stride);
-            // frame.write_to(tgt, item.0 as isize, stride);
+            let tgt = array.array_idx(i, stride);
+            frame.write_to(tgt, item.0 as isize, stride);
         }
+        // println!(
+        //     "array_alloc: array={:?} stride={} size={} storage_size={}",
+        //     array.0,
+        //     stride,
+        //     array.layout().array_size(),
+        //     array.layout().underlying_array_size()
+        // );
         unsafe {
             *res = array;
         }
@@ -592,14 +600,18 @@ mod def {
         stride: usize,
         vm: &mut VM,
     ) {
-        todo!("array get opcode")
-        // let src = array.idx(index as usize, stride);
-        // unsafe {
-        //     ptr::copy_nonoverlapping(src, res, stride);
-        // }
+        // println!(
+        //     "array_get: array={:?} index={} stride={}",
+        //     array.0, index, stride
+        // );
+        let src = array.array_idx(index as usize, stride);
+        unsafe {
+            ptr::copy_nonoverlapping(src, res, stride);
+        }
     }
 
     #[opcode]
+    #[inline(never)]
     fn array_set(
         #[out] res: *mut BoxedValue,
         #[frame] array: BoxedValue,
@@ -609,13 +621,28 @@ mod def {
         frame: Frame,
         vm: &mut VM,
     ) {
-        todo!("array set opcode")
-        // let new_array = array.copy_if_reused(vm);
-        // let target = new_array.idx(index as usize, stride);
-        // frame.write_to(target, source.0 as isize, stride);
-        // unsafe {
-        //     *res = new_array;
-        // }
+        let new_array = array.copy_if_reused(vm);
+        let target = new_array.array_idx(index as usize, stride);
+        if new_array.layout().data_type() == DataType::BoxedArray {
+            if new_array.0 == array.0 {
+                // if we're reusing the array, the old element needs to be garbage collected
+                let old_elem = unsafe { *(target as *mut BoxedValue) };
+                old_elem.dec_rc(vm);
+            } else {
+                // if we're not reusing the array, we need to bump RC of all _other_ elements,
+                // because they're now aliased in the new array.
+                for i in 0..new_array.layout().array_size() {
+                    if i != index as usize {
+                        let elem = unsafe { *(new_array.array_idx(i, stride) as *mut BoxedValue) };
+                        elem.inc_rc(1);
+                    }
+                }
+            }
+        }
+        frame.write_to(target, source.0 as isize, stride);
+        unsafe {
+            *res = new_array;
+        }
     }
 
     #[opcode]
@@ -626,6 +653,7 @@ mod def {
     }
 
     #[opcode]
+    #[inline(never)]
     fn dec_rc(#[frame] array: BoxedValue, vm: &mut VM) {
         // println!("dec_array_rc_intro");
         array.dec_rc(vm);
@@ -673,6 +701,62 @@ mod def {
         let d = val.as_ad_witness();
         unsafe {
             (*d).index = index;
+            *res = val;
+        }
+    }
+
+    #[opcode]
+    fn box_field(#[out] res: *mut BoxedValue, #[frame] v: Field, vm: &mut VM) {
+        let val = BoxedValue::alloc(BoxedLayout::ad_const(), vm);
+        let d = val.as_ad_const();
+        unsafe {
+            (*d).value = v;
+            *res = val;
+        }
+    }
+
+    #[opcode]
+    fn unbox_field(#[out] res: *mut Field, #[frame] v: BoxedValue) {
+        let d = v.as_ad_const();
+        unsafe {
+            *res = (*d).value;
+        }
+    }
+
+    #[opcode]
+    fn mul_const(
+        #[out] res: *mut BoxedValue,
+        #[frame] coeff: Field,
+        #[frame] v: BoxedValue,
+        vm: &mut VM,
+    ) {
+        let val = BoxedValue::alloc(BoxedLayout::mul_const(), vm);
+        let d = val.as_mul_const();
+        unsafe {
+            (*d).coeff = coeff;
+            (*d).value = v;
+            (*d).da = Field::ZERO;
+            (*d).db = Field::ZERO;
+            (*d).dc = Field::ZERO;
+            *res = val;
+        }
+    }
+
+    #[opcode]
+    fn add_boxed(
+        #[out] res: *mut BoxedValue,
+        #[frame] a: BoxedValue,
+        #[frame] b: BoxedValue,
+        vm: &mut VM,
+    ) {
+        let val = BoxedValue::alloc(BoxedLayout::ad_sum(), vm);
+        let d = val.as_ad_sum();
+        unsafe {
+            (*d).a = a;
+            (*d).b = b;
+            (*d).da = Field::ZERO;
+            (*d).db = Field::ZERO;
+            (*d).dc = Field::ZERO;
             *res = val;
         }
     }

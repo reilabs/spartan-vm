@@ -219,6 +219,15 @@ impl ExplicitWitness {
                         OpCode::MemOp(_, _) => {
                             new_instructions.push(instruction);
                         }
+                        OpCode::BoxField(_, _, _) => {
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::UnboxField(_, _) => {
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::MulConst(_, _, _) => {
+                            new_instructions.push(instruction);
+                        }
                     }
                 }
                 block.put_instructions(new_instructions);
