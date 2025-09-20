@@ -233,8 +233,26 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         let mut r1cs_gen = R1CGen::new();
         r1cs_gen.run(&custom_ssa, &type_info);
         let r1cs = r1cs_gen.clone().get_r1cs();
+        let mut num_non_zero_terms = 0;
+        for r1c in r1cs.iter() {
+            for (_, coeff) in r1c.a.iter() {
+                if *coeff != ark_bn254::Fr::ZERO {
+                    num_non_zero_terms += 1;
+                }
+            }
+            for (_, coeff) in r1c.b.iter() {
+                if *coeff != ark_bn254::Fr::ZERO {
+                    num_non_zero_terms += 1;
+                }
+            }
+            for (_, coeff) in r1c.c.iter() {
+                if *coeff != ark_bn254::Fr::ZERO {
+                    num_non_zero_terms += 1;
+                }
+            }
+        }
         info!(
-            message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size()
+            message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size(), num_non_zero_terms = num_non_zero_terms
         );
 
         let mut r1cs_coeffs = vec![];
@@ -286,7 +304,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let mut r1cs_phase_1 = PassManager::<ConstantTaint>::new(
             "r1cs_phase_1".to_string(),
-            true,
+            false,
             vec![
                 Box::new(WitnessWriteToFresh::new()),
                 Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
@@ -374,6 +392,17 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         let r1cs_cleanup = R1CSCleanup::new();
         r1cs_cleanup.run(&mut custom_ssa);
+
+        let mut pass_manager = PassManager::<ConstantTaint>::new(
+            "witgen".to_string(),
+            false,
+            vec![
+                Box::new(RCInsertion::new()),
+                Box::new(FixDoubleJumps::new()),
+            ],
+        );
+        pass_manager.set_debug_output_dir(debug_output_dir.clone());
+        pass_manager.run(&mut custom_ssa);
 
         let flow_analysis = FlowAnalysis::run(&custom_ssa);
         let type_info = Types::new().run(&custom_ssa, &flow_analysis);

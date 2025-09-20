@@ -295,7 +295,7 @@ impl BoxedValue {
             if rc_val == 1 {
                 let layout = item.layout();
                 match layout.data_type() {
-                    DataType::PrimArray => todo!("dec_rc for PrimArray"),
+                    DataType::PrimArray => item.free(vm),
                     DataType::BoxedArray => {
                         // println!("freeing boxed array");
                         for i in 0..layout.array_size() {

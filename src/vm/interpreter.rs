@@ -165,10 +165,10 @@ pub fn run(
     let mut out_b = vec![Field::ZERO; r1cs_size];
     let mut out_c = vec![Field::ZERO; r1cs_size];
     let mut vm = VM::new_witgen(
-        out_wit.as_mut_ptr(),
         out_a.as_mut_ptr(),
         out_b.as_mut_ptr(),
         out_c.as_mut_ptr(),
+        out_wit.as_mut_ptr(),
     );
 
     let frame = Frame::push(
