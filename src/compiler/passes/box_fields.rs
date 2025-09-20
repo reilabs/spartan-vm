@@ -199,10 +199,24 @@ impl BoxFields {
                                 new_instructions.push(OpCode::Truncate(r, v, f, t));
                             }
                         }
+                        OpCode::AssertEq(a, b) => {
+                            let a_type = type_info.get_value_type(a);
+                            let b_type = type_info.get_value_type(b);
+                            if matches!(a_type.expr, TypeExpr::Field) && matches!(b_type.expr, TypeExpr::Field) {
+                                assert!(*a_type.get_annotation() == ConstantTaint::Pure, "Cannot handle impure assertions, should be removed already");
+                                assert!(*b_type.get_annotation() == ConstantTaint::Pure, "Cannot handle impure assertions, should be removed already");
+                                let new_a = function.fresh_value();
+                                let new_b = function.fresh_value();
+                                new_instructions.push(OpCode::UnboxField(new_a, a));
+                                new_instructions.push(OpCode::UnboxField(new_b, b));
+                                new_instructions.push(OpCode::AssertEq(new_a, new_b));
+                            } else {
+                                new_instructions.push(OpCode::AssertEq(a, b));
+                            }
+                        }
                         | OpCode::Not { .. }
                         | OpCode::Store { .. }
                         | OpCode::Load { .. }
-                        | OpCode::AssertEq { .. }
                         | OpCode::AssertR1C { .. }
                         | OpCode::Call { .. }
                         | OpCode::ArrayGet { .. }

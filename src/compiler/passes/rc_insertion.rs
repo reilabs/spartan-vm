@@ -107,7 +107,7 @@ impl RCInsertion {
 
             for instruction in block.take_instructions().into_iter().rev() {
                 match &instruction {
-                    OpCode::BinaryArithOp(_, _, _, _) => {
+                    OpCode::BinaryArithOp(_, r, _, _) => {
                         new_instructions.push(instruction.clone());
                         let rcd_inputs = instruction
                             .get_inputs()
@@ -119,6 +119,9 @@ impl RCInsertion {
                                 new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *input));
                             }
                         }
+                        if self.needs_rc(type_info, r) && !currently_live.contains(r) {
+                            panic!("ICE: Result of BinaryArithOp is immediately dropped. This is a bug.")
+                        }
                         currently_live.extend(rcd_inputs);
                     }
                     OpCode::UnboxField(_, v) => {
@@ -127,6 +130,22 @@ impl RCInsertion {
                         }
                         new_instructions.push(instruction.clone());
                         currently_live.insert(*v);
+                    }
+                    OpCode::MulConst(r, _, v) => {
+                        if currently_live.contains(v) {
+                            new_instructions.push(OpCode::MemOp(MemOp::Bump(1), *v));
+                        }
+                        if !currently_live.contains(r) {
+                            panic!("ICE: Result of MulConst is immediately dropped. This is a bug.")
+                        }
+                        new_instructions.push(instruction.clone());
+                        currently_live.insert(*v);
+                    }
+                    OpCode::BoxField(r, _, _) => {
+                        if !currently_live.contains(r) {
+                            panic!("ICE: Result of BoxField is immediately dropped. This is a bug.")
+                        }
+                        new_instructions.push(instruction.clone());
                     }
                     // These need to mark their inputs as live, but do not need to bump RCs
                     OpCode::AssertEq(_, _)
@@ -137,8 +156,6 @@ impl RCInsertion {
                     | OpCode::Constrain(_, _, _)
                     | OpCode::WriteWitness(_, _, _)
                     | OpCode::NextDCoeff(_)
-                    | OpCode::BoxField(_, _, _)
-                    | OpCode::MulConst(_, _, _)
                     | OpCode::Not(_, _) => {
                         let rcd_inputs = instruction
                             .get_inputs()
@@ -247,7 +264,11 @@ impl RCInsertion {
                                 )
                             }
                         } else {
-                            trace!("ArrayGet: result={} of type {:?} does not need RC", result.0, type_info.get_value_type(*result));
+                            trace!(
+                                "ArrayGet: result={} of type {:?} does not need RC",
+                                result.0,
+                                type_info.get_value_type(*result)
+                            );
                         }
                         new_instructions.push(instruction.clone());
                         currently_live.insert(*array);
@@ -290,6 +311,11 @@ impl RCInsertion {
                         new_instructions.push(instruction);
                     }
                     OpCode::MemOp(_mem_op, _value_id) => todo!(),
+                }
+            }
+            for param in block.get_parameter_values() {
+                if self.needs_rc(type_info, param) && !currently_live.contains(param) {
+                    new_instructions.push(OpCode::MemOp(MemOp::Drop, *param));
                 }
             }
             block.put_instructions(new_instructions.into_iter().rev().collect());

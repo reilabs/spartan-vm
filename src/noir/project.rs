@@ -284,21 +284,9 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         )
         .unwrap();
 
-        fs::write(
-            debug_output_dir.join("r1cs.txt"),
-            r1cs_gen
-                .clone()
-                .get_r1cs()
-                .iter()
-                .map(|r1c| r1c.to_string())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
-        .unwrap();
-
         let mut r1cs_phase_1 = PassManager::<ConstantTaint>::new(
             "r1cs_phase_1".to_string(),
-            false,
+            true,
             vec![
                 Box::new(WitnessWriteToFresh::new()),
                 Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),

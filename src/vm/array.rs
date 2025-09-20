@@ -86,8 +86,9 @@ impl BoxedLayout {
         let base_byte_size = match self.data_type() {
             DataType::ADConst => size_of::<ADConst>(),
             DataType::ADWitness => size_of::<ADWitness>(),
+            DataType::ADMulConst => size_of::<ADMulConst>(),
+            DataType::ADSum => size_of::<ADSum>(),
             DataType::BoxedArray | DataType::PrimArray => 8 * self.array_size(),
-            _ => todo!("underlying_array_size"),
         };
         let arr_size = ((base_byte_size + 7) / 8) + 2;
         arr_size
@@ -135,6 +136,7 @@ impl BoxedValue {
             *ptr = layout.0;
             *ptr.offset(1) = 1;
         }
+        // println!("allocing {:?} of size {} ({:?})", ptr, arr_size, layout.data_type());
         Self(ptr)
     }
 
@@ -174,10 +176,16 @@ impl BoxedValue {
                 *vm.out_da.offset((*self.as_ad_witness()).index as isize) += amount
             },
             DataType::ADSum => {
-                todo!("bump_da for ADSum")
+                unsafe {
+                    let ad_sum = self.as_ad_sum();
+                    (*ad_sum).da += amount;
+                }
             }
             DataType::ADMulConst => {
-                todo!("bump_da for ADConstProd")
+                unsafe {
+                    let ad_mul_const = self.as_mul_const();
+                    (*ad_mul_const).da += amount;
+                }
             }
             DataType::PrimArray => {
                 panic!("bump_da for PrimArray")
@@ -196,10 +204,16 @@ impl BoxedValue {
                 *vm.out_db.offset((*self.as_ad_witness()).index as isize) += amount
             },
             DataType::ADSum => {
-                todo!("bump_db for ADSum")
+                unsafe {
+                    let ad_sum = self.as_ad_sum();
+                    (*ad_sum).db += amount;
+                }
             }
             DataType::ADMulConst => {
-                todo!("bump_db for ADConstProd")
+                unsafe {
+                    let ad_mul_const = self.as_mul_const();
+                    (*ad_mul_const).db += amount;
+                }
             }
             DataType::PrimArray => {
                 panic!("bump_db for PrimArray")
@@ -218,10 +232,16 @@ impl BoxedValue {
                 *vm.out_dc.offset((*self.as_ad_witness()).index as isize) += amount
             },
             DataType::ADSum => {
-                todo!("bump_dc for ADSum")
+                unsafe {
+                    let ad_sum = self.as_ad_sum();
+                    (*ad_sum).dc += amount;
+                }
             }
             DataType::ADMulConst => {
-                todo!("bump_dc for ADConstProd")
+                unsafe {
+                    let ad_mul_const = self.as_mul_const();
+                    (*ad_mul_const).dc += amount;
+                }
             }
             DataType::PrimArray => {
                 panic!("bump_dc for PrimArray")
@@ -255,6 +275,7 @@ impl BoxedValue {
 
     fn free(&self, vm: &mut VM) {
         let arr_size = self.layout().underlying_array_size();
+        // println!("freeing {:?} of size {} ({:?})", self.0, arr_size, self.layout().data_type());
         unsafe {
             alloc::dealloc(self.0 as *mut u8, Layout::array::<u64>(arr_size).unwrap());
             vm.allocation_instrumenter
@@ -268,6 +289,7 @@ impl BoxedValue {
         queue.push_back(*self);
         while let Some(item) = queue.pop_front() {
             let rc = item.rc();
+            // println!("dec_rc: val={:?} rc={} ({:?})", item.0, unsafe { *rc }, item.layout().data_type());
             // println!("dec_rc: array={:?} rc={}", item.0, unsafe { *rc });
             let rc_val = unsafe { *rc };
             if rc_val == 1 {
@@ -288,8 +310,26 @@ impl BoxedValue {
                     DataType::ADWitness => {
                         item.free(vm);
                     }
-                    DataType::ADSum => todo!("dec_rc for ADSum"),
-                    DataType::ADMulConst => todo!("dec_rc for ADConstProd"),
+                    DataType::ADSum => {
+                        let ad_sum = unsafe { *item.as_ad_sum() };
+                        ad_sum.a.bump_da(ad_sum.da, vm);
+                        ad_sum.a.bump_db(ad_sum.db, vm);
+                        ad_sum.a.bump_dc(ad_sum.dc, vm);
+                        ad_sum.b.bump_da(ad_sum.da, vm);
+                        ad_sum.b.bump_db(ad_sum.db, vm);
+                        ad_sum.b.bump_dc(ad_sum.dc, vm);
+                        queue.push_back(ad_sum.a);
+                        queue.push_back(ad_sum.b);
+                        item.free(vm);
+                    }
+                    DataType::ADMulConst => {
+                        let ad_mul_const = unsafe { *item.as_mul_const() };
+                        ad_mul_const.value.bump_da(ad_mul_const.da * ad_mul_const.coeff, vm);
+                        ad_mul_const.value.bump_db(ad_mul_const.db * ad_mul_const.coeff, vm);
+                        ad_mul_const.value.bump_dc(ad_mul_const.dc * ad_mul_const.coeff, vm);
+                        queue.push_back(ad_mul_const.value);
+                        item.free(vm);
+                    }
                 }
             } else {
                 unsafe {
