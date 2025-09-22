@@ -321,6 +321,14 @@ impl Types {
                 function_info.values.insert(*result, var_type.clone());
                 Ok(())
             }
+            OpCode::Rangecheck(v, _) => {
+                // Rangecheck doesn't produce any output, just validates input
+                let v_type = function_info.values.get(v).unwrap();
+                assert!(v_type.is_field(), "only field types are supported for rangecheck");
+                assert!(v_type.annotation == V::empty(), "rangecheck on impure values is not supported");
+
+                Ok(())
+            }
         }
     }
 }

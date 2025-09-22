@@ -742,6 +742,7 @@ impl TaintAnalysis {
                         );
                         function_taint.value_taints.insert(*result, result_taint);
                     }
+                    OpCode::Rangecheck(_, _) => {}
                     OpCode::MemOp(_, _) => {}
                     OpCode::WriteWitness { .. }
                     | OpCode::Constrain { .. }

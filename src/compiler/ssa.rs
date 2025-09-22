@@ -630,6 +630,14 @@ impl<V: Clone> Function<V> {
         value_id
     }
 
+    pub fn push_rangecheck(&mut self, block_id: BlockId, value: ValueId, max_bits: usize) {
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Rangecheck(value, max_bits));
+    }
+
     pub fn push_mem_op(&mut self, block_id: BlockId, value: ValueId, kind: MemOp) {
         self.blocks
             .get_mut(&block_id)
@@ -964,6 +972,7 @@ pub enum OpCode<V> {
     BoxField(ValueId, ValueId, V),             // _1 = box_field(_2) as BoxedField[_3]
     UnboxField(ValueId, ValueId),              // _1 = unbox_field(_2)
     MulConst(ValueId, ValueId, ValueId), // _1 = _2 * _3, where _2 is a constant and _3 is a box
+    Rangecheck(ValueId, usize),                // rangecheck(_1, max_bits)
 }
 
 impl<V: Display + Clone> OpCode<V> {
@@ -1191,6 +1200,13 @@ impl<V: Display + Clone> OpCode<V> {
                     var.0
                 )
             }
+            OpCode::Rangecheck(val, max_bits) => {
+                format!(
+                    "rangecheck(v{}, {})",
+                    val.0,
+                    max_bits
+                )
+            }
         }
     }
 }
@@ -1234,6 +1250,7 @@ impl<V> OpCode<V> {
             Self::Select(a, b, c, d) => vec![a, b, c, d].into_iter(),
             Self::Not(r, v) => vec![r, v].into_iter(),
             Self::ToBits(r, v, _, _) => vec![r, v].into_iter(),
+            Self::Rangecheck(val, _) => vec![val].into_iter(),
         }
     }
 
@@ -1263,6 +1280,7 @@ impl<V> OpCode<V> {
             }
             Self::Not(_, v) => vec![v].into_iter(),
             Self::ToBits(_, v, _, _) | Self::MemOp(_, v) => vec![v].into_iter(),
+            Self::Rangecheck(val, _) => vec![val].into_iter(),
         }
     }
 
@@ -1292,6 +1310,7 @@ impl<V> OpCode<V> {
             }
             Self::Not(_, v) => vec![v].into_iter(),
             Self::ToBits(_, v, _, _) | Self::MemOp(_, v) => vec![v].into_iter(),
+            Self::Rangecheck(val, _) => vec![val].into_iter(),
         }
     }
 
@@ -1322,7 +1341,8 @@ impl<V> OpCode<V> {
             | Self::MemOp(_, _)
             | Self::Store(_, _)
             | Self::AssertEq(_, _)
-            | Self::AssertR1C(_, _, _) => vec![].into_iter(),
+            | Self::AssertR1C(_, _, _)
+            | Self::Rangecheck(_, _) => vec![].into_iter(),
             Self::Not(r, _) => vec![r].into_iter(),
             Self::ToBits(r, _, _, _) => vec![r].into_iter(),
         }

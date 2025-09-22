@@ -1,7 +1,7 @@
 #![allow(unused_variables)]
 
 use crate::vm::interpreter::dispatch;
-use ark_ff::AdditiveGroup as _;
+use ark_ff::{AdditiveGroup as _, BigInteger as _};
 use opcode_gen::interpreter;
 
 use crate::vm::array::{BoxedLayout, BoxedValue};
@@ -757,6 +757,15 @@ mod def {
             (*d).dc = Field::ZERO;
             *res = val;
         }
+    }
+
+    #[opcode]
+    #[inline(never)] // TODO better impl
+    fn rangecheck(#[frame] val: Field, max_bits: usize) {
+        // Convert field to bigint and check if it fits in max_bits
+        let bigint = ark_ff::PrimeField::into_bigint(val);
+        let check = bigint.to_bits_le().iter().skip(max_bits).all(|b| !b);
+        assert!(check);
     }
 }
 

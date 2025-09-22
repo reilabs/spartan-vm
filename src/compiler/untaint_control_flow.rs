@@ -107,6 +107,7 @@ impl UntaintControlFlow {
                     ),
                     OpCode::UnboxField(r, l) => OpCode::UnboxField(r, l),
                     OpCode::MulConst(r, l, c) => OpCode::MulConst(r, l, c),
+                    OpCode::Rangecheck(val, max_bits) => OpCode::Rangecheck(val, max_bits),
                 };
                 new_instructions.push(new);
             }
@@ -153,6 +154,7 @@ impl UntaintControlFlow {
                     | OpCode::Cast(_, _, _)
                     | OpCode::Truncate(_, _, _, _)
                     | OpCode::Not(_, _)
+                    | OpCode::Rangecheck(_, _)
                     | OpCode::ToBits(_, _, _, _) => {
                         new_instructions.push(instruction);
                     }

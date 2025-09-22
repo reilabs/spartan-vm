@@ -8,7 +8,9 @@ use crate::compiler::{
 use noirc_evaluator::ssa::ir::{
     basic_block::BasicBlockId,
     function::{Function as NoirFunction, FunctionId as NoirFunctionId},
-    instruction::{BinaryOp, Endian, Instruction as NoirInstruction, Intrinsic, TerminatorInstruction},
+    instruction::{
+        BinaryOp, Endian, Instruction as NoirInstruction, Intrinsic, TerminatorInstruction,
+    },
     types::{NumericType, Type as NoirType},
     value::{Value, ValueId as NoirValueId},
 };
@@ -38,7 +40,7 @@ impl FunctionConverter {
         let mut custom_function = Function::empty(noir_function.name().to_string());
         let entry_block_id = custom_function.get_entry_id();
 
-        for return_val in noir_function.returns().iter() {
+        for return_val in noir_function.returns().iter().map(|vs| vs.iter()).flatten() {
             let return_type = &noir_function.dfg.values[*return_val].get_type();
             let converted_return_type = self.type_converter.convert_type(return_type);
             custom_function.add_return_type(converted_return_type);
@@ -141,12 +143,18 @@ impl FunctionConverter {
                                     let result_type = result_value.get_type();
                                     let result_size = match result_type.as_ref() {
                                         NoirType::Array(_, size) => *size,
-                                        _ => panic!("ToBits result should be an array, got: {:?}", result_type),
+                                        _ => panic!(
+                                            "ToBits result should be an array, got: {:?}",
+                                            result_type
+                                        ),
                                     };
                                     let input_id = arguments[0];
                                     let input_value = &noir_function.dfg.values[input_id];
-                                    let input_converted =
-                                        self.convert_value(&mut custom_function, input_id, input_value);
+                                    let input_converted = self.convert_value(
+                                        &mut custom_function,
+                                        input_id,
+                                        input_value,
+                                    );
                                     let endianness = match endianness {
                                         Endian::Big => Endianness::Big,
                                         Endian::Little => Endianness::Little,
@@ -347,6 +355,19 @@ impl FunctionConverter {
                             custom_function.push_load(custom_block_id, address_converted);
 
                         self.value_mapper.insert(result_id, load_result);
+                    }
+                    NoirInstruction::RangeCheck { value, max_bit_size, assert_message: _ } => {
+                        let value_value = &noir_function.dfg.values[*value];
+                        let value_converted =
+                            self.convert_value(&mut custom_function, *value, value_value);
+                        
+                        custom_function.push_rangecheck(
+                            custom_block_id,
+                            value_converted,
+                            *max_bit_size as usize,
+                        );
+
+                        
                     }
                     _ => panic!("Unsupported instruction: {:?}", noir_instruction),
                 }

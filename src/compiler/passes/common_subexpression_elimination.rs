@@ -404,6 +404,7 @@ impl CSE {
                     | OpCode::Cast { .. }
                     | OpCode::Truncate { .. }
                     | OpCode::MemOp(_, _)
+                    | OpCode::Rangecheck(_, _)
                     | OpCode::ToBits { .. } => {}
                      OpCode::BoxField(_, _, _)
                     | OpCode::UnboxField(_, _)

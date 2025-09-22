@@ -124,6 +124,9 @@ impl DCE {
                             // we'll be fine.
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
+                        OpCode::Rangecheck(_, _) => {
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
                         OpCode::Load { .. }
                         | OpCode::BinaryArithOp { .. }
                         | OpCode::Cmp { .. }

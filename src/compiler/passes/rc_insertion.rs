@@ -311,6 +311,9 @@ impl RCInsertion {
                         new_instructions.push(instruction);
                     }
                     OpCode::MemOp(_mem_op, _value_id) => todo!(),
+                    OpCode::Rangecheck(_, _) => {
+                        new_instructions.push(instruction);
+                    }
                 }
             }
             for param in block.get_parameter_values() {

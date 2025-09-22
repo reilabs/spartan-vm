@@ -214,6 +214,11 @@ impl BoxFields {
                                 new_instructions.push(OpCode::AssertEq(a, b));
                             }
                         }
+                        OpCode::Rangecheck(val, max_bits) => {
+                            let unboxed_val = function.fresh_value();
+                            new_instructions.push(OpCode::UnboxField(unboxed_val, val));
+                            new_instructions.push(OpCode::Rangecheck(unboxed_val, max_bits));
+                        }
                         | OpCode::Not { .. }
                         | OpCode::Store { .. }
                         | OpCode::Load { .. }

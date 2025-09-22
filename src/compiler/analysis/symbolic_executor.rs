@@ -50,6 +50,7 @@ where
     fn write_witness(&self, tp: Option<&Type<Taint>>, ctx: &mut Context) -> Self;
     fn fresh_witness(ctx: &mut Context) -> Self;
     fn mem_op(&self, kind: MemOp, ctx: &mut Context);
+    fn rangecheck(&self, max_bits: usize, ctx: &mut Context);
 }
 
 pub trait Context<V, Taint> {
@@ -276,6 +277,10 @@ impl SymbolicExecutor {
                     }
                     crate::compiler::ssa::OpCode::MulConst(_, _, _) => {
                         todo!()
+                    }
+                    crate::compiler::ssa::OpCode::Rangecheck(v, max_bits) => {
+                        let v = scope[v.0 as usize].as_ref().unwrap();
+                        v.rangecheck(*max_bits, ctx);
                     }
                 }
             }

@@ -638,6 +638,12 @@ impl CodeGen {
                         v: layouter.get_value(*v),
                     });
                 }
+                ssa::OpCode::Rangecheck(val, max_bits) => {
+                    emitter.push_op(bytecode::OpCode::Rangecheck {
+                        val: layouter.get_value(*val),
+                        max_bits: *max_bits,
+                    });
+                }
                 other => panic!("Unsupported instruction: {:?}", other),
             }
         }

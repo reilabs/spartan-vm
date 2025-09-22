@@ -404,6 +404,12 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     }
 
     fn mem_op(&self, _kind: MemOp, _ctx: &mut R1CGen) {}
+
+    fn rangecheck(&self, max_bits: usize, _ctx: &mut R1CGen) {
+        let self_const = self.expect_constant();
+        let check = self_const.into_bigint().to_bits_le().iter().skip(max_bits).all(|b| !b);
+        assert!(check);
+    }
 }
 
 impl R1CGen {

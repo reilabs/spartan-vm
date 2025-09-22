@@ -377,6 +377,8 @@ impl WitnessGen {
 
                         scope.insert(*result, Value::Array(bit_values));
                     }
+                    OpCode::Rangecheck(_, _) => {
+                    }
                     OpCode::MemOp(_, _) => {}
                     OpCode::BoxField(_, _, _) |
                     OpCode::UnboxField(_, _) |

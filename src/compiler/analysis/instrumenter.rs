@@ -223,6 +223,12 @@ impl Value {
         }
     }
 
+    fn rangecheck(&self, _max_bits: usize, _instrumenter: &mut dyn OpInstrumenter) {
+        if self.is_witness() {
+            panic!("Cannot rangecheck witness value");
+        }
+    }
+
     fn is_witness(&self) -> bool {
         match self {
             Value::UWitness(_) => true,
@@ -640,6 +646,11 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
             .assert_eq(&b.specialized, instrumenter.get_specialized());
         self.unspecialized
             .assert_eq(&b.unspecialized, instrumenter.get_unspecialized());
+    }
+
+    fn rangecheck(&self, max_bits: usize, instrumenter: &mut CostAnalysis) {
+        self.unspecialized.rangecheck(max_bits, instrumenter.get_unspecialized());
+        self.specialized.rangecheck(max_bits, instrumenter.get_specialized());
     }
 
     fn to_bits(

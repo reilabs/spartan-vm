@@ -228,6 +228,11 @@ impl ExplicitWitness {
                         OpCode::MulConst(_, _, _) => {
                             new_instructions.push(instruction);
                         }
+                        OpCode::Rangecheck(v, _) => {
+                            let v_taint = function_type_info.get_value_type(v).get_annotation();
+                            assert!(v_taint.is_pure());
+                            new_instructions.push(instruction);
+                        }
                     }
                 }
                 block.put_instructions(new_instructions);
