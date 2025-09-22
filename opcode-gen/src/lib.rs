@@ -134,7 +134,7 @@ impl HostType {
                     }
                 }
             }
-            HostType::Tuple(ty) => {
+            HostType::Tuple(_ty) => {
                 todo!("tuple getter");
             }
         }

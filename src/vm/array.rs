@@ -4,8 +4,6 @@ use std::{
     ptr,
 };
 
-use nargo::foreign_calls::print;
-
 use crate::{
     compiler::Field,
     vm::bytecode::{AllocationType, VM},
@@ -23,8 +21,6 @@ pub enum DataType {
     ADSum = 4,
     ADMulConst = 5,
 }
-
-struct Array {}
 
 // BoxedLayout packing scheme:
 // highest byte is type

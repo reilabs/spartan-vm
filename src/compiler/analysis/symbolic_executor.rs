@@ -1,7 +1,7 @@
 use tracing::{Level, instrument};
 
 use crate::compiler::{
-    analysis::types::{FunctionTypeInfo, TypeInfo}, ir::r#type::Type, ssa::{
+    analysis::types::TypeInfo, ir::r#type::Type, ssa::{
         BinaryArithOpKind, BlockId, CastTarget, CmpKind, Const, Endianness, FunctionId, MemOp, SeqType, Terminator, SSA
     }, Field
 };

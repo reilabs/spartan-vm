@@ -4,8 +4,6 @@ use std::fs;
 
 use crate::compiler::passes::box_fields::BoxFields;
 use crate::compiler::Field;
-use crate::compiler::analysis::instrumenter::CostEstimator;
-use crate::compiler::analysis::liveness::LivenessAnalysis;
 use crate::compiler::analysis::types::Types;
 use crate::compiler::codegen::CodeGen;
 use crate::compiler::flow_analysis::FlowAnalysis;
@@ -39,7 +37,6 @@ use nargo::{
 use noirc_driver::{CompileOptions, check_crate};
 use noirc_evaluator::ssa::ssa_gen::Ssa;
 use noirc_evaluator::ssa::{SsaBuilder, SsaLogging, SsaPass};
-use noirc_frontend::debug;
 use noirc_frontend::hir::ParsedFiles;
 use noirc_frontend::monomorphization::monomorphize;
 use std::str::FromStr;

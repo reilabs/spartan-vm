@@ -268,7 +268,6 @@ impl CodeGen {
                             *emitter.block_entrances.get(&tgt).unwrap() as isize
                         ),
                     };
-                    block_exit_start += 1;
                 }
                 Terminator::JmpIf(cond, if_t, if_f) => {
                     emitter.code[block_exit_start] = bytecode::OpCode::JmpIf {
@@ -280,7 +279,6 @@ impl CodeGen {
                             *emitter.block_entrances.get(&if_f).unwrap() as isize
                         ),
                     };
-                    block_exit_start += 1;
                 }
                 Terminator::Return(_) => {
                     // Nothing to do, returns are correct right away
@@ -297,7 +295,7 @@ impl CodeGen {
 
     fn run_block_body(
         &self,
-        function: &Function<ConstantTaint>,
+        _function: &Function<ConstantTaint>,
         block_id: BlockId,
         block: &Block<ConstantTaint>,
         type_info: &FunctionTypeInfo<ConstantTaint>,
@@ -466,7 +464,7 @@ impl CodeGen {
                         });
                     }
                 }
-                ssa::OpCode::Cast(r, v, tgt) => {
+                ssa::OpCode::Cast(r, v, _tgt) => {
                     let result = layouter.alloc_value(*r, &type_info.get_value_type(*r));
                     let l_type = type_info.get_value_type(*v);
                     let r_type = type_info.get_value_type(*r);
@@ -647,7 +645,7 @@ impl CodeGen {
         match block.get_terminator().unwrap() {
             Terminator::Jmp(_, params) => {
                 emitter.push_op(bytecode::OpCode::Nop {});
-                for i in 0..params.len() {
+                for _ in 0..params.len() {
                     emitter.push_op(bytecode::OpCode::Nop {});
                 }
             }

@@ -7,7 +7,7 @@ use crate::compiler::{
 pub struct DeduplicatePhis {}
 
 impl <V: Clone> Pass<V> for DeduplicatePhis {
-    fn run(&self, ssa: &mut SSA<V>, pass_manager: &crate::compiler::pass_manager::PassManager<V>) {
+    fn run(&self, ssa: &mut SSA<V>, _pass_manager: &crate::compiler::pass_manager::PassManager<V>) {
         self.do_run(ssa);
     }
 

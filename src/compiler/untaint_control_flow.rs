@@ -97,7 +97,7 @@ impl UntaintControlFlow {
                     OpCode::Not(r, l) => OpCode::Not(r, l),
                     OpCode::ToBits(r, l, e, s) => OpCode::ToBits(r, l, e, s),
                     OpCode::MemOp(kind, value) => OpCode::MemOp(kind, value),
-                    OpCode::BoxField(r, l, c) => OpCode::BoxField(
+                    OpCode::BoxField(r, l, _c) => OpCode::BoxField(
                         r,
                         l,
                         function_taint

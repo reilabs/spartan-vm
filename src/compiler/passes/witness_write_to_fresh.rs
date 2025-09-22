@@ -1,7 +1,7 @@
 use crate::compiler::{
     ir::r#type::{Type, TypeExpr},
     pass_manager::{DataPoint, Pass},
-    ssa::{CastTarget, Const, OpCode},
+    ssa::OpCode,
     taint_analysis::ConstantTaint,
 };
 

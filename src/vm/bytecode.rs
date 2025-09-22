@@ -11,9 +11,7 @@ use crate::{
 };
 
 use crate::vm::array::DataType;
-use crate::vm::array::{ADConst, ADWitness};
 use plotters::prelude::*;
-use std::alloc::Layout;
 use std::fmt::Display;
 use std::path::Path;
 use std::ptr;

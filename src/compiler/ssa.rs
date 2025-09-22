@@ -1,9 +1,7 @@
 use crate::compiler::{
-    flow_analysis::{CFG, FlowAnalysis},
     ir::r#type::{CommutativeMonoid, Empty, Type},
     ssa_gen::SsaConverter,
 };
-use core::panic;
 use itertools::Itertools;
 use std::{collections::HashMap, fmt::Display};
 

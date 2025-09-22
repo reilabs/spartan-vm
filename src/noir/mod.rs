@@ -52,12 +52,14 @@ impl<T> WithWarnings<T> {
     }
 
     /// Drops any warnings associated with the data to yield only the data.
+    #[allow(dead_code)]
     pub fn take(self) -> T {
         self.data
     }
 
     /// Returns `true` if `self` has warnings associated with it, and `false`
     /// otherwise.
+    #[allow(dead_code)]
     pub fn has_warnings(&self) -> bool {
         !self.warnings.is_empty()
     }
