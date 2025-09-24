@@ -12,9 +12,12 @@ impl <V: Clone> Pass<V> for ConditionPropagation {
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
         crate::compiler::pass_manager::PassInfo {
             name: "condition_propagation",
-            invalidates: vec![crate::compiler::pass_manager::DataPoint::Types],
             needs: vec![crate::compiler::pass_manager::DataPoint::CFG],
         }
+    }
+    
+    fn invalidates_cfg(&self) -> bool {
+        false
     }
 }
 

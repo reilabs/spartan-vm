@@ -14,6 +14,7 @@ use noirc_evaluator::ssa::ir::{
     types::{NumericType, Type as NoirType},
     value::{Value, ValueId as NoirValueId},
 };
+use tracing::instrument;
 
 use std::str::FromStr;
 
@@ -32,6 +33,7 @@ impl FunctionConverter {
         }
     }
 
+    #[instrument(skip_all, fields(function = %noir_function.name()))]
     pub fn convert_function(
         &mut self,
         noir_function: &NoirFunction,
@@ -98,6 +100,10 @@ impl FunctionConverter {
                             }
                             BinaryOp::Sub { unchecked: _ } => {
                                 custom_function.push_sub(custom_block_id, left_value, right_value)
+                            }
+                            BinaryOp::Or => {
+                                // TODO: LOL
+                                custom_function.push_add(custom_block_id, left_value, right_value)
                             }
                             _ => panic!("Unsupported binary operation: {:?}", binary.operator),
                         };
@@ -465,7 +471,7 @@ impl FunctionConverter {
                     panic!("Unsupported numeric type: {:?}", typ);
                 }
             },
-            _ => *self.value_mapper.get(&noir_value_id).unwrap(),
+            _ => *self.value_mapper.get(&noir_value_id).expect(&format!("Value not found: {:?} {:?}", noir_value_id, noir_value)),
         }
     }
 }

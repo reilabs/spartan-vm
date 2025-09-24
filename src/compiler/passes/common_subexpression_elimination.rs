@@ -163,7 +163,7 @@ impl Debug for Expr {
 }
 
 pub struct CSE {}
-
+ 
 impl<V: Clone> Pass<V> for CSE {
     fn run(&self, ssa: &mut SSA<V>, pass_manager: &crate::compiler::pass_manager::PassManager<V>) {
         self.do_run(ssa, pass_manager.get_cfg());
@@ -172,9 +172,12 @@ impl<V: Clone> Pass<V> for CSE {
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
         crate::compiler::pass_manager::PassInfo {
             name: "cse",
-            invalidates: vec![crate::compiler::pass_manager::DataPoint::Types],
             needs: vec![crate::compiler::pass_manager::DataPoint::CFG],
         }
+    }
+
+    fn invalidates_cfg(&self) -> bool {
+        false
     }
 }
 

@@ -25,9 +25,16 @@ impl Pass<ConstantTaint> for PullIntoAssert {
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
         crate::compiler::pass_manager::PassInfo {
             name: "pull_into_assert",
-            invalidates: vec![],
             needs: vec![],
         }
+    }
+
+    fn invalidates_cfg(&self) -> bool {
+        false
+    }
+
+    fn invalidates_types(&self) -> bool {
+        false
     }
 }
 

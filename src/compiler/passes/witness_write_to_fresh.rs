@@ -19,10 +19,14 @@ impl Pass<ConstantTaint> for WitnessWriteToFresh {
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
         crate::compiler::pass_manager::PassInfo {
             name: "witness_write_to_fresh",
-            invalidates: vec![DataPoint::Types],
             needs: vec![DataPoint::Types],
         }
     }
+
+    fn invalidates_cfg(&self) -> bool {
+        false
+    }
+
 }
 
 impl WitnessWriteToFresh {

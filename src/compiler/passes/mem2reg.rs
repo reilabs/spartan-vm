@@ -21,7 +21,6 @@ impl<V: Clone> Pass<V> for Mem2Reg {
     fn pass_info(&self) -> PassInfo {
         PassInfo {
             name: "mem2reg",
-            invalidates: vec![DataPoint::CFG, DataPoint::Types],
             needs: vec![DataPoint::CFG, DataPoint::Types],
         }
     }

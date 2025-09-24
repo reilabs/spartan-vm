@@ -4,6 +4,7 @@ use crate::compiler::{
     analysis::{
         instrumenter::{self, CostEstimator},
         types::{TypeInfo, Types},
+        value_definitions::ValueDefinitions,
     },
     flow_analysis::FlowAnalysis,
     ssa::{DefaultSsaAnnotator, SSA},
@@ -15,18 +16,30 @@ pub enum DataPoint {
     CFG,
     Types,
     ConstraintInstrumentation,
+    ValueDefinitions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PassInfo {
     pub name: &'static str,
-    pub invalidates: Vec<DataPoint>,
     pub needs: Vec<DataPoint>,
 }
 
 pub trait Pass<V> {
     fn run(&self, ssa: &mut SSA<V>, pass_manager: &PassManager<V>);
     fn pass_info(&self) -> PassInfo;
+    fn invalidates_cfg(&self) -> bool {
+        true
+    }
+    fn invalidates_types(&self) -> bool {
+        true
+    }
+    fn invalidates_constraint_instrumentation(&self) -> bool {
+        true
+    }
+    fn invalidates_value_definitions(&self) -> bool {
+        true
+    }
 }
 
 pub struct PassManager<V> {
@@ -36,12 +49,17 @@ pub struct PassManager<V> {
     draw_cfg: bool,
     type_info: Option<TypeInfo<V>>,
     constraint_instrumentation: Option<instrumenter::Summary>,
+    value_definitions: Option<ValueDefinitions<V>>,
     debug_output_dir: Option<PathBuf>,
     phase_label: String,
 }
 
 impl PassManager<ConstantTaint> {
-    pub fn new(phase_label: String, draw_cfg: bool, passes: Vec<Box<dyn Pass<ConstantTaint>>>) -> Self {
+    pub fn new(
+        phase_label: String,
+        draw_cfg: bool,
+        passes: Vec<Box<dyn Pass<ConstantTaint>>>,
+    ) -> Self {
         Self {
             passes,
             current_pass_info: None,
@@ -49,6 +67,7 @@ impl PassManager<ConstantTaint> {
             draw_cfg,
             type_info: None,
             constraint_instrumentation: None,
+            value_definitions: None,
             debug_output_dir: None,
             phase_label,
         }
@@ -60,7 +79,6 @@ impl PassManager<ConstantTaint> {
             fs::create_dir(&specific_dir).unwrap();
         }
         self.debug_output_dir = Some(specific_dir);
-
     }
 
     #[tracing::instrument(skip_all, name = "PassManager::run", fields(phase = %self.phase_label))]
@@ -91,7 +109,7 @@ impl PassManager<ConstantTaint> {
         self.output_debug_info(ssa, pass_index, &pass.pass_info());
         self.current_pass_info = Some(pass.pass_info());
         pass.run(ssa, self);
-        self.tear_down_pass_data(&pass.pass_info());
+        self.tear_down_pass_data(pass);
     }
 
     fn output_debug_info(
@@ -170,20 +188,23 @@ impl PassManager<ConstantTaint> {
             let cost_analysis = cost_estimator.run(ssa, self.type_info.as_ref().unwrap());
             self.constraint_instrumentation = Some(cost_analysis.summarize());
         }
+        if pass_info.needs.contains(&DataPoint::ValueDefinitions) {
+            self.value_definitions = Some(ValueDefinitions::from_ssa(ssa));
+        }
     }
 
-    fn tear_down_pass_data(&mut self, pass_info: &PassInfo) {
-        if pass_info.invalidates.contains(&DataPoint::CFG) {
+    fn tear_down_pass_data(&mut self, pass: &dyn Pass<ConstantTaint>) {
+        if pass.invalidates_cfg() {
             self.cfg = None;
         }
-        if pass_info.invalidates.contains(&DataPoint::Types) {
+        if pass.invalidates_types() {
             self.type_info = None;
         }
-        if pass_info
-            .invalidates
-            .contains(&DataPoint::ConstraintInstrumentation)
-        {
+        if pass.invalidates_constraint_instrumentation() {
             self.constraint_instrumentation = None;
+        }
+        if pass.invalidates_value_definitions() {
+            self.value_definitions = None;
         }
     }
 }
@@ -235,5 +256,20 @@ impl<V> PassManager<V> {
             None => {}
         }
         self.type_info.as_ref().unwrap()
+    }
+
+    pub fn get_value_definitions(&self) -> &ValueDefinitions<V> {
+        match &self.current_pass_info {
+            Some(pass_info) => {
+                if !pass_info.needs.contains(&DataPoint::ValueDefinitions) {
+                    panic!(
+                        "Pass {} does not need value definitions but tries to access it",
+                        pass_info.name
+                    );
+                }
+            }
+            None => {}
+        }
+        self.value_definitions.as_ref().unwrap()
     }
 }

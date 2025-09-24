@@ -68,7 +68,6 @@ impl <V: Clone> Pass<V> for FixDoubleJumps {
     fn pass_info(&self) -> PassInfo {
         PassInfo {
             name: "fix_double_jumps",
-            invalidates: vec![DataPoint::CFG],
             needs: vec![DataPoint::CFG],
         }
     }

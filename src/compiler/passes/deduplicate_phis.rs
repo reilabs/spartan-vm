@@ -14,7 +14,6 @@ impl <V: Clone> Pass<V> for DeduplicatePhis {
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
         crate::compiler::pass_manager::PassInfo {
             name: "deduplicate_phis",
-            invalidates: vec![crate::compiler::pass_manager::DataPoint::CFG],
             needs: vec![crate::compiler::pass_manager::DataPoint::CFG],
         }
     }

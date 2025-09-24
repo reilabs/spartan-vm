@@ -49,7 +49,6 @@ impl<V: Clone> Pass<V> for DCE {
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
         crate::compiler::pass_manager::PassInfo {
             name: "dce",
-            invalidates: vec![crate::compiler::pass_manager::DataPoint::CFG],
             needs: vec![crate::compiler::pass_manager::DataPoint::CFG],
         }
     }

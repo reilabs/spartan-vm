@@ -21,9 +21,12 @@ impl Pass<ConstantTaint> for BoxFields {
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
         crate::compiler::pass_manager::PassInfo {
             name: "box_fields",
-            invalidates: vec![DataPoint::Types],
             needs: vec![DataPoint::Types],
         }
+    }
+
+    fn invalidates_cfg(&self) -> bool {
+        false
     }
 }
 

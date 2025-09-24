@@ -2,6 +2,7 @@
 
 use std::fs;
 
+use crate::compiler::passes::arithmetic_simplifier::ArithmeticSimplifier;
 use crate::compiler::passes::box_fields::BoxFields;
 use crate::compiler::Field;
 use crate::compiler::analysis::types::Types;
@@ -201,6 +202,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             vec![
                 Box::new(FixDoubleJumps::new()),
                 Box::new(Mem2Reg::new()),
+                Box::new(ArithmeticSimplifier::new()),
                 Box::new(CSE::new()),
                 Box::new(ConditionPropagation::new()),
                 Box::new(CSE::new()),

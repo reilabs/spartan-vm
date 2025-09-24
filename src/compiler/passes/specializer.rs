@@ -396,11 +396,6 @@ impl Pass<ConstantTaint> for Specializer {
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
         PassInfo {
             name: "specializer",
-            invalidates: vec![
-                DataPoint::CFG,
-                DataPoint::Types,
-                DataPoint::ConstraintInstrumentation,
-            ],
             needs: vec![DataPoint::ConstraintInstrumentation, DataPoint::Types],
         }
     }

@@ -20,7 +20,6 @@ impl<V: Clone + Display + Debug> Pass<V> for RCInsertion {
     fn pass_info(&self) -> PassInfo {
         PassInfo {
             name: "rc_insertion",
-            invalidates: vec![DataPoint::CFG],
             needs: vec![DataPoint::CFG, DataPoint::Types],
         }
     }
