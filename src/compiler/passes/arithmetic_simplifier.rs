@@ -48,10 +48,10 @@ impl ArithmeticSimplifier {
                 let mut new_instructions = Vec::new();
                 for instruction in block.take_instructions().into_iter() {
                     match instruction {
-                        OpCode::Rangecheck(v, bits) => {
+                        OpCode::Rangecheck { value: v, max_bits: bits } => {
                             let v_definition = value_definitions.get_definition(v);
                             match v_definition {
-                                ValueDefinition::Instruction(_, _, OpCode::Cast(_, v, CastTarget::Field)) => {
+                                ValueDefinition::Instruction(_, _, OpCode::Cast { result: _, value: v, target: CastTarget::Field }) => {
                                     let v_type = type_info.get_value_type(*v);
                                     if !matches!(v_type.annotation, ConstantTaint::Pure) {
                                         panic!("Rangecheck on impure value");
@@ -61,8 +61,16 @@ impl ArithmeticSimplifier {
                                             let cst = function.push_u_const(*s, 1 << bits);
                                             let r = function.fresh_value();
                                             let t = function.push_u_const(1,1);
-                                            new_instructions.push(OpCode::Cmp(CmpKind::Lt, r, *v, cst));
-                                            new_instructions.push(OpCode::AssertEq(r, t));
+                                            new_instructions.push(OpCode::Cmp {
+                                                kind: CmpKind::Lt,
+                                                result: r,
+                                                lhs: *v,
+                                                rhs: cst
+                                            });
+                                            new_instructions.push(OpCode::AssertEq {
+                                                lhs: r,
+                                                rhs: t
+                                            });
                                         }
                                         _ => panic!("Rangecheck on a cast of a non-u value {}", v_type),
                                     }

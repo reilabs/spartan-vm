@@ -86,22 +86,22 @@ impl DCE {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
                         // assert_eq is critical if it's not definitionally true
-                        OpCode::AssertEq(lhs, rhs) => {
+                        OpCode::AssertEq { lhs, rhs } => {
                             if lhs != rhs {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
                         }
-                        OpCode::AssertR1C(_, _, _) => {
+                        OpCode::AssertR1C { a: _, b: _, c: _ } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
                         OpCode::Constrain { .. } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
-                        OpCode::NextDCoeff(_) => {
+                        OpCode::NextDCoeff { result: _ } => {
                             // This also has the side-effect of bumping the counter, so we need to keep it live.
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
-                        OpCode::BumpD(_, _, _) => {
+                        OpCode::BumpD { matrix: _, variable: _, sensitivity: _ } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
                         OpCode::WriteWitness { .. } => {
@@ -111,19 +111,19 @@ impl DCE {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
                         }
-                        OpCode::FreshWitness(_, _) => {
+                        OpCode::FreshWitness { result: _, result_type: _ } => {
                             if self.config.witness_shape_frozen {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
                         }
-                        OpCode::MemOp(_, _) => {
+                        OpCode::MemOp { kind: _, value: _ } => {
                             // TODO: this is over-conservative - accidentally alives the value
                             // even if it's not used otherwise. Should be fixed in the future,
                             // but we're inserting these late in the pipeline, so main passes
                             // we'll be fine.
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
-                        OpCode::Rangecheck(_, _) => {
+                        OpCode::Rangecheck { value: _, max_bits: _ } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
                         OpCode::Load { .. }
@@ -138,9 +138,11 @@ impl DCE {
                         | OpCode::Truncate { .. }
                         | OpCode::Not { .. }
                         | OpCode::ToBits { .. }
-                        | OpCode::BoxField(_, _, _)
-                        | OpCode::UnboxField(_, _)
-                        | OpCode::MulConst(_, _, _) => {}
+                        | OpCode::ToRadix { .. }
+                        | OpCode::BoxField { result: _, value: _, result_annotation: _ }
+                        | OpCode::UnboxField { result: _, value: _ }
+                        | OpCode::MulConst { result: _, const_val: _, var: _ }
+                        | OpCode::ReadGlobal { result: _, offset: _, result_type: _ } => {}
                     }
                 }
 

@@ -158,63 +158,63 @@ impl WitnessGen {
             let block = function.get_block(block_id);
             for instruction in block.get_instructions() {
                 match instruction {
-                    OpCode::BinaryArithOp(BinaryArithOpKind::Add, result, lhs, rhs) => {
+                    OpCode::BinaryArithOp { kind: BinaryArithOpKind::Add, result, lhs, rhs } => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         let r = lhs.add(rhs);
                         scope.insert(*result, r);
                     }
 
-                    OpCode::BinaryArithOp(BinaryArithOpKind::Mul, result, lhs, rhs) => {
+                    OpCode::BinaryArithOp { kind: BinaryArithOpKind::Mul, result, lhs, rhs } => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         let r = lhs.mul(rhs);
                         scope.insert(*result, r);
                     }
 
-                    OpCode::BinaryArithOp(BinaryArithOpKind::Sub, result, lhs, rhs) => {
+                    OpCode::BinaryArithOp { kind: BinaryArithOpKind::Sub, result, lhs, rhs } => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         let r = lhs.sub(rhs);
                         scope.insert(*result, r);
                     }
 
-                    OpCode::BinaryArithOp(BinaryArithOpKind::Div, result, lhs, rhs) => {
+                    OpCode::BinaryArithOp { kind: BinaryArithOpKind::Div, result, lhs, rhs } => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         let r = lhs.div(rhs);
                         scope.insert(*result, r);
                     }
 
-                    OpCode::Cmp(CmpKind::Lt, result, lhs, rhs) => {
+                    OpCode::Cmp { kind: CmpKind::Lt, result, lhs, rhs } => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         let r = lhs.lt(rhs);
                         scope.insert(*result, r);
                     }
 
-                    OpCode::Alloc(result, _, _) => {
+                    OpCode::Alloc { result, elem_type: _, result_annotation: _ } => {
                         scope.insert(*result, Value::Ptr(Rc::new(RefCell::new(Value::Invalid))));
                     }
-                    OpCode::Store(ptr, value) => {
+                    OpCode::Store { ptr, value } => {
                         let ptr = scope.get(ptr).unwrap().expect_ptr();
                         let value = scope.get(value).unwrap();
                         *ptr.borrow_mut() = value.clone();
                     }
-                    OpCode::Load(result, ptr) => {
+                    OpCode::Load { result, ptr } => {
                         let ptr = scope.get(ptr).unwrap().expect_ptr();
                         let value = ptr.borrow().clone();
                         scope.insert(*result, value);
                     }
 
-                    OpCode::ArrayGet(result, array, index) => {
+                    OpCode::ArrayGet { result, array, index } => {
                         let array = scope.get(array).unwrap().expect_array();
                         let index = scope.get(index).unwrap().expect_u32();
                         let value = array[index as usize].clone();
                         scope.insert(*result, value);
                     }
 
-                    OpCode::ArraySet(result, array, index, value) => {
+                    OpCode::ArraySet { result, array, index, value } => {
                         let array = scope.get(array).unwrap().expect_array();
                         let index = scope.get(index).unwrap().expect_u32();
                         let value = scope.get(value).unwrap().clone();
@@ -223,30 +223,30 @@ impl WitnessGen {
                         scope.insert(*result, Value::Array(new_array));
                     }
 
-                    OpCode::Cmp(CmpKind::Eq, result, lhs, rhs) => {
+                    OpCode::Cmp { kind: CmpKind::Eq, result, lhs, rhs } => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         let r = lhs.eq(rhs);
                         scope.insert(*result, r);
                     }
 
-                    OpCode::AssertEq(lhs, rhs) => {
+                    OpCode::AssertEq { lhs, rhs } => {
                         let lhs = scope.get(lhs).unwrap();
                         let rhs = scope.get(rhs).unwrap();
                         assert_eq!(lhs.expect_fp(), rhs.expect_fp());
                     }
 
-                    OpCode::AssertR1C(_, _, _) => {
+                    OpCode::AssertR1C { a: _, b: _, c: _ } => {
                         todo!();
                     }
 
-                    OpCode::BinaryArithOp(BinaryArithOpKind::And, r, lhs, rhs) => {
+                    OpCode::BinaryArithOp { kind: BinaryArithOpKind::And, result: r, lhs, rhs } => {
                         let lhs = scope.get(lhs).unwrap().expect_u32();
                         let rhs = scope.get(rhs).unwrap().expect_u32();
                         let res = lhs & rhs;
                         scope.insert(*r, Value::Fp(ark_bn254::Fr::from(res)));
                     }
-                    OpCode::Select(res_slot, cond, a, b) => {
+                    OpCode::Select { result: res_slot, cond, if_t: a, if_f: b } => {
                         let cond = scope.get(cond).unwrap();
                         let a = scope.get(a).unwrap();
                         let b = scope.get(b).unwrap();
@@ -258,7 +258,7 @@ impl WitnessGen {
                         scope.insert(*res_slot, res);
                     }
 
-                    OpCode::Constrain(a, b, c) => {
+                    OpCode::Constrain { a, b, c } => {
                         let a = scope.get(a).unwrap();
                         let b = scope.get(b).unwrap();
                         let c = scope.get(c).unwrap();
@@ -272,17 +272,17 @@ impl WitnessGen {
                     OpCode::BumpD { .. } => {
                         panic!("ICE: unexpected instruction: BumpD");
                     }
-                    OpCode::WriteWitness(result, v, _) => {
+                    OpCode::WriteWitness { result, value: v, witness_annotation: _ } => {
                         let v = scope.get(v).unwrap().clone();
                         if let Some(result) = result {
                             scope.insert(*result, v.clone());
                         }
                         self.witness.push(v.expect_fp());
                     }
-                    OpCode::FreshWitness(_, _) => {
+                    OpCode::FreshWitness { result: _, result_type: _ } => {
                         panic!("ICE: unexpected instruction");
                     }
-                    OpCode::Call(ret, tgt, args) => {
+                    OpCode::Call { results: ret, function: tgt, args } => {
                         let args = args
                             .iter()
                             .map(|arg| scope.get(arg).unwrap().clone())
@@ -292,18 +292,18 @@ impl WitnessGen {
                             scope.insert(*ret, result);
                         }
                     }
-                    OpCode::MkSeq(result, values, _, _) => {
+                    OpCode::MkSeq { result, elems: values, seq_type: _, elem_type: _ } => {
                         let values = values
                             .iter()
                             .map(|v| scope.get(v).unwrap().clone())
                             .collect();
                         scope.insert(*result, Value::Array(values));
                     }
-                    OpCode::Cast(result, value, _) => {
+                    OpCode::Cast { result, value, target: _ } => {
                         let value = scope.get(value).unwrap().clone();
                         scope.insert(*result, value);
                     }
-                    OpCode::Truncate(result, value, target_bits, _) => {
+                    OpCode::Truncate { result, value, to_bits: target_bits, from_bits: _ } => {
                         let value = scope.get(value).unwrap().clone();
                         let new_value = value
                             .expect_fp()
@@ -318,7 +318,7 @@ impl WitnessGen {
                         );
                         scope.insert(*result, new_value);
                     }
-                    OpCode::Not(result, value) => {
+                    OpCode::Not { result, value } => {
                         let value_val = scope.get(value).unwrap().clone();
                         let value_fp = value_val.expect_fp();
                         let bits = value_fp.into_bigint().to_bits_le();
@@ -340,7 +340,7 @@ impl WitnessGen {
                         );
                         scope.insert(*result, new_value);
                     }
-                    OpCode::ToBits(result, value, endianness, output_size) => {
+                    OpCode::ToBits { result, value, endianness, count: output_size } => {
                         let value = scope.get(value).unwrap().clone();
                         let value_fp = value.expect_fp();
                         let mut bits = value_fp.into_bigint().to_bits_le();
@@ -377,13 +377,19 @@ impl WitnessGen {
 
                         scope.insert(*result, Value::Array(bit_values));
                     }
-                    OpCode::Rangecheck(_, _) => {
+                    OpCode::ToRadix { result, value, radix, endianness, count: output_size } => {
+                        panic!("ToRadix not yet implemented");
                     }
-                    OpCode::MemOp(_, _) => {}
-                    OpCode::BoxField(_, _, _) |
-                    OpCode::UnboxField(_, _) |
-                    OpCode::MulConst(_, _, _) => {
+                    OpCode::Rangecheck { value: _, max_bits: _ } => {
+                    }
+                    OpCode::MemOp { kind: _, value: _ } => {}
+                    OpCode::BoxField { result: _, value: _, result_annotation: _ } |
+                    OpCode::UnboxField { result: _, value: _ } |
+                    OpCode::MulConst { result: _, const_val: _, var: _ } => {
                         panic!("ICE: unexpected instruction");
+                    }
+                    OpCode::ReadGlobal { result: _, offset: _, result_type: _ } => {
+                        todo!();
                     }
                 }
             }

@@ -65,7 +65,7 @@ impl PullIntoAssert {
                 let mut new_instructions = Vec::new();
                 for instruction in block.take_instructions().into_iter() {
                     match instruction {
-                        OpCode::AssertEq(lhs, rhs) => {
+                        OpCode::AssertEq { lhs, rhs } => {
                             let mut pull = self.try_pull(lhs, &uses, &defs);
                             let mut other_op = rhs;
                             if pull.is_none() {
@@ -81,7 +81,11 @@ impl PullIntoAssert {
                                 }
                             };
 
-                            new_instructions.push(OpCode::AssertR1C(pull.lhs, pull.rhs, other_op));
+                            new_instructions.push(OpCode::AssertR1C {
+                                a: pull.lhs,
+                                b: pull.rhs,
+                                c: other_op
+                            });
                         }
                         _ => {
                             new_instructions.push(instruction.clone());
@@ -109,7 +113,7 @@ impl PullIntoAssert {
         match def {
             // TODO: we should also pull further, skipping pure multiplications and shoving
             // them into the constants or R1CS constraints
-            OpCode::BinaryArithOp(BinaryArithOpKind::Mul, _, lhs, rhs) => Some(PulledProduct {
+            OpCode::BinaryArithOp { kind: BinaryArithOpKind::Mul, result: _, lhs, rhs } => Some(PulledProduct {
                 lhs: *lhs,
                 rhs: *rhs,
             }),

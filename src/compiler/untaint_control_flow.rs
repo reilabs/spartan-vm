@@ -55,59 +55,168 @@ impl UntaintControlFlow {
             let mut new_instructions = Vec::<OpCode<ConstantTaint>>::new();
             for instruction in block.take_instructions() {
                 let new = match instruction {
-                    OpCode::BinaryArithOp(kind, r, l, h) => OpCode::BinaryArithOp(kind, r, l, h),
-                    OpCode::Cmp(kind, r, l, h) => OpCode::Cmp(kind, r, l, h),
-                    OpCode::Store(r, l) => OpCode::Store(r, l),
-                    OpCode::Load(r, l) => OpCode::Load(r, l),
-                    OpCode::ArrayGet(r, l, h) => OpCode::ArrayGet(r, l, h),
-                    OpCode::ArraySet(r, l, h, j) => OpCode::ArraySet(r, l, h, j),
-                    OpCode::Alloc(r, l, _) => {
+                    OpCode::BinaryArithOp { kind, result: r, lhs: l, rhs: h } => OpCode::BinaryArithOp {
+                        kind: kind,
+                        result: r,
+                        lhs: l,
+                        rhs: h
+                    },
+                    OpCode::Cmp { kind, result: r, lhs: l, rhs: h } => OpCode::Cmp {
+                        kind: kind,
+                        result: r,
+                        lhs: l,
+                        rhs: h
+                    },
+                    OpCode::Store { ptr: r, value: l } => OpCode::Store {
+                        ptr: r,
+                        value: l
+                    },
+                    OpCode::Load { result: r, ptr: l } => OpCode::Load {
+                        result: r,
+                        ptr: l
+                    },
+                    OpCode::ArrayGet { result: r, array: l, index: h } => OpCode::ArrayGet {
+                        result: r,
+                        array: l,
+                        index: h
+                    },
+                    OpCode::ArraySet { result: r, array: l, index: h, value: j } => OpCode::ArraySet {
+                        result: r,
+                        array: l,
+                        index: h,
+                        value: j
+                    },
+                    OpCode::Alloc { result: r, elem_type: l, result_annotation: _ } => {
                         let r_taint = function_taint.get_value_taint(r);
                         let child = r_taint.child_taint_type().unwrap();
                         let child_typ = self.typify_taint(l, &child);
                         let self_taint = r_taint.toplevel_taint().expect_constant();
-                        OpCode::Alloc(r, child_typ, self_taint)
+                        OpCode::Alloc {
+                            result: r,
+                            elem_type: child_typ,
+                            result_annotation: self_taint
+                        }
                     }
-                    OpCode::Call(r, l, h) => OpCode::Call(r, l, h),
-                    OpCode::AssertEq(r, l) => OpCode::AssertEq(r, l),
-                    OpCode::AssertR1C(r, l, h) => OpCode::AssertR1C(r, l, h),
-                    OpCode::Select(r, l, h, j) => OpCode::Select(r, l, h, j),
-                    OpCode::WriteWitness(r, l, _) => {
-                        OpCode::WriteWitness(r, l, ConstantTaint::Witness)
+                    OpCode::Call { results: r, function: l, args: h } => OpCode::Call {
+                        results: r,
+                        function: l,
+                        args: h
+                    },
+                    OpCode::AssertEq { lhs: r, rhs: l } => OpCode::AssertEq {
+                        lhs: r,
+                        rhs: l
+                    },
+                    OpCode::AssertR1C { a: r, b: l, c: h } => OpCode::AssertR1C {
+                        a: r,
+                        b: l,
+                        c: h
+                    },
+                    OpCode::Select { result: r, cond: l, if_t: h, if_f: j } => OpCode::Select {
+                        result: r,
+                        cond: l,
+                        if_t: h,
+                        if_f: j
+                    },
+                    OpCode::WriteWitness { result: r, value: l, witness_annotation: _ } => {
+                        OpCode::WriteWitness {
+                            result: r,
+                            value: l,
+                            witness_annotation: ConstantTaint::Witness
+                        }
                     }
-                    OpCode::FreshWitness(r, tp) => {
+                    OpCode::FreshWitness { result: r, result_type: tp } => {
                         let taint = function_taint.get_value_taint(r);
                         let new_tp = self.typify_taint(tp, taint);
-                        OpCode::FreshWitness(r, new_tp)
+                        OpCode::FreshWitness {
+                            result: r,
+                            result_type: new_tp
+                        }
                     }
-                    OpCode::Constrain(a, b, c) => OpCode::Constrain(a, b, c),
-                    OpCode::NextDCoeff(a) => OpCode::NextDCoeff(a),
-                    OpCode::BumpD(a, b, c) => OpCode::BumpD(a, b, c),
-                    OpCode::MkSeq(r, l, stp, tp) => {
+                    OpCode::Constrain { a, b, c } => OpCode::Constrain {
+                        a: a,
+                        b: b,
+                        c: c
+                    },
+                    OpCode::NextDCoeff { result: a } => OpCode::NextDCoeff { result: a },
+                    OpCode::BumpD { matrix: a, variable: b, sensitivity: c } => OpCode::BumpD {
+                        matrix: a,
+                        variable: b,
+                        sensitivity: c
+                    },
+                    OpCode::MkSeq { result: r, elems: l, seq_type: stp, elem_type: tp } => {
                         let r_taint = function_taint
                             .get_value_taint(r)
                             .child_taint_type()
                             .unwrap();
-                        OpCode::MkSeq(r, l, stp, self.typify_taint(tp, &r_taint))
+                        OpCode::MkSeq {
+                            result: r,
+                            elems: l,
+                            seq_type: stp,
+                            elem_type: self.typify_taint(tp, &r_taint)
+                        }
                     }
-                    OpCode::Cast(r, l, t) => OpCode::Cast(r, l, t),
-                    OpCode::Truncate(r, l, out_bits, in_bits) => {
-                        OpCode::Truncate(r, l, out_bits, in_bits)
+                    OpCode::Cast { result: r, value: l, target: t } => OpCode::Cast {
+                        result: r,
+                        value: l,
+                        target: t
+                    },
+                    OpCode::Truncate { result: r, value: l, to_bits: out_bits, from_bits: in_bits } => {
+                        OpCode::Truncate {
+                            result: r,
+                            value: l,
+                            to_bits: out_bits,
+                            from_bits: in_bits
+                        }
                     }
-                    OpCode::Not(r, l) => OpCode::Not(r, l),
-                    OpCode::ToBits(r, l, e, s) => OpCode::ToBits(r, l, e, s),
-                    OpCode::MemOp(kind, value) => OpCode::MemOp(kind, value),
-                    OpCode::BoxField(r, l, _c) => OpCode::BoxField(
-                        r,
-                        l,
-                        function_taint
+                    OpCode::Not { result: r, value: l } => OpCode::Not {
+                        result: r,
+                        value: l
+                    },
+                    OpCode::ToBits { result: r, value: l, endianness: e, count: s } => OpCode::ToBits {
+                        result: r,
+                        value: l,
+                        endianness: e,
+                        count: s
+                    },
+                    OpCode::ToRadix { result: r, value: l, radix, endianness: e, count: s } => OpCode::ToRadix {
+                        result: r,
+                        value: l,
+                        radix: radix,
+                        endianness: e,
+                        count: s
+                    },
+                    OpCode::MemOp { kind, value } => OpCode::MemOp {
+                        kind: kind,
+                        value: value
+                    },
+                    OpCode::BoxField { result: r, value: l, result_annotation: _c } => OpCode::BoxField {
+                        result: r,
+                        value: l,
+                        result_annotation: function_taint
                             .get_value_taint(r)
                             .toplevel_taint()
-                            .expect_constant(),
-                    ),
-                    OpCode::UnboxField(r, l) => OpCode::UnboxField(r, l),
-                    OpCode::MulConst(r, l, c) => OpCode::MulConst(r, l, c),
-                    OpCode::Rangecheck(val, max_bits) => OpCode::Rangecheck(val, max_bits),
+                            .expect_constant()
+                    },
+                    OpCode::UnboxField { result: r, value: l } => OpCode::UnboxField {
+                        result: r,
+                        value: l
+                    },
+                    OpCode::MulConst { result: r, const_val: l, var: c } => OpCode::MulConst {
+                        result: r,
+                        const_val: l,
+                        var: c
+                    },
+                    OpCode::Rangecheck { value: val, max_bits } => OpCode::Rangecheck {
+                        value: val,
+                        max_bits: max_bits
+                    },
+                    OpCode::ReadGlobal { result: r, offset: l, result_type: tp } => {
+                        OpCode::ReadGlobal {
+                            result: r,
+                            offset: l,
+                            result_type: self.pure_taint_for_type(tp)
+                        }
+                    }
                 };
                 new_instructions.push(new);
             }
@@ -148,21 +257,23 @@ impl UntaintControlFlow {
 
             for instruction in old_instructions {
                 match instruction {
-                    OpCode::BinaryArithOp(_, _, _, _)
-                    | OpCode::Cmp(_, _, _, _)
-                    | OpCode::MkSeq(_, _, _, _)
-                    | OpCode::Cast(_, _, _)
-                    | OpCode::Truncate(_, _, _, _)
-                    | OpCode::Not(_, _)
-                    | OpCode::Rangecheck(_, _)
-                    | OpCode::ToBits(_, _, _, _) => {
+                    OpCode::BinaryArithOp { kind: _, result: _, lhs: _, rhs: _ }
+                    | OpCode::Cmp { kind: _, result: _, lhs: _, rhs: _ }
+                    | OpCode::MkSeq { result: _, elems: _, seq_type: _, elem_type: _ }
+                    | OpCode::Cast { result: _, value: _, target: _ }
+                    | OpCode::Truncate { result: _, value: _, to_bits: _, from_bits: _ }
+                    | OpCode::Not { result: _, value: _ }
+                    | OpCode::Rangecheck { value: _, max_bits: _ }
+                    | OpCode::ToBits { result: _, value: _, endianness: _, count: _ }
+                    | OpCode::ToRadix { result: _, value: _, radix: _, endianness: _, count: _ }
+                    | OpCode::ReadGlobal { result: _, offset: _, result_type: _ } => {
                         new_instructions.push(instruction);
                     }
-                    OpCode::AssertEq(_, _) => {
+                    OpCode::AssertEq { lhs: _, rhs: _ } => {
                         assert_eq!(block_taint, None); // TODO: support conditional asserts
                         new_instructions.push(instruction);
                     }
-                    OpCode::Store(ptr, _) => {
+                    OpCode::Store { ptr, value: _ } => {
                         let ptr_taint = function_taint
                             .get_value_taint(ptr)
                             .toplevel_taint()
@@ -172,7 +283,7 @@ impl UntaintControlFlow {
                         assert_eq!(block_taint, None); // TODO: support conditional writes
                         new_instructions.push(instruction);
                     }
-                    OpCode::Load(_, ptr) => {
+                    OpCode::Load { result: _, ptr } => {
                         let ptr_taint = function_taint
                             .get_value_taint(ptr)
                             .toplevel_taint()
@@ -181,7 +292,7 @@ impl UntaintControlFlow {
                         assert_eq!(ptr_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
-                    OpCode::ArrayGet(_, arr, idx) => {
+                    OpCode::ArrayGet { result: _, array: arr, index: idx } => {
                         let arr_taint = function_taint
                             .get_value_taint(arr)
                             .toplevel_taint()
@@ -195,7 +306,7 @@ impl UntaintControlFlow {
                         assert_eq!(idx_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
-                    OpCode::ArraySet(_, arr, idx, _) => {
+                    OpCode::ArraySet { result: _, array: arr, index: idx, value: _ } => {
                         let arr_taint = function_taint
                             .get_value_taint(arr)
                             .toplevel_taint()
@@ -209,18 +320,22 @@ impl UntaintControlFlow {
                         assert_eq!(idx_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
-                    OpCode::Alloc(_, _, _) => {
+                    OpCode::Alloc { result: _, elem_type: _, result_annotation: _ } => {
                         new_instructions.push(instruction);
                     }
 
-                    OpCode::Call(ret, tgt, mut args) => {
+                    OpCode::Call { results: ret, function: tgt, mut args } => {
                         match block_taint {
                             Some(arg) => {
                                 args.push(arg);
                             }
                             None => {}
                         }
-                        new_instructions.push(OpCode::Call(ret, tgt, args));
+                        new_instructions.push(OpCode::Call {
+                            results: ret,
+                            function: tgt,
+                            args: args
+                        });
                     }
 
                     _ => {
@@ -242,12 +357,12 @@ impl UntaintControlFlow {
                             let child_block_taint = match block_taint {
                                 Some(tnt) => {
                                     let result_val = function.fresh_value();
-                                    new_instructions.push(OpCode::BinaryArithOp(
-                                        BinaryArithOpKind::And,
-                                        result_val,
-                                        tnt,
-                                        cond,
-                                    ));
+                                    new_instructions.push(OpCode::BinaryArithOp {
+                                        kind: BinaryArithOpKind::And,
+                                        result: result_val,
+                                        lhs: tnt,
+                                        rhs: cond
+                                    });
                                     result_val
                                 }
                                 None => cond,
@@ -336,7 +451,12 @@ impl UntaintControlFlow {
                                 ) {
                                     function
                                         .get_block_mut(merger_block)
-                                        .push_instruction(OpCode::Select(*res, cond, *lhs, *rhs));
+                                        .push_instruction(OpCode::Select {
+                                            result: *res,
+                                            cond: cond,
+                                            if_t: *lhs,
+                                            if_f: *rhs
+                                        });
                                 }
                             }
                         }
@@ -378,6 +498,35 @@ impl UntaintControlFlow {
                 annotation: top.expect_constant(),
             },
             (tp, taint) => panic!("Unexpected type {:?} with taint {:?}", tp, taint),
+        }
+    }
+
+    fn pure_taint_for_type(&self, typ: Type<Empty>) -> Type<ConstantTaint> {
+        match typ.expr {
+            TypeExpr::Field => Type {
+                expr: TypeExpr::Field,
+                annotation: ConstantTaint::Pure,
+            },
+            TypeExpr::U(size) => Type {
+                expr: TypeExpr::U(size),
+                annotation: ConstantTaint::Pure,
+            },
+            TypeExpr::Array(inner, size) => Type {
+                expr: TypeExpr::Array(Box::new(self.pure_taint_for_type(*inner)), size),
+                annotation: ConstantTaint::Pure,
+            },
+            TypeExpr::Slice(inner) => Type {
+                expr: TypeExpr::Slice(Box::new(self.pure_taint_for_type(*inner))),
+                annotation: ConstantTaint::Pure,
+            },
+            TypeExpr::Ref(inner) => Type {
+                expr: TypeExpr::Ref(Box::new(self.pure_taint_for_type(*inner))),
+                annotation: ConstantTaint::Pure,
+            },
+            TypeExpr::BoxedField => Type {
+                expr: TypeExpr::BoxedField,
+                annotation: ConstantTaint::Pure,
+            },
         }
     }
 }

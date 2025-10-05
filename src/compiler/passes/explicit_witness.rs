@@ -43,20 +43,20 @@ impl ExplicitWitness {
                 let mut new_instructions = Vec::new();
                 for instruction in block.take_instructions().into_iter() {
                     match instruction {
-                        OpCode::BinaryArithOp(BinaryArithOpKind::Add, ..) => {
+                        OpCode::BinaryArithOp { kind: BinaryArithOpKind::Add, .. } => {
                             new_instructions.push(instruction);
                         }
-                        OpCode::BinaryArithOp(BinaryArithOpKind::Sub, ..) => {
+                        OpCode::BinaryArithOp { kind: BinaryArithOpKind::Sub, .. } => {
                             new_instructions.push(instruction);
                         }
                         OpCode::Alloc { .. }
                         | OpCode::Call { .. }
                         | OpCode::Constrain { .. }
                         | OpCode::WriteWitness { .. }
-                        | OpCode::FreshWitness(_, _) => {
+                        | OpCode::FreshWitness { result: _, result_type: _ } => {
                             new_instructions.push(instruction);
                         }
-                        OpCode::Cmp(_, r, l, _) => {
+                        OpCode::Cmp { kind: _, result: r, lhs: l, rhs: _ } => {
                             let l_taint = function_type_info.get_value_type(l).get_annotation();
                             let r_taint = function_type_info.get_value_type(r).get_annotation();
                             // TODO: witness versions
@@ -64,7 +64,7 @@ impl ExplicitWitness {
                             assert!(r_taint.is_pure());
                             new_instructions.push(instruction);
                         }
-                        OpCode::BinaryArithOp(BinaryArithOpKind::Mul, res, l, r) => {
+                        OpCode::BinaryArithOp { kind: BinaryArithOpKind::Mul, result: res, lhs: l, rhs: r } => {
                             let l_taint = function_type_info.get_value_type(l).get_annotation();
                             let r_taint = function_type_info.get_value_type(r).get_annotation();
 
@@ -75,44 +75,48 @@ impl ExplicitWitness {
 
                             // witness-witness mul
                             let mul_witness = function.fresh_value();
-                            new_instructions.push(OpCode::BinaryArithOp(
-                                BinaryArithOpKind::Mul,
-                                mul_witness,
-                                l,
-                                r,
-                            ));
-                            new_instructions.push(OpCode::WriteWitness(
-                                Some(res),
-                                mul_witness,
-                                ConstantTaint::Witness,
-                            ));
-                            new_instructions.push(OpCode::Constrain(l, r, res));
+                            new_instructions.push(OpCode::BinaryArithOp {
+                                kind: BinaryArithOpKind::Mul,
+                                result: mul_witness,
+                                lhs: l,
+                                rhs: r
+                            });
+                            new_instructions.push(OpCode::WriteWitness {
+                                result: Some(res),
+                                value: mul_witness,
+                                witness_annotation: ConstantTaint::Witness
+                            });
+                            new_instructions.push(OpCode::Constrain {
+                                a: l,
+                                b: r,
+                                c: res
+                            });
                         }
-                        OpCode::BinaryArithOp(BinaryArithOpKind::Div, _, l, r) => {
+                        OpCode::BinaryArithOp { kind: BinaryArithOpKind::Div, result: _, lhs: l, rhs: r } => {
                             let l_taint = function_type_info.get_value_type(l).get_annotation();
                             let r_taint = function_type_info.get_value_type(r).get_annotation();
                             assert!(l_taint.is_pure());
                             assert!(r_taint.is_pure());
                             new_instructions.push(instruction);
                         }
-                        OpCode::BinaryArithOp(BinaryArithOpKind::And, _, l, r) => {
+                        OpCode::BinaryArithOp { kind: BinaryArithOpKind::And, result: _, lhs: l, rhs: r } => {
                             let l_taint = function_type_info.get_value_type(l).get_annotation();
                             let r_taint = function_type_info.get_value_type(r).get_annotation();
                             assert!(l_taint.is_pure());
                             assert!(r_taint.is_pure());
                             new_instructions.push(instruction);
                         }
-                        OpCode::Store(ptr, _) => {
+                        OpCode::Store { ptr, value: _ } => {
                             let ptr_taint = function_type_info.get_value_type(ptr).get_annotation();
                             assert!(ptr_taint.is_pure());
                             new_instructions.push(instruction);
                         }
-                        OpCode::Load(_, ptr) => {
+                        OpCode::Load { result: _, ptr } => {
                             let ptr_taint = function_type_info.get_value_type(ptr).get_annotation();
                             assert!(ptr_taint.is_pure());
                             new_instructions.push(instruction);
                         }
-                        OpCode::AssertEq(l, r) => {
+                        OpCode::AssertEq { lhs: l, rhs: r } => {
                             let l_taint = function_type_info.get_value_type(l).get_annotation();
                             let r_taint = function_type_info.get_value_type(r).get_annotation();
                             if l_taint.is_pure() && r_taint.is_pure() {
@@ -120,9 +124,13 @@ impl ExplicitWitness {
                                 continue;
                             }
                             let one = function.push_field_const(ark_ff::Fp::from(1));
-                            new_instructions.push(OpCode::Constrain(l, one, r));
+                            new_instructions.push(OpCode::Constrain {
+                                a: l,
+                                b: one,
+                                c: r
+                            });
                         }
-                        OpCode::AssertR1C(a, b, c) => {
+                        OpCode::AssertR1C { a, b, c } => {
                             let a_taint = function_type_info.get_value_type(a).get_annotation();
                             let b_taint = function_type_info.get_value_type(b).get_annotation();
                             let c_taint = function_type_info.get_value_type(c).get_annotation();
@@ -130,29 +138,33 @@ impl ExplicitWitness {
                                 new_instructions.push(instruction);
                                 continue;
                             }
-                            new_instructions.push(OpCode::Constrain(a, b, c));
+                            new_instructions.push(OpCode::Constrain {
+                                a: a,
+                                b: b,
+                                c: c
+                            });
                         }
-                        OpCode::NextDCoeff(_) => {
+                        OpCode::NextDCoeff { result: _ } => {
                             panic!("ICE: should not be present at this stage");
                         }
-                        OpCode::BumpD(_, _, _) => {
+                        OpCode::BumpD { matrix: _, variable: _, sensitivity: _ } => {
                             panic!("ICE: should not be present at this stage");
                         }
-                        OpCode::ArrayGet(_, arr, idx) => {
+                        OpCode::ArrayGet { result: _, array: arr, index: idx } => {
                             let arr_taint = function_type_info.get_value_type(arr).get_annotation();
                             let idx_taint = function_type_info.get_value_type(idx).get_annotation();
                             assert!(arr_taint.is_pure());
                             assert!(idx_taint.is_pure());
                             new_instructions.push(instruction);
                         }
-                        OpCode::ArraySet(_, arr, idx, _) => {
+                        OpCode::ArraySet { result: _, array: arr, index: idx, value: _ } => {
                             let arr_taint = function_type_info.get_value_type(arr).get_annotation();
                             let idx_taint = function_type_info.get_value_type(idx).get_annotation();
                             assert!(arr_taint.is_pure());
                             assert!(idx_taint.is_pure());
                             new_instructions.push(instruction);
                         }
-                        OpCode::Select(res, cond, l, r) => {
+                        OpCode::Select { result: res, cond, if_t: l, if_f: r } => {
                             let cond_taint =
                                 function_type_info.get_value_type(cond).get_annotation();
                             let l_taint = function_type_info.get_value_type(l).get_annotation();
@@ -165,75 +177,92 @@ impl ExplicitWitness {
                                 continue;
                             }
                             let select_witness = function.fresh_value();
-                            new_instructions.push(OpCode::Select(select_witness, cond, l, r));
-                            new_instructions.push(OpCode::WriteWitness(
-                                Some(res),
-                                select_witness,
-                                ConstantTaint::Witness,
-                            ));
+                            new_instructions.push(OpCode::Select {
+                                result: select_witness,
+                                cond: cond,
+                                if_t: l,
+                                if_f: r
+                            });
+                            new_instructions.push(OpCode::WriteWitness {
+                                result: Some(res),
+                                value: select_witness,
+                                witness_annotation: ConstantTaint::Witness
+                            });
                             // Goal is to assert 0 = cond * l + (1 - cond) * r - res
                             // This is equivalent to 0 = cond * (l - r) + r - res = cond * (l - r) - (res - r)
                             let neg_one = function.push_field_const(ark_ff::Fp::from(-1));
                             let neg_r = function.fresh_value();
-                            new_instructions.push(OpCode::BinaryArithOp(
-                                BinaryArithOpKind::Mul,
-                                neg_r,
-                                r,
-                                neg_one,
-                            ));
+                            new_instructions.push(OpCode::BinaryArithOp {
+                                kind: BinaryArithOpKind::Mul,
+                                result: neg_r,
+                                lhs: r,
+                                rhs: neg_one
+                            });
                             let l_sub_r = function.fresh_value();
-                            new_instructions.push(OpCode::BinaryArithOp(
-                                BinaryArithOpKind::Add,
-                                l_sub_r,
-                                l,
-                                neg_r,
-                            ));
+                            new_instructions.push(OpCode::BinaryArithOp {
+                                kind: BinaryArithOpKind::Add,
+                                result: l_sub_r,
+                                lhs: l,
+                                rhs: neg_r
+                            });
                             let res_sub_r = function.fresh_value();
-                            new_instructions.push(OpCode::BinaryArithOp(
-                                BinaryArithOpKind::Add,
-                                res_sub_r,
-                                res,
-                                neg_r,
-                            ));
-                            new_instructions.push(OpCode::Constrain(cond, l_sub_r, res_sub_r));
+                            new_instructions.push(OpCode::BinaryArithOp {
+                                kind: BinaryArithOpKind::Add,
+                                result: res_sub_r,
+                                lhs: res,
+                                rhs: neg_r
+                            });
+                            new_instructions.push(OpCode::Constrain {
+                                a: cond,
+                                b: l_sub_r,
+                                c: res_sub_r
+                            });
                         }
 
-                        OpCode::MkSeq(_, _, _, _) => {
+                        OpCode::MkSeq { result: _, elems: _, seq_type: _, elem_type: _ } => {
                             new_instructions.push(instruction);
                         }
-                        OpCode::Cast(_, _, _) => {
+                        OpCode::Cast { result: _, value: _, target: _ } => {
                             new_instructions.push(instruction);
                         }
-                        OpCode::Truncate(_, i, _, _) => {
+                        OpCode::Truncate { result: _, value: i, to_bits: _, from_bits: _ } => {
                             let i_taint = function_type_info.get_value_type(i).get_annotation();
                             assert!(i_taint.is_pure()); // TODO: witness versions
                             new_instructions.push(instruction);
                         }
-                        OpCode::Not(_, i) => {
+                        OpCode::Not { result: _, value: i } => {
                             let i_taint = function_type_info.get_value_type(i).get_annotation();
                             assert!(i_taint.is_pure()); // TODO: witness versions
                             new_instructions.push(instruction);
                         }
-                        OpCode::ToBits(_, i, _, _) => {
+                        OpCode::ToBits { result: _, value: i, endianness: _, count: _ } => {
                             let i_taint = function_type_info.get_value_type(i).get_annotation();
                             assert!(i_taint.is_pure()); // Only handle pure input case for now
                             new_instructions.push(instruction);
                         }
-                        OpCode::MemOp(_, _) => {
+                        OpCode::ToRadix { result: _, value: i, radix: _, endianness: _, count: _ } => {
+                            let i_taint = function_type_info.get_value_type(i).get_annotation();
+                            assert!(i_taint.is_pure()); // Only handle pure input case for now
                             new_instructions.push(instruction);
                         }
-                        OpCode::BoxField(_, _, _) => {
+                        OpCode::MemOp { kind: _, value: _ } => {
                             new_instructions.push(instruction);
                         }
-                        OpCode::UnboxField(_, _) => {
+                        OpCode::BoxField { result: _, value: _, result_annotation: _ } => {
                             new_instructions.push(instruction);
                         }
-                        OpCode::MulConst(_, _, _) => {
+                        OpCode::UnboxField { result: _, value: _ } => {
                             new_instructions.push(instruction);
                         }
-                        OpCode::Rangecheck(v, _) => {
+                        OpCode::MulConst { result: _, const_val: _, var: _ } => {
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::Rangecheck { value: v, max_bits: _ } => {
                             let v_taint = function_type_info.get_value_type(v).get_annotation();
                             assert!(v_taint.is_pure());
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::ReadGlobal { result: _, offset: _, result_type: _ } => {
                             new_instructions.push(instruction);
                         }
                     }

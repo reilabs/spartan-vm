@@ -48,7 +48,10 @@ impl WitnessWriteToFresh {
             .into_iter()
             .map(|(r, tp)| {
                 assert!(matches!(tp.expr, TypeExpr::Field));
-                OpCode::FreshWitness(r, Type::field(ConstantTaint::Witness))
+                OpCode::FreshWitness {
+                    result: r,
+                    result_type: Type::field(ConstantTaint::Witness)
+                }
             })
             .chain(old_instructions.into_iter())
             .collect();
@@ -58,14 +61,17 @@ impl WitnessWriteToFresh {
             for (_, block) in function.get_blocks_mut() {
                 for instruction in block.get_instructions_mut() {
                     let new_instruction = match instruction {
-                        OpCode::WriteWitness(r, _, _) => {
+                        OpCode::WriteWitness { result: r, value: _, witness_annotation: _ } => {
                             let tp = type_info
                                 .get_function(*function_id)
                                 .get_value_type(r.unwrap());
                             if !matches!(tp.expr, TypeExpr::Field) {
                                 panic!("Expected field type, got {:?}", tp);
                             }
-                            OpCode::FreshWitness(r.unwrap(), Type::field(ConstantTaint::Witness))
+                            OpCode::FreshWitness {
+                                result: r.unwrap(),
+                                result_type: Type::field(ConstantTaint::Witness)
+                            }
                         }
                         OpCode::Cmp { .. }
                         | OpCode::Cast { .. }
@@ -83,6 +89,7 @@ impl WitnessWriteToFresh {
                         | OpCode::ArraySet { .. }
                         | OpCode::Select { .. }
                         | OpCode::ToBits { .. }
+                        | OpCode::ToRadix { .. }
                         | OpCode::MemOp { .. }
                         | OpCode::FreshWitness { .. }
                         | OpCode::Constrain { .. }
@@ -91,7 +98,8 @@ impl WitnessWriteToFresh {
                         | OpCode::UnboxField { .. }
                         | OpCode::MulConst { .. }
                         | OpCode::BumpD { .. }
-                        | OpCode::Rangecheck { .. } => instruction.clone(),
+                        | OpCode::Rangecheck { .. }
+                        | OpCode::ReadGlobal { .. } => instruction.clone(),
                     };
                     *instruction = new_instruction;
                 }

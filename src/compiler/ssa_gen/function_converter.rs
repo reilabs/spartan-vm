@@ -22,14 +22,16 @@ pub struct FunctionConverter {
     type_converter: TypeConverter,
     value_mapper: HashMap<NoirValueId, ValueId>,
     block_mapper: HashMap<BasicBlockId, BlockId>,
+    global_value_mapper: HashMap<NoirValueId, ValueId>,
 }
 
 impl FunctionConverter {
-    pub fn new() -> Self {
+    pub fn new(global_value_mapper: HashMap<NoirValueId, ValueId>) -> Self {
         FunctionConverter {
             type_converter: TypeConverter::new(),
             value_mapper: HashMap::new(),
             block_mapper: HashMap::new(),
+            global_value_mapper,
         }
     }
 
@@ -78,10 +80,18 @@ impl FunctionConverter {
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
                         let left_value = &noir_function.dfg.values[left_id];
                         let right_value = &noir_function.dfg.values[right_id];
-                        let left_value =
-                            self.convert_value(&mut custom_function, left_id, left_value);
-                        let right_value =
-                            self.convert_value(&mut custom_function, right_id, right_value);
+                        let left_value = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            left_id,
+                            left_value,
+                        );
+                        let right_value = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            right_id,
+                            right_value,
+                        );
                         let rr_id = match binary.operator {
                             BinaryOp::Add { unchecked: _ } => {
                                 custom_function.push_add(custom_block_id, left_value, right_value)
@@ -101,9 +111,8 @@ impl FunctionConverter {
                             BinaryOp::Sub { unchecked: _ } => {
                                 custom_function.push_sub(custom_block_id, left_value, right_value)
                             }
-                            BinaryOp::Or => {
-                                // TODO: LOL
-                                custom_function.push_add(custom_block_id, left_value, right_value)
+                            BinaryOp::And => {
+                                custom_function.push_and(custom_block_id, left_value, right_value)
                             }
                             _ => panic!("Unsupported binary operation: {:?}", binary.operator),
                         };
@@ -119,8 +128,12 @@ impl FunctionConverter {
                             let mut converted_args = Vec::new();
                             for arg_id in arguments {
                                 let arg_value = &noir_function.dfg.values[*arg_id];
-                                let converted_arg =
-                                    self.convert_value(&mut custom_function, *arg_id, arg_value);
+                                let converted_arg = self.convert_value(
+                                    &mut custom_function,
+                                    custom_block_id,
+                                    *arg_id,
+                                    arg_value,
+                                );
                                 converted_args.push(converted_arg);
                             }
 
@@ -158,6 +171,7 @@ impl FunctionConverter {
                                     let input_value = &noir_function.dfg.values[input_id];
                                     let input_converted = self.convert_value(
                                         &mut custom_function,
+                                        custom_block_id,
                                         input_id,
                                         input_value,
                                     );
@@ -173,6 +187,60 @@ impl FunctionConverter {
                                     );
                                     self.value_mapper.insert(result_id, to_bits_result);
                                 }
+                                Intrinsic::ToRadix(endianness) => {
+                                    let result_id = noir_function
+                                        .dfg
+                                        .instruction_results(*noir_instruction_id)[0];
+                                    let result_value = &noir_function.dfg.values[result_id];
+                                    let result_type = result_value.get_type();
+                                    let result_size = match result_type.as_ref() {
+                                        NoirType::Array(_, size) => *size,
+                                        _ => panic!(
+                                            "ToRadix result should be an array, got: {:?}",
+                                            result_type
+                                        ),
+                                    };
+                                    let input_id = arguments[0];
+                                    let radix_id = arguments[1];
+                                    let input_value = &noir_function.dfg.values[input_id];
+                                    let input_converted = self.convert_value(
+                                        &mut custom_function,
+                                        custom_block_id,
+                                        input_id,
+                                        input_value,
+                                    );
+                                    let radix_value = &noir_function.dfg.values[radix_id];
+                                    let radix_converted = self.convert_value(
+                                        &mut custom_function,
+                                        custom_block_id,
+                                        radix_id,
+                                        radix_value,
+                                    );
+                                    let endianness = match endianness {
+                                        Endian::Big => Endianness::Big,
+                                        Endian::Little => Endianness::Little,
+                                    };
+                                    let to_radix_result = custom_function.push_to_radix(
+                                        custom_block_id,
+                                        input_converted,
+                                        radix_converted,
+                                        endianness,
+                                        result_size as usize,
+                                    );
+                                    self.value_mapper.insert(result_id, to_radix_result);
+                                }
+                                Intrinsic::StaticAssert => {
+                                    let to_assert = arguments[0];
+                                    let to_assert_value = &noir_function.dfg.values[to_assert];
+                                    let to_assert_converted = self.convert_value(
+                                        &mut custom_function,
+                                        custom_block_id,
+                                        to_assert,
+                                        to_assert_value,
+                                    );
+                                    let t = custom_function.push_u_const(1, 1);
+                                    custom_function.push_assert_eq(custom_block_id, to_assert_converted, t);
+                                }
                                 _ => panic!("Unsupported intrinsic: {:?}", intrinsic),
                             }
                         } else {
@@ -185,8 +253,12 @@ impl FunctionConverter {
 
                     NoirInstruction::Not(value) => {
                         let value_value = &noir_function.dfg.values[*value];
-                        let value_converted =
-                            self.convert_value(&mut custom_function, *value, value_value);
+                        let value_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *value,
+                            value_value,
+                        );
                         let result_id =
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
                         let not_result = custom_function.push_not(custom_block_id, value_converted);
@@ -194,8 +266,12 @@ impl FunctionConverter {
                     }
                     NoirInstruction::Cast(input, target) => {
                         let input_value = &noir_function.dfg.values[*input];
-                        let input_converted =
-                            self.convert_value(&mut custom_function, *input, input_value);
+                        let input_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *input,
+                            input_value,
+                        );
                         let target = match target {
                             NumericType::Signed { .. } => todo!(),
                             NumericType::Unsigned { bit_size } => CastTarget::U(*bit_size as usize),
@@ -213,8 +289,12 @@ impl FunctionConverter {
                         max_bit_size,
                     } => {
                         let value_value = &noir_function.dfg.values[*value];
-                        let value_converted =
-                            self.convert_value(&mut custom_function, *value, value_value);
+                        let value_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *value,
+                            value_value,
+                        );
                         let result_id =
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
                         let truncate_result = custom_function.push_truncate(
@@ -228,10 +308,18 @@ impl FunctionConverter {
                     NoirInstruction::Constrain(l, r, _) => {
                         let left_value = &noir_function.dfg.values[*l];
                         let right_value = &noir_function.dfg.values[*r];
-                        let left_converted =
-                            self.convert_value(&mut custom_function, *l, left_value);
-                        let right_converted =
-                            self.convert_value(&mut custom_function, *r, right_value);
+                        let left_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *l,
+                            left_value,
+                        );
+                        let right_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *r,
+                            right_value,
+                        );
 
                         custom_function.push_assert_eq(
                             custom_block_id,
@@ -263,10 +351,18 @@ impl FunctionConverter {
                     NoirInstruction::Store { address, value } => {
                         let address_value = &noir_function.dfg.values[*address];
                         let value_value = &noir_function.dfg.values[*value];
-                        let address_converted =
-                            self.convert_value(&mut custom_function, *address, address_value);
-                        let value_converted =
-                            self.convert_value(&mut custom_function, *value, value_value);
+                        let address_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *address,
+                            address_value,
+                        );
+                        let value_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *value,
+                            value_value,
+                        );
 
                         custom_function.push_store(
                             custom_block_id,
@@ -281,6 +377,7 @@ impl FunctionConverter {
                             .map(|e| {
                                 self.convert_value(
                                     &mut custom_function,
+                                    custom_block_id,
                                     *e,
                                     &noir_function.dfg.values[*e],
                                 )
@@ -305,10 +402,18 @@ impl FunctionConverter {
                     NoirInstruction::ArrayGet { array, index, .. } => {
                         let array_value = &noir_function.dfg.values[*array];
                         let index_value = &noir_function.dfg.values[*index];
-                        let array_converted =
-                            self.convert_value(&mut custom_function, *array, array_value);
-                        let index_converted =
-                            self.convert_value(&mut custom_function, *index, index_value);
+                        let array_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *array,
+                            array_value,
+                        );
+                        let index_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *index,
+                            index_value,
+                        );
 
                         let result_id =
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
@@ -330,12 +435,24 @@ impl FunctionConverter {
                         let array_value = &noir_function.dfg.values[*array];
                         let index_value = &noir_function.dfg.values[*index];
                         let value_value = &noir_function.dfg.values[*value];
-                        let array_converted =
-                            self.convert_value(&mut custom_function, *array, array_value);
-                        let index_converted =
-                            self.convert_value(&mut custom_function, *index, index_value);
-                        let value_converted =
-                            self.convert_value(&mut custom_function, *value, value_value);
+                        let array_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *array,
+                            array_value,
+                        );
+                        let index_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *index,
+                            index_value,
+                        );
+                        let value_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *value,
+                            value_value,
+                        );
 
                         let result_id =
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
@@ -351,8 +468,12 @@ impl FunctionConverter {
                     }
                     NoirInstruction::Load { address } => {
                         let address_value = &noir_function.dfg.values[*address];
-                        let address_converted =
-                            self.convert_value(&mut custom_function, *address, address_value);
+                        let address_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *address,
+                            address_value,
+                        );
 
                         let result_id =
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
@@ -362,18 +483,24 @@ impl FunctionConverter {
 
                         self.value_mapper.insert(result_id, load_result);
                     }
-                    NoirInstruction::RangeCheck { value, max_bit_size, assert_message: _ } => {
+                    NoirInstruction::RangeCheck {
+                        value,
+                        max_bit_size,
+                        assert_message: _,
+                    } => {
                         let value_value = &noir_function.dfg.values[*value];
-                        let value_converted =
-                            self.convert_value(&mut custom_function, *value, value_value);
-                        
+                        let value_converted = self.convert_value(
+                            &mut custom_function,
+                            custom_block_id,
+                            *value,
+                            value_value,
+                        );
+
                         custom_function.push_rangecheck(
                             custom_block_id,
                             value_converted,
                             *max_bit_size as usize,
                         );
-
-                        
                     }
                     _ => panic!("Unsupported instruction: {:?}", noir_instruction),
                 }
@@ -388,6 +515,7 @@ impl FunctionConverter {
                 }) => {
                     let condition_converted = self.convert_value(
                         &mut custom_function,
+                        custom_block_id,
                         *condition,
                         &noir_function.dfg.values[*condition],
                     );
@@ -413,6 +541,7 @@ impl FunctionConverter {
                         .map(|id| {
                             self.convert_value(
                                 &mut custom_function,
+                                custom_block_id,
                                 *id,
                                 &noir_function.dfg.values[*id],
                             )
@@ -430,6 +559,7 @@ impl FunctionConverter {
                         .map(|id| {
                             self.convert_value(
                                 &mut custom_function,
+                                custom_block_id,
                                 *id,
                                 &noir_function.dfg.values[*id],
                             )
@@ -448,6 +578,7 @@ impl FunctionConverter {
     fn convert_value(
         &mut self,
         custom_function: &mut Function<Empty>,
+        block: BlockId,
         noir_value_id: NoirValueId,
         noir_value: &Value,
     ) -> ValueId {
@@ -471,7 +602,15 @@ impl FunctionConverter {
                     panic!("Unsupported numeric type: {:?}", typ);
                 }
             },
-            _ => *self.value_mapper.get(&noir_value_id).expect(&format!("Value not found: {:?} {:?}", noir_value_id, noir_value)),
+            Value::Global(global) => custom_function.push_read_global(
+                block,
+                self.global_value_mapper.get(&noir_value_id).unwrap().0,
+                self.type_converter.convert_type(global),
+            ),
+            _ => *self.value_mapper.get(&noir_value_id).expect(&format!(
+                "Value not found: {:?} {:?} {:?}",
+                block, noir_value_id, noir_value
+            )),
         }
     }
 }

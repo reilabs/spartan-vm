@@ -105,7 +105,7 @@ impl Types {
         function_types: &HashMap<FunctionId, (Vec<Type<V>>, &[Type<V>])>,
     ) -> Result<(), String> {
         match opcode {
-            OpCode::Cmp(_kind, result, lhs, rhs) => {
+            OpCode::Cmp { kind: _kind, result, lhs, rhs } => {
                 let lhs_type = function_info.values.get(lhs).ok_or_else(|| {
                     format!(
                         "Left-hand side value {:?} not found in type assignments",
@@ -124,7 +124,7 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::BinaryArithOp(_kind, result, lhs, rhs) => {
+            OpCode::BinaryArithOp { kind: _kind, result, lhs, rhs } => {
                 let lhs_type = function_info.values.get(lhs).ok_or_else(|| {
                     format!(
                         "Left-hand side value {:?} not found in type assignments",
@@ -142,14 +142,14 @@ impl Types {
                     .insert(*result, lhs_type.get_arithmetic_result_type(rhs_type));
                 Ok(())
             }
-            OpCode::Alloc(result, typ, annotation) => {
+            OpCode::Alloc { result, elem_type: typ, result_annotation: annotation } => {
                 function_info
                     .values
                     .insert(*result, Type::ref_of(typ.clone(), annotation.clone()));
                 Ok(())
             }
-            OpCode::Store(_, _) => Ok(()),
-            OpCode::Load(result, ptr) => {
+            OpCode::Store { ptr: _, value: _ } => Ok(()),
+            OpCode::Load { result, ptr } => {
                 let ptr_type = function_info.values.get(ptr).ok_or_else(|| {
                     format!("Pointer value {:?} not found in type assignments", ptr)
                 })?;
@@ -168,10 +168,10 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::MemOp(_, _) => Ok(()),
-            OpCode::AssertEq(_, _) => Ok(()),
-            OpCode::AssertR1C(_, _, _) => Ok(()),
-            OpCode::Call(result, fn_id, args) => {
+            OpCode::MemOp { kind: _, value: _ } => Ok(()),
+            OpCode::AssertEq { lhs: _, rhs: _ } => Ok(()),
+            OpCode::AssertR1C { a: _, b: _, c: _ } => Ok(()),
+            OpCode::Call { results: result, function: fn_id, args } => {
                 let (param_types, return_types) = function_types
                     .get(fn_id)
                     .ok_or_else(|| format!("Function {:?} not found", fn_id))?;
@@ -199,7 +199,7 @@ impl Types {
                 }
                 Ok(())
             }
-            OpCode::ArrayGet(result, array, _) => {
+            OpCode::ArrayGet { result, array, index: _ } => {
                 let array_type = function_info.values.get(array).ok_or_else(|| {
                     format!("Array value {:?} not found in type assignments", array)
                 })?;
@@ -211,7 +211,7 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::ArraySet(result, array, _, _) => {
+            OpCode::ArraySet { result, array, index: _, value: _ } => {
                 let array_type = function_info.values.get(array).ok_or_else(|| {
                     format!("Array value {:?} not found in type assignments", array)
                 })?;
@@ -219,7 +219,7 @@ impl Types {
                 function_info.values.insert(*result, array_type.clone());
                 Ok(())
             }
-            OpCode::Select(result, _cond, then, otherwise) => {
+            OpCode::Select { result, cond: _cond, if_t: then, if_f: otherwise } => {
                 let then_type = function_info.values.get(then).ok_or_else(|| {
                     format!("Then value {:?} not found in type assignments", then)
                 })?;
@@ -235,7 +235,7 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::WriteWitness(result, value, annotation) => {
+            OpCode::WriteWitness { result, value, witness_annotation: annotation } => {
                 let Some(result) = result else {
                     return Ok(());
                 };
@@ -248,21 +248,21 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::FreshWitness(r, tp) => {
+            OpCode::FreshWitness { result: r, result_type: tp } => {
                 function_info.values.insert(*r, tp.clone());
                 Ok(())
             }
-            OpCode::Constrain(_, _, _) => Ok(()),
-            OpCode::NextDCoeff(v) => {
+            OpCode::Constrain { a: _, b: _, c: _ } => Ok(()),
+            OpCode::NextDCoeff { result: v } => {
                 function_info.values.insert(*v, Type::field(V::empty()));
                 Ok(())
             }
-            OpCode::BumpD(_, _, _) => Ok(()),
-            OpCode::MkSeq(r, _, top_tp, t) => {
+            OpCode::BumpD { matrix: _, variable: _, sensitivity: _ } => Ok(()),
+            OpCode::MkSeq { result: r, elems: _, seq_type: top_tp, elem_type: t } => {
                 function_info.values.insert(*r, top_tp.of(t.clone()));
                 Ok(())
             }
-            OpCode::Cast(result, value, target) => {
+            OpCode::Cast { result, value, target } => {
                 let value_type = function_info
                     .values
                     .get(value)
@@ -276,7 +276,7 @@ impl Types {
                 function_info.values.insert(*result, result_type);
                 Ok(())
             }
-            OpCode::Truncate(result, value, _, _) => {
+            OpCode::Truncate { result, value, to_bits: _, from_bits: _ } => {
                 let value_type = function_info
                     .values
                     .get(value)
@@ -285,7 +285,7 @@ impl Types {
                 function_info.values.insert(*result, value_type.clone());
                 Ok(())
             }
-            OpCode::Not(result, value) => {
+            OpCode::Not { result, value } => {
                 let value_type = function_info
                     .values
                     .get(value)
@@ -293,7 +293,7 @@ impl Types {
                 function_info.values.insert(*result, value_type.clone());
                 Ok(())
             }
-            OpCode::ToBits(result, value, _, output_size) => {
+            OpCode::ToBits { result, value, endianness: _, count: output_size } => {
                 let value_type = function_info
                     .values
                     .get(value)
@@ -304,29 +304,46 @@ impl Types {
                 function_info.values.insert(*result, result_type);
                 Ok(())
             }
-            OpCode::BoxField(result, _, annotation) => {
+            OpCode::ToRadix { result, value, radix: _, endianness: _, count: output_size } => {
+                let value_type = function_info
+                    .values
+                    .get(value)
+                    .ok_or_else(|| format!("Value {:?} not found in type assignments", value))?;
+                // Return an array of U(8) values (digits) with the same annotation as the input
+                let digit_type = Type::u(8, value_type.get_annotation().clone());
+                let result_type = Type::array_of(digit_type, *output_size, V::empty());
+                function_info.values.insert(*result, result_type);
+                Ok(())
+            }
+            OpCode::BoxField { result, value: _, result_annotation: annotation } => {
                 function_info
                     .values
                     .insert(*result, Type::boxed_field(annotation.clone()));
                 Ok(())
             }
-            OpCode::UnboxField(result, _) => {
+            OpCode::UnboxField { result, value: _ } => {
                 function_info
                     .values
                     .insert(*result, Type::field(V::empty()));
                 Ok(())
             }
-            OpCode::MulConst(result, _, var) => {
+            OpCode::MulConst { result, const_val: _, var } => {
                 let var_type = function_info.values.get(var).unwrap();
                 function_info.values.insert(*result, var_type.clone());
                 Ok(())
             }
-            OpCode::Rangecheck(v, _) => {
-                // Rangecheck doesn't produce any output, just validates input
+            OpCode::Rangecheck { value: v, max_bits: _ } => {
                 let v_type = function_info.values.get(v).unwrap();
-                assert!(v_type.is_field(), "only field types are supported for rangecheck");
-                assert!(v_type.annotation == V::empty(), "rangecheck on impure values is not supported");
-
+                if !v_type.is_field() {
+                    return Err(format!(
+                        "only field types are supported for rangecheck, got {}",
+                        v_type
+                    ));
+                }
+                Ok(())
+            }
+            OpCode::ReadGlobal { result: r, offset: _, result_type: tp } => {
+                function_info.values.insert(*r, tp.clone());
                 Ok(())
             }
         }

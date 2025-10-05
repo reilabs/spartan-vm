@@ -24,6 +24,7 @@ enum Expr {
     Select(Box<Expr>, Box<Expr>, Box<Expr>),
     ArrayGet(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
+    ReadGlobal(u64),
 }
 
 impl Expr {
@@ -152,6 +153,7 @@ impl Display for Expr {
             }
             Self::ArrayGet(array, index) => write!(f, "{}[{}]", array, index),
             Self::Not(value) => write!(f, "(~{})", value),
+            Self::ReadGlobal(index) => write!(f, "g{}", index),
         }
     }
 }
@@ -291,7 +293,7 @@ impl CSE {
 
             for (instruction_idx, instruction) in block.get_instructions().enumerate() {
                 match instruction {
-                    OpCode::BinaryArithOp(BinaryArithOpKind::Add, r, lhs, rhs) => {
+                    OpCode::BinaryArithOp { kind: BinaryArithOpKind::Add, result: r, lhs, rhs } => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.add(&rhs_expr);
@@ -302,7 +304,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::BinaryArithOp(BinaryArithOpKind::Mul, r, lhs, rhs) => {
+                    OpCode::BinaryArithOp { kind: BinaryArithOpKind::Mul, result: r, lhs, rhs } => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.mul(&rhs_expr);
@@ -313,7 +315,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::BinaryArithOp(BinaryArithOpKind::Div, r, lhs, rhs) => {
+                    OpCode::BinaryArithOp { kind: BinaryArithOpKind::Div, result: r, lhs, rhs } => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.div(&rhs_expr);
@@ -324,7 +326,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::BinaryArithOp(BinaryArithOpKind::Sub, r, lhs, rhs) => {
+                    OpCode::BinaryArithOp { kind: BinaryArithOpKind::Sub, result: r, lhs, rhs } => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.sub(&rhs_expr);
@@ -335,7 +337,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::Cmp(CmpKind::Eq, r, lhs, rhs) => {
+                    OpCode::Cmp { kind: CmpKind::Eq, result: r, lhs, rhs } => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.eq(&rhs_expr);
@@ -346,7 +348,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::Cmp(CmpKind::Lt, r, lhs, rhs) => {
+                    OpCode::Cmp { kind: CmpKind::Lt, result: r, lhs, rhs } => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.lt(&rhs_expr);
@@ -357,7 +359,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::BinaryArithOp(BinaryArithOpKind::And, r, lhs, rhs) => {
+                    OpCode::BinaryArithOp { kind: BinaryArithOpKind::And, result: r, lhs, rhs } => {
                         let lhs_expr = get_expr(&exprs, lhs);
                         let rhs_expr = get_expr(&exprs, rhs);
                         let result_expr = lhs_expr.and(&rhs_expr);
@@ -368,7 +370,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::ArrayGet(r, array, index) => {
+                    OpCode::ArrayGet { result: r, array, index } => {
                         let array_expr = get_expr(&exprs, array);
                         let index_expr = get_expr(&exprs, index);
                         let result_expr = array_expr.array_get(&index_expr);
@@ -379,7 +381,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::Select(r, cond, then, otherwise) => {
+                    OpCode::Select { result: r, cond, if_t: then, if_f: otherwise } => {
                         let cond_expr = get_expr(&exprs, cond);
                         let then_expr = get_expr(&exprs, then);
                         let otherwise_expr = get_expr(&exprs, otherwise);
@@ -391,11 +393,20 @@ impl CSE {
                             *r,
                         ));
                     }
+                    OpCode::ReadGlobal { result: r, offset: index, result_type: _ } => {
+                        let result_expr = Expr::ReadGlobal(*index);
+                        exprs.insert(*r, result_expr.clone());
+                        result.entry(result_expr).or_default().push((
+                            block_id,
+                            instruction_idx,
+                            *r,
+                        ));
+                    }
                     OpCode::WriteWitness { .. } // TODO: is witness store a subexpression to be optimized?
-                    | OpCode::FreshWitness(_, _)
+                    | OpCode::FreshWitness { result: _, result_type: _ }
                     | OpCode::Constrain { .. }
-                    | OpCode::NextDCoeff(_)
-                    | OpCode::BumpD(_, _, _)
+                    | OpCode::NextDCoeff { result: _ }
+                    | OpCode::BumpD { matrix: _, variable: _, sensitivity: _ }
                     | OpCode::Alloc { .. }
                     | OpCode::Store { .. }
                     | OpCode::Load { .. }
@@ -406,13 +417,14 @@ impl CSE {
                     | OpCode::ArraySet { .. }
                     | OpCode::Cast { .. }
                     | OpCode::Truncate { .. }
-                    | OpCode::MemOp(_, _)
-                    | OpCode::Rangecheck(_, _)
-                    | OpCode::ToBits { .. } => {}
-                     OpCode::BoxField(_, _, _)
-                    | OpCode::UnboxField(_, _)
-                    | OpCode::MulConst(_, _, _) => { todo!() }
-                    OpCode::Not(r, value) => {
+                    | OpCode::MemOp { kind: _, value: _ }
+                    | OpCode::Rangecheck { value: _, max_bits: _ }
+                    | OpCode::ToBits { .. }
+                    | OpCode::ToRadix { .. } => {}
+                     OpCode::BoxField { result: _, value: _, result_annotation: _ }
+                    | OpCode::UnboxField { result: _, value: _ }
+                    | OpCode::MulConst { result: _, const_val: _, var: _ } => { todo!() }
+                    OpCode::Not { result: r, value } => {
                         let value_expr = get_expr(&exprs, value);
                         let result_expr = value_expr.not();
                         exprs.insert(*r, result_expr.clone());

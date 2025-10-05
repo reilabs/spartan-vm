@@ -410,6 +410,17 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
         let check = self_const.into_bigint().to_bits_le().iter().skip(max_bits).all(|b| !b);
         assert!(check);
     }
+
+    fn to_radix(
+        &self,
+        _radix: &Self,
+        _endianness: crate::compiler::ssa::Endianness,
+        _size: usize,
+        _out_type: &Type<V>,
+        _ctx: &mut R1CGen,
+    ) -> Self {
+        todo!("ToRadix R1CS generation not yet implemented")
+    }
 }
 
 impl R1CGen {

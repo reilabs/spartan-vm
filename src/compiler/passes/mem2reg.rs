@@ -87,11 +87,11 @@ impl Mem2Reg {
 
             for mut instruction in instructions {
                 match instruction {
-                    OpCode::Alloc(_, _, _) => {}
-                    OpCode::Store(lhs, rhs) => {
+                    OpCode::Alloc { result: _, elem_type: _, result_annotation: _ } => {}
+                    OpCode::Store { ptr: lhs, value: rhs } => {
                         values.insert(lhs, rhs);
                     }
-                    OpCode::Load(lhs, rhs) => {
+                    OpCode::Load { result: lhs, ptr: rhs } => {
                         let replacement = values.get(&rhs).expect("Uninitialized ptr value");
                         value_replacements.insert(lhs, *replacement);
                     }
@@ -194,10 +194,10 @@ impl Mem2Reg {
         for (block_id, block) in function.get_blocks() {
             for instruction in block.get_instructions() {
                 match instruction {
-                    OpCode::Store(lhs, _) => {
+                    OpCode::Store { ptr: lhs, value: _ } => {
                         writes.entry(*lhs).or_default().insert(*block_id);
                     }
-                    OpCode::Alloc(lhs, _, _) => {
+                    OpCode::Alloc { result: lhs, elem_type: _, result_annotation: _ } => {
                         defs.insert(*lhs, *block_id);
                     }
                     _ => {}
@@ -256,36 +256,36 @@ impl Mem2Reg {
 
             for instruction in block.get_instructions() {
                 match instruction {
-                    OpCode::ArraySet(_, _, _, val) => {
+                    OpCode::ArraySet { result: _, array: _, index: _, value: val } => {
                         let vtyp = type_info.get_value_type(*val);
                         if self.type_contains_ptr(vtyp) {
                             return false;
                         }
                     }
-                    OpCode::ArrayGet(_, _, val) => {
+                    OpCode::ArrayGet { result: _, array: _, index: val } => {
                         let vtyp = type_info.get_value_type(*val);
                         if self.type_contains_ptr(vtyp) {
                             return false;
                         }
                     }
-                    OpCode::Store(_, r) => {
+                    OpCode::Store { ptr: _, value: r } => {
                         let rtyp = type_info.get_value_type(*r);
                         if self.type_contains_ptr(rtyp) {
                             return false;
                         }
                     }
-                    OpCode::MkSeq(_, _, _, typ) => {
+                    OpCode::MkSeq { result: _, elems: _, seq_type: _, elem_type: typ } => {
                         if self.type_contains_ptr(typ) {
                             return false;
                         }
                     }
-                    OpCode::Load(r, _) => {
+                    OpCode::Load { result: r, ptr: _ } => {
                         let rtyp = type_info.get_value_type(*r);
                         if self.type_contains_ptr(rtyp) {
                             return false;
                         }
                     }
-                    OpCode::Call(rets, _, args) => {
+                    OpCode::Call { results: rets, function: _, args } => {
                         for v in rets.iter().chain(args.iter()) {
                             let vtyp = type_info.get_value_type(*v);
                             if self.type_contains_ptr(vtyp) {

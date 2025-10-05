@@ -347,6 +347,17 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
     fn rangecheck(&self, max_bits: usize, ctx: &mut SpecializationState) {
         ctx.function.push_rangecheck(ctx.function.get_entry_id(), self.0, max_bits);
     }
+
+    fn to_radix(
+        &self,
+        _radix: &Self,
+        _endianness: Endianness,
+        _size: usize,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        _ctx: &mut SpecializationState,
+    ) -> Self {
+        todo!("ToRadix specialization not yet implemented")
+    }
 }
 
 impl<T> symbolic_executor::Context<Val, T> for SpecializationState {

@@ -223,9 +223,9 @@ impl Value {
         }
     }
 
-    fn rangecheck(&self, _max_bits: usize, _instrumenter: &mut dyn OpInstrumenter) {
+    fn rangecheck(&self, max_bits: usize, instrumenter: &mut dyn OpInstrumenter) {
         if self.is_witness() {
-            panic!("Cannot rangecheck witness value");
+            instrumenter.record_rangecheck(max_bits as u8);
         }
     }
 
@@ -341,6 +341,18 @@ impl Value {
                 Value::Array(bits)
             }
             _ => panic!("Cannot convert {:?} to bits", self),
+        }
+    }
+
+    fn to_radix(
+        &self,
+        radix: &Value,
+        _endianness: &crate::compiler::ssa::Endianness,
+        _size: usize,
+        _instrumenter: &mut dyn OpInstrumenter,
+    ) -> Value {
+        match (self, radix) {
+            _ => panic!("Cannot convert {:?} to radix {:?}", self, radix),
         }
     }
 
@@ -674,6 +686,30 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         }
     }
 
+    fn to_radix(
+        &self,
+        radix: &SpecSplitValue,
+        endianness: Endianness,
+        size: usize,
+        _tp: &Type<ConstantTaint>,
+        instrumenter: &mut CostAnalysis,
+    ) -> SpecSplitValue {
+        SpecSplitValue {
+            unspecialized: self.unspecialized.to_radix(
+                &radix.unspecialized,
+                &endianness,
+                size,
+                instrumenter.get_unspecialized(),
+            ),
+            specialized: self.specialized.to_radix(
+                &radix.specialized,
+                &endianness,
+                size,
+                instrumenter.get_specialized(),
+            ),
+        }
+    }
+
     fn expect_constant_bool(&self, _ctx: &mut CostAnalysis) -> bool {
         match (&self.unspecialized, &self.specialized) {
             (Value::U(1, v), Value::U(1, v2)) => {
@@ -759,6 +795,7 @@ impl FunctionSignature {
 
 trait OpInstrumenter {
     fn record_constraints(&mut self, number: usize);
+    fn record_rangecheck(&mut self, size: u8);
 }
 
 trait FunctionInstrumenter {
@@ -771,11 +808,25 @@ trait FunctionInstrumenter {
 #[derive(Debug, Clone)]
 struct Instrumenter {
     constraints: usize,
+    rangechecks: HashMap<u8, usize>
+}
+
+impl Instrumenter {
+    fn new() -> Self {
+        Self {
+            constraints: 0,
+            rangechecks: HashMap::new(),
+        }
+    }
 }
 
 impl OpInstrumenter for Instrumenter {
     fn record_constraints(&mut self, number: usize) {
         self.constraints += number;
+    }
+
+    fn record_rangecheck(&mut self, size: u8) {
+        *self.rangechecks.entry(size).or_insert(0) += 1;
     }
 }
 
@@ -824,6 +875,7 @@ impl FunctionInstrumenter for DummyInstrumenter {
 
 impl OpInstrumenter for DummyInstrumenter {
     fn record_constraints(&mut self, _: usize) {}
+    fn record_rangecheck(&mut self, _: u8) {}
 }
 
 pub struct CostAnalysis {
@@ -970,8 +1022,8 @@ impl CostAnalysis {
         } else {
             let instrumenter = FunctionCost {
                 calls: HashMap::new(),
-                raw: Instrumenter { constraints: 0 },
-                specialized: Instrumenter { constraints: 0 },
+                raw: Instrumenter::new(),
+                specialized: Instrumenter::new(),
             };
             self.stack.push((sig, Box::new(instrumenter)));
         }

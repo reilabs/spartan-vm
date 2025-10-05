@@ -18,7 +18,7 @@ impl R1CSCleanup {
             for (_, block) in function.get_blocks_mut() {
                 for instruction in block.get_instructions_mut() {
                     match instruction {
-                        OpCode::WriteWitness(r, b, _) => {
+                        OpCode::WriteWitness { result: r, value: b, witness_annotation: _ } => {
                             if let Some(r) = r {
                                 replacements.insert(*r, *b);
                             }
