@@ -2,7 +2,7 @@ use tracing::{Level, instrument};
 
 use crate::compiler::{
     analysis::types::TypeInfo, ir::r#type::Type, ssa::{
-        BinaryArithOpKind, BlockId, CastTarget, CmpKind, Const, Endianness, FunctionId, MemOp, SeqType, Terminator, SSA
+        BinaryArithOpKind, BlockId, CastTarget, CmpKind, Const, Endianness, FunctionId, LookupTarget, MemOp, Radix, SeqType, Terminator, SSA
     }, Field
 };
 
@@ -40,7 +40,7 @@ where
     ) -> Self;
     fn to_radix(
         &self,
-        radix: &Self,
+        radix: &Radix<Self>,
         endianness: Endianness,
         size: usize,
         out_type: &Type<Taint>,
@@ -72,6 +72,12 @@ pub trait Context<V, Taint> {
     ) -> Option<Vec<V>>;
     fn on_return(&mut self, returns: &mut [V], return_types: &[Type<Taint>]);
     fn on_jmp(&mut self, target: BlockId, params: &mut [V], param_types: &[&Type<Taint>]);
+
+    // TODO it looks odd that this is the only opcode implemented here.
+    // This is the _new_ structure, so at some point we should migrate all other opcodes here.
+    fn lookup(&mut self, _target: LookupTarget<V>, _keys: Vec<V>, _results: Vec<V>) {
+        panic!("ICE: backend does not implement lookup");
+    }
 }
 
 pub struct SymbolicExecutor {}
@@ -246,9 +252,12 @@ impl SymbolicExecutor {
                     }
                     crate::compiler::ssa::OpCode::ToRadix { result: r, value: a, radix, endianness, count: size } => {
                         let a = scope[a.0 as usize].as_ref().unwrap();
-                        let radix = scope[radix.0 as usize].as_ref().unwrap();
+                        let radix = match radix {
+                            Radix::Bytes => Radix::Bytes,
+                            Radix::Dyn(radix) => Radix::Dyn(scope[radix.0 as usize].as_ref().unwrap().clone()),
+                        };
                         scope[r.0 as usize] = Some(a.to_radix(
-                            radix,
+                            &radix,
                             *endianness,
                             *size,
                             &fn_type_info.get_value_type(*r),
@@ -303,6 +312,19 @@ impl SymbolicExecutor {
                     }
                     crate::compiler::ssa::OpCode::ReadGlobal { result: _r, offset: _index, result_type: _tp } => {
                         todo!()
+                    }
+                    crate::compiler::ssa::OpCode::Lookup { target, keys, results } => {
+                        let target = match target {
+                            LookupTarget::Rangecheck(n) => {
+                                LookupTarget::Rangecheck(*n)
+                            }
+                            LookupTarget::Array(arr) => {
+                                LookupTarget::Array(scope[arr.0 as usize].as_ref().unwrap().clone())
+                            }
+                        };
+                        let keys = keys.iter().map(|id| scope[id.0 as usize].as_ref().unwrap().clone()).collect::<Vec<_>>();
+                        let results = results.iter().map(|id| scope[id.0 as usize].as_ref().unwrap().clone()).collect::<Vec<_>>();
+                        ctx.lookup(target, keys, results);
                     }
                 }
             }

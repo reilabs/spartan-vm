@@ -1,13 +1,24 @@
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 use crate::compiler::{
-    analysis::{symbolic_executor::{self, SymbolicExecutor}, types::TypeInfo},
+    analysis::{
+        symbolic_executor::{self, SymbolicExecutor},
+        types::TypeInfo,
+    },
     ir::r#type::{Type, TypeExpr},
-    ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, MemOp, SSA},
+    ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, MemOp, Radix, SSA},
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
 use itertools::Itertools;
 use tracing::{instrument, warn};
+
+// #[derive(Clone, Debug, Copy, PartialEq, PartialOrd, Eq, Ord)]
+// pub enum WitnessIndex {
+//     PreCommitment(usize),
+//     ChallengePower(usize, usize),
+//     LookupValueInverse(usize),
+//     LookupValueInverseAux(usize),
+// }
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -152,11 +163,25 @@ impl Value {
     }
 }
 
+type LC = Vec<(usize, crate::compiler::Field)>;
+
 #[derive(Clone)]
 pub struct R1C {
-    pub a: Vec<(usize, ark_bn254::Fr)>,
-    pub b: Vec<(usize, ark_bn254::Fr)>,
-    pub c: Vec<(usize, ark_bn254::Fr)>,
+    pub a: LC,
+    pub b: LC,
+    pub c: LC,
+}
+
+#[derive(Clone)]
+pub struct LookupConstraint {
+    pub table_id: usize,
+    pub elements: Vec<LC>,
+}
+
+#[derive(Clone)]
+pub enum Table {
+    Range(u64),
+    OfElems(Vec<LC>),
 }
 
 fn field_to_string(c: ark_bn254::Fr) -> String {
@@ -194,7 +219,9 @@ impl Display for R1C {
 
 #[derive(Clone)]
 pub struct R1CGen {
-    result: Vec<R1C>,
+    constraints: Vec<R1C>,
+    tables: Vec<Table>,
+    lookups: Vec<LookupConstraint>,
     next_witness: usize,
 }
 
@@ -211,6 +238,37 @@ impl<V: Clone> symbolic_executor::Context<Value, V> for R1CGen {
     fn on_return(&mut self, _returns: &mut [Value], _return_types: &[Type<V>]) {}
 
     fn on_jmp(&mut self, _target: BlockId, _params: &mut [Value], _param_types: &[&Type<V>]) {}
+
+    fn lookup(
+        &mut self,
+        target: super::ssa::LookupTarget<Value>,
+        keys: Vec<Value>,
+        results: Vec<Value>,
+    ) {
+        match target {
+            super::ssa::LookupTarget::Rangecheck(i) => {
+                // TODO this will become table resolution logic eventually
+                if self.tables.is_empty() {
+                    self.tables.push(Table::Range(i as u64))
+                } else {
+                    match self.tables[0] {
+                        Table::Range(i1) => assert_eq!(i1, i as u64, "unsupported"),
+                        Table::OfElems(_) => panic!("unsupported"),
+                    }
+                }
+                let els = keys
+                    .into_iter()
+                    .chain(results.into_iter())
+                    .map(|e| e.expect_linear_combination())
+                    .collect();
+                self.lookups.push(LookupConstraint {
+                    table_id: 0,
+                    elements: els,
+                });
+            }
+            super::ssa::LookupTarget::Array(_) => todo!("lookups from arrays"),
+        }
+    }
 }
 
 impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
@@ -298,7 +356,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
         let a = a.expect_linear_combination();
         let b = b.expect_linear_combination();
         let c = c.expect_linear_combination();
-        ctx.result.push(R1C { a: a, b: b, c: c });
+        ctx.constraints.push(R1C { a: a, b: b, c: c });
     }
 
     fn to_bits(
@@ -407,13 +465,18 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
 
     fn rangecheck(&self, max_bits: usize, _ctx: &mut R1CGen) {
         let self_const = self.expect_constant();
-        let check = self_const.into_bigint().to_bits_le().iter().skip(max_bits).all(|b| !b);
+        let check = self_const
+            .into_bigint()
+            .to_bits_le()
+            .iter()
+            .skip(max_bits)
+            .all(|b| !b);
         assert!(check);
     }
 
     fn to_radix(
         &self,
-        _radix: &Self,
+        _radix: &Radix<Self>,
         _endianness: crate::compiler::ssa::Endianness,
         _size: usize,
         _out_type: &Type<V>,
@@ -426,13 +489,15 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
 impl R1CGen {
     pub fn new() -> Self {
         Self {
-            result: vec![],
+            constraints: vec![],
             next_witness: 1, // 0 is reserved for constant one
+            tables: vec![],
+            lookups: vec![],
         }
     }
 
     pub fn verify(&self, witness: &[ark_bn254::Fr]) -> bool {
-        for (i, r1c) in self.result.iter().enumerate() {
+        for (i, r1c) in self.constraints.iter().enumerate() {
             let a = r1c
                 .a
                 .iter()
@@ -470,7 +535,7 @@ impl R1CGen {
     }
 
     pub fn get_r1cs(self) -> Vec<R1C> {
-        self.result
+        self.constraints
     }
 
     pub fn get_witness_size(&self) -> usize {

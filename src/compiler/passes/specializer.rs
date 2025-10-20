@@ -4,19 +4,13 @@ use ark_ff::{AdditiveGroup, BigInteger, PrimeField};
 use tracing::{info, instrument};
 
 use crate::compiler::{
-    Field,
     analysis::{
         instrumenter::{FunctionSignature, SpecializationSummary, ValueSignature},
         symbolic_executor::{self, SymbolicExecutor},
         types::TypeInfo,
-    },
-    ir::r#type::Type,
-    pass_manager::{DataPoint, Pass, PassInfo},
-    ssa::{
-        BinaryArithOpKind, CastTarget, Endianness, Function, FunctionId, MemOp, SSA, SeqType,
-        ValueId,
-    },
-    taint_analysis::ConstantTaint,
+    }, ir::r#type::Type, pass_manager::{DataPoint, Pass, PassInfo}, ssa::{
+        BinaryArithOpKind, CastTarget, Endianness, Function, FunctionId, MemOp, Radix, SeqType, ValueId, SSA
+    }, taint_analysis::ConstantTaint, Field
 };
 
 pub struct Specializer {
@@ -350,7 +344,7 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
 
     fn to_radix(
         &self,
-        _radix: &Self,
+        _radix: &Radix<Self>,
         _endianness: Endianness,
         _size: usize,
         _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,

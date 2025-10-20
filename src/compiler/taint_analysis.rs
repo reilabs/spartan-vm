@@ -646,7 +646,7 @@ impl TaintAnalysis {
                             _ => panic!("Unexpected taint for ptr"),
                         }
                     }
-                    OpCode::ReadGlobal { result: r, offset: l, result_type: tp } => {
+                    OpCode::ReadGlobal { result: r, offset: _, result_type: tp } => {
                         let result_taint = self.construct_pure_taint_for_type(tp);
                         function_taint.value_taints.insert(*r, result_taint);
                     }
@@ -763,7 +763,8 @@ impl TaintAnalysis {
                     | OpCode::NextDCoeff { result: _ }
                     | OpCode::BoxField { result: _, value: _, result_annotation: _ }
                     | OpCode::UnboxField { result: _, value: _ }
-                    | OpCode::MulConst { result: _, const_val: _, var: _ } => {
+                    | OpCode::MulConst { result: _, const_val: _, var: _ }
+                    | OpCode::Lookup { target: _, keys: _, results: _ } => {
                         panic!("Should not be present at this stage {:?}", instruction);
                     }
                 }

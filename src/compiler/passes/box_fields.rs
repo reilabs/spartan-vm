@@ -363,6 +363,7 @@ impl BoxFields {
                         | OpCode::BoxField { .. }
                         | OpCode::UnboxField { .. }
                         | OpCode::MulConst { .. }
+                        | OpCode::Lookup { .. }
                         | OpCode::BumpD { .. } => new_instructions.push(instruction),
                     };
                 }

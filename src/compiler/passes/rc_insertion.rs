@@ -170,12 +170,21 @@ impl RCInsertion {
                     | OpCode::Constrain { a: _, b: _, c: _ }
                     | OpCode::WriteWitness { result: _, value: _, witness_annotation: _ }
                     | OpCode::NextDCoeff { result: _ }
+                    | OpCode::Lookup { target: _, keys: _, results: _ }
                     | OpCode::Not { result: _, value: _ } => {
                         let rcd_inputs = instruction
                             .get_inputs()
                             .filter(|v| self.needs_rc(type_info, v))
                             .copied()
                             .collect_vec();
+                        for input in rcd_inputs.iter() {
+                            if !currently_live.contains(input) {
+                                new_instructions.push(OpCode::MemOp {
+                                    kind: MemOp::Drop,
+                                    value: *input
+                                });
+                            }
+                        }
                         currently_live.extend(rcd_inputs);
                         new_instructions.push(instruction)
                     }

@@ -346,6 +346,7 @@ impl Types {
                 function_info.values.insert(*r, tp.clone());
                 Ok(())
             }
+            OpCode::Lookup { target: _, keys: _, results: _ } => Ok(()),
         }
     }
 }

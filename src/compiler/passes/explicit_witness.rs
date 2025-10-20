@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
+use ark_ff::AdditiveGroup;
+
 use crate::compiler::{
     analysis::types::TypeInfo,
     pass_manager::{DataPoint, Pass},
-    ssa::{BinaryArithOpKind, Block, BlockId, OpCode, SSA},
-    taint_analysis::ConstantTaint,
+    ssa::{BinaryArithOpKind, Block, BlockId, CastTarget, Endianness, LookupTarget, OpCode, Radix, SSA},
+    taint_analysis::ConstantTaint, Field,
 };
 
 pub struct ExplicitWitness {}
@@ -257,12 +259,40 @@ impl ExplicitWitness {
                         OpCode::MulConst { result: _, const_val: _, var: _ } => {
                             new_instructions.push(instruction);
                         }
-                        OpCode::Rangecheck { value: v, max_bits: _ } => {
-                            let v_taint = function_type_info.get_value_type(v).get_annotation();
-                            assert!(v_taint.is_pure());
-                            new_instructions.push(instruction);
+                        OpCode::Rangecheck { value, max_bits } => {
+                            let v_taint = function_type_info.get_value_type(value).get_annotation();
+                            if v_taint.is_pure() {
+                                new_instructions.push(instruction);
+                            } else {
+                                assert!(max_bits % 8 == 0); // TODO
+                                let bytes_val = function.fresh_value();
+                                new_instructions.push(OpCode::ToRadix { result: bytes_val, value: value, radix: Radix::Bytes, endianness: Endianness::Big, count: max_bits / 8 });
+                                let chunks = max_bits / 8;
+                                let mut result = function.push_field_const(Field::ZERO);
+                                let two = function.push_field_const(Field::from(2));
+                                let one = function.push_field_const(Field::from(1));
+                                for i in 0..chunks {
+                                    let byte = function.fresh_value();
+                                    new_instructions.push(OpCode::ArrayGet { result: byte, array: bytes_val, index: function.push_u_const(32, i as u128) });
+                                    let byte_field = function.fresh_value();
+                                    new_instructions.push(OpCode::Cast { result: byte_field, value: byte, target: CastTarget::Field });
+                                    let byte_wit = function.fresh_value();
+                                    new_instructions.push(OpCode::WriteWitness { result: Some(byte_wit), value: byte_field, witness_annotation: ConstantTaint::Witness });
+                                    new_instructions.push(OpCode::Lookup { target: LookupTarget::Rangecheck(8), keys: vec![byte_wit], results: vec![] });
+                                    let sum = function.fresh_value();
+                                    new_instructions.push(OpCode::BinaryArithOp { kind: BinaryArithOpKind::Add, result: sum, lhs: result, rhs: byte_wit });
+                                    let double = function.fresh_value();
+                                    new_instructions.push(OpCode::BinaryArithOp { kind: BinaryArithOpKind::Mul, result: double, lhs: sum, rhs: two });
+                                    result = double;
+                                }
+                                new_instructions.push(OpCode::Constrain { a: result, b: one, c: value });
+                            }
+                            // new_instructions.push(instruction);
                         }
                         OpCode::ReadGlobal { result: _, offset: _, result_type: _ } => {
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::Lookup { .. } => {
                             new_instructions.push(instruction);
                         }
                     }

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::TypeConverter;
 use crate::compiler::{
     ir::r#type::{Empty, TypeExpr},
-    ssa::{BlockId, CastTarget, Endianness, Function, FunctionId, SeqType, ValueId},
+    ssa::{BlockId, CastTarget, Endianness, Function, FunctionId, Radix, SeqType, ValueId},
 };
 use noirc_evaluator::ssa::ir::{
     basic_block::BasicBlockId,
@@ -223,7 +223,7 @@ impl FunctionConverter {
                                     let to_radix_result = custom_function.push_to_radix(
                                         custom_block_id,
                                         input_converted,
-                                        radix_converted,
+                                        Radix::Dyn(radix_converted),
                                         endianness,
                                         result_size as usize,
                                     );

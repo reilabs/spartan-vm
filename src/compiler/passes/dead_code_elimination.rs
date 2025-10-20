@@ -97,11 +97,18 @@ impl DCE {
                         OpCode::Constrain { .. } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
+                        OpCode::Lookup { .. } => {
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
                         OpCode::NextDCoeff { result: _ } => {
                             // This also has the side-effect of bumping the counter, so we need to keep it live.
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
-                        OpCode::BumpD { matrix: _, variable: _, sensitivity: _ } => {
+                        OpCode::BumpD {
+                            matrix: _,
+                            variable: _,
+                            sensitivity: _,
+                        } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
                         OpCode::WriteWitness { .. } => {
@@ -111,7 +118,10 @@ impl DCE {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
                         }
-                        OpCode::FreshWitness { result: _, result_type: _ } => {
+                        OpCode::FreshWitness {
+                            result: _,
+                            result_type: _,
+                        } => {
                             if self.config.witness_shape_frozen {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
@@ -123,8 +133,20 @@ impl DCE {
                             // we'll be fine.
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
-                        OpCode::Rangecheck { value: _, max_bits: _ } => {
+                        OpCode::Rangecheck {
+                            value: _,
+                            max_bits: _,
+                        } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
+                        OpCode::ToBits { .. } | OpCode::ToRadix { .. } => {
+                            // These are live while we still have witgen and R1CS in the same program
+                            // because they can be used as range checks.
+                            // After the witness shape is frozen, they can be removed, because the
+                            // rangechecks are made explicit by `ExplicitWitness`.
+                            if !self.config.witness_shape_frozen {
+                                worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                            }
                         }
                         OpCode::Load { .. }
                         | OpCode::BinaryArithOp { .. }
@@ -137,12 +159,25 @@ impl DCE {
                         | OpCode::Cast { .. }
                         | OpCode::Truncate { .. }
                         | OpCode::Not { .. }
-                        | OpCode::ToBits { .. }
-                        | OpCode::ToRadix { .. }
-                        | OpCode::BoxField { result: _, value: _, result_annotation: _ }
-                        | OpCode::UnboxField { result: _, value: _ }
-                        | OpCode::MulConst { result: _, const_val: _, var: _ }
-                        | OpCode::ReadGlobal { result: _, offset: _, result_type: _ } => {}
+                        | OpCode::BoxField {
+                            result: _,
+                            value: _,
+                            result_annotation: _,
+                        }
+                        | OpCode::UnboxField {
+                            result: _,
+                            value: _,
+                        }
+                        | OpCode::MulConst {
+                            result: _,
+                            const_val: _,
+                            var: _,
+                        }
+                        | OpCode::ReadGlobal {
+                            result: _,
+                            offset: _,
+                            result_type: _,
+                        } => {}
                     }
                 }
 

@@ -55,38 +55,55 @@ impl UntaintControlFlow {
             let mut new_instructions = Vec::<OpCode<ConstantTaint>>::new();
             for instruction in block.take_instructions() {
                 let new = match instruction {
-                    OpCode::BinaryArithOp { kind, result: r, lhs: l, rhs: h } => OpCode::BinaryArithOp {
+                    OpCode::BinaryArithOp {
+                        kind,
+                        result: r,
+                        lhs: l,
+                        rhs: h,
+                    } => OpCode::BinaryArithOp {
                         kind: kind,
                         result: r,
                         lhs: l,
-                        rhs: h
+                        rhs: h,
                     },
-                    OpCode::Cmp { kind, result: r, lhs: l, rhs: h } => OpCode::Cmp {
+                    OpCode::Cmp {
+                        kind,
+                        result: r,
+                        lhs: l,
+                        rhs: h,
+                    } => OpCode::Cmp {
                         kind: kind,
                         result: r,
                         lhs: l,
-                        rhs: h
+                        rhs: h,
                     },
-                    OpCode::Store { ptr: r, value: l } => OpCode::Store {
-                        ptr: r,
-                        value: l
-                    },
-                    OpCode::Load { result: r, ptr: l } => OpCode::Load {
-                        result: r,
-                        ptr: l
-                    },
-                    OpCode::ArrayGet { result: r, array: l, index: h } => OpCode::ArrayGet {
-                        result: r,
-                        array: l,
-                        index: h
-                    },
-                    OpCode::ArraySet { result: r, array: l, index: h, value: j } => OpCode::ArraySet {
+                    OpCode::Store { ptr: r, value: l } => OpCode::Store { ptr: r, value: l },
+                    OpCode::Load { result: r, ptr: l } => OpCode::Load { result: r, ptr: l },
+                    OpCode::ArrayGet {
                         result: r,
                         array: l,
                         index: h,
-                        value: j
+                    } => OpCode::ArrayGet {
+                        result: r,
+                        array: l,
+                        index: h,
                     },
-                    OpCode::Alloc { result: r, elem_type: l, result_annotation: _ } => {
+                    OpCode::ArraySet {
+                        result: r,
+                        array: l,
+                        index: h,
+                        value: j,
+                    } => OpCode::ArraySet {
+                        result: r,
+                        array: l,
+                        index: h,
+                        value: j,
+                    },
+                    OpCode::Alloc {
+                        result: r,
+                        elem_type: l,
+                        result_annotation: _,
+                    } => {
                         let r_taint = function_taint.get_value_taint(r);
                         let child = r_taint.child_taint_type().unwrap();
                         let child_typ = self.typify_taint(l, &child);
@@ -94,56 +111,70 @@ impl UntaintControlFlow {
                         OpCode::Alloc {
                             result: r,
                             elem_type: child_typ,
-                            result_annotation: self_taint
+                            result_annotation: self_taint,
                         }
                     }
-                    OpCode::Call { results: r, function: l, args: h } => OpCode::Call {
+                    OpCode::Call {
                         results: r,
                         function: l,
-                        args: h
+                        args: h,
+                    } => OpCode::Call {
+                        results: r,
+                        function: l,
+                        args: h,
                     },
-                    OpCode::AssertEq { lhs: r, rhs: l } => OpCode::AssertEq {
-                        lhs: r,
-                        rhs: l
-                    },
-                    OpCode::AssertR1C { a: r, b: l, c: h } => OpCode::AssertR1C {
-                        a: r,
-                        b: l,
-                        c: h
-                    },
-                    OpCode::Select { result: r, cond: l, if_t: h, if_f: j } => OpCode::Select {
+                    OpCode::AssertEq { lhs: r, rhs: l } => OpCode::AssertEq { lhs: r, rhs: l },
+                    OpCode::AssertR1C { a: r, b: l, c: h } => {
+                        OpCode::AssertR1C { a: r, b: l, c: h }
+                    }
+                    OpCode::Select {
                         result: r,
                         cond: l,
                         if_t: h,
-                        if_f: j
+                        if_f: j,
+                    } => OpCode::Select {
+                        result: r,
+                        cond: l,
+                        if_t: h,
+                        if_f: j,
                     },
-                    OpCode::WriteWitness { result: r, value: l, witness_annotation: _ } => {
-                        OpCode::WriteWitness {
-                            result: r,
-                            value: l,
-                            witness_annotation: ConstantTaint::Witness
-                        }
-                    }
-                    OpCode::FreshWitness { result: r, result_type: tp } => {
+                    OpCode::WriteWitness {
+                        result: r,
+                        value: l,
+                        witness_annotation: _,
+                    } => OpCode::WriteWitness {
+                        result: r,
+                        value: l,
+                        witness_annotation: ConstantTaint::Witness,
+                    },
+                    OpCode::FreshWitness {
+                        result: r,
+                        result_type: tp,
+                    } => {
                         let taint = function_taint.get_value_taint(r);
                         let new_tp = self.typify_taint(tp, taint);
                         OpCode::FreshWitness {
                             result: r,
-                            result_type: new_tp
+                            result_type: new_tp,
                         }
                     }
-                    OpCode::Constrain { a, b, c } => OpCode::Constrain {
-                        a: a,
-                        b: b,
-                        c: c
-                    },
+                    OpCode::Constrain { a, b, c } => OpCode::Constrain { a: a, b: b, c: c },
                     OpCode::NextDCoeff { result: a } => OpCode::NextDCoeff { result: a },
-                    OpCode::BumpD { matrix: a, variable: b, sensitivity: c } => OpCode::BumpD {
+                    OpCode::BumpD {
                         matrix: a,
                         variable: b,
-                        sensitivity: c
+                        sensitivity: c,
+                    } => OpCode::BumpD {
+                        matrix: a,
+                        variable: b,
+                        sensitivity: c,
                     },
-                    OpCode::MkSeq { result: r, elems: l, seq_type: stp, elem_type: tp } => {
+                    OpCode::MkSeq {
+                        result: r,
+                        elems: l,
+                        seq_type: stp,
+                        elem_type: tp,
+                    } => {
                         let r_taint = function_taint
                             .get_value_taint(r)
                             .child_taint_type()
@@ -152,71 +183,117 @@ impl UntaintControlFlow {
                             result: r,
                             elems: l,
                             seq_type: stp,
-                            elem_type: self.typify_taint(tp, &r_taint)
+                            elem_type: self.typify_taint(tp, &r_taint),
                         }
                     }
-                    OpCode::Cast { result: r, value: l, target: t } => OpCode::Cast {
+                    OpCode::Cast {
                         result: r,
                         value: l,
-                        target: t
-                    },
-                    OpCode::Truncate { result: r, value: l, to_bits: out_bits, from_bits: in_bits } => {
-                        OpCode::Truncate {
-                            result: r,
-                            value: l,
-                            to_bits: out_bits,
-                            from_bits: in_bits
-                        }
-                    }
-                    OpCode::Not { result: r, value: l } => OpCode::Not {
+                        target: t,
+                    } => OpCode::Cast {
                         result: r,
-                        value: l
+                        value: l,
+                        target: t,
                     },
-                    OpCode::ToBits { result: r, value: l, endianness: e, count: s } => OpCode::ToBits {
+                    OpCode::Truncate {
+                        result: r,
+                        value: l,
+                        to_bits: out_bits,
+                        from_bits: in_bits,
+                    } => OpCode::Truncate {
+                        result: r,
+                        value: l,
+                        to_bits: out_bits,
+                        from_bits: in_bits,
+                    },
+                    OpCode::Not {
+                        result: r,
+                        value: l,
+                    } => OpCode::Not {
+                        result: r,
+                        value: l,
+                    },
+                    OpCode::ToBits {
                         result: r,
                         value: l,
                         endianness: e,
-                        count: s
+                        count: s,
+                    } => OpCode::ToBits {
+                        result: r,
+                        value: l,
+                        endianness: e,
+                        count: s,
                     },
-                    OpCode::ToRadix { result: r, value: l, radix, endianness: e, count: s } => OpCode::ToRadix {
+                    OpCode::ToRadix {
+                        result: r,
+                        value: l,
+                        radix,
+                        endianness: e,
+                        count: s,
+                    } => OpCode::ToRadix {
                         result: r,
                         value: l,
                         radix: radix,
                         endianness: e,
-                        count: s
+                        count: s,
                     },
                     OpCode::MemOp { kind, value } => OpCode::MemOp {
                         kind: kind,
-                        value: value
+                        value: value,
                     },
-                    OpCode::BoxField { result: r, value: l, result_annotation: _c } => OpCode::BoxField {
+                    OpCode::BoxField {
+                        result: r,
+                        value: l,
+                        result_annotation: _c,
+                    } => OpCode::BoxField {
                         result: r,
                         value: l,
                         result_annotation: function_taint
                             .get_value_taint(r)
                             .toplevel_taint()
-                            .expect_constant()
+                            .expect_constant(),
                     },
-                    OpCode::UnboxField { result: r, value: l } => OpCode::UnboxField {
+                    OpCode::UnboxField {
                         result: r,
-                        value: l
+                        value: l,
+                    } => OpCode::UnboxField {
+                        result: r,
+                        value: l,
                     },
-                    OpCode::MulConst { result: r, const_val: l, var: c } => OpCode::MulConst {
+                    OpCode::MulConst {
                         result: r,
                         const_val: l,
-                        var: c
+                        var: c,
+                    } => OpCode::MulConst {
+                        result: r,
+                        const_val: l,
+                        var: c,
                     },
-                    OpCode::Rangecheck { value: val, max_bits } => OpCode::Rangecheck {
+                    OpCode::Rangecheck {
                         value: val,
-                        max_bits: max_bits
+                        max_bits,
+                    } => OpCode::Rangecheck {
+                        value: val,
+                        max_bits: max_bits,
                     },
-                    OpCode::ReadGlobal { result: r, offset: l, result_type: tp } => {
-                        OpCode::ReadGlobal {
-                            result: r,
-                            offset: l,
-                            result_type: self.pure_taint_for_type(tp)
-                        }
-                    }
+                    OpCode::ReadGlobal {
+                        result: r,
+                        offset: l,
+                        result_type: tp,
+                    } => OpCode::ReadGlobal {
+                        result: r,
+                        offset: l,
+                        result_type: self.pure_taint_for_type(tp),
+                    },
+                    OpCode::Lookup {
+                        target,
+                        keys,
+                        results,
+                    } => OpCode::Lookup {
+                        target,
+                        keys,
+                        results,
+                    },
                 };
                 new_instructions.push(new);
             }
@@ -257,16 +334,61 @@ impl UntaintControlFlow {
 
             for instruction in old_instructions {
                 match instruction {
-                    OpCode::BinaryArithOp { kind: _, result: _, lhs: _, rhs: _ }
-                    | OpCode::Cmp { kind: _, result: _, lhs: _, rhs: _ }
-                    | OpCode::MkSeq { result: _, elems: _, seq_type: _, elem_type: _ }
-                    | OpCode::Cast { result: _, value: _, target: _ }
-                    | OpCode::Truncate { result: _, value: _, to_bits: _, from_bits: _ }
-                    | OpCode::Not { result: _, value: _ }
-                    | OpCode::Rangecheck { value: _, max_bits: _ }
-                    | OpCode::ToBits { result: _, value: _, endianness: _, count: _ }
-                    | OpCode::ToRadix { result: _, value: _, radix: _, endianness: _, count: _ }
-                    | OpCode::ReadGlobal { result: _, offset: _, result_type: _ } => {
+                    OpCode::BinaryArithOp {
+                        kind: _,
+                        result: _,
+                        lhs: _,
+                        rhs: _,
+                    }
+                    | OpCode::Cmp {
+                        kind: _,
+                        result: _,
+                        lhs: _,
+                        rhs: _,
+                    }
+                    | OpCode::MkSeq {
+                        result: _,
+                        elems: _,
+                        seq_type: _,
+                        elem_type: _,
+                    }
+                    | OpCode::Cast {
+                        result: _,
+                        value: _,
+                        target: _,
+                    }
+                    | OpCode::Truncate {
+                        result: _,
+                        value: _,
+                        to_bits: _,
+                        from_bits: _,
+                    }
+                    | OpCode::Not {
+                        result: _,
+                        value: _,
+                    }
+                    | OpCode::Rangecheck {
+                        value: _,
+                        max_bits: _,
+                    }
+                    | OpCode::ToBits {
+                        result: _,
+                        value: _,
+                        endianness: _,
+                        count: _,
+                    }
+                    | OpCode::ToRadix {
+                        result: _,
+                        value: _,
+                        radix: _,
+                        endianness: _,
+                        count: _,
+                    }
+                    | OpCode::ReadGlobal {
+                        result: _,
+                        offset: _,
+                        result_type: _,
+                    } => {
                         new_instructions.push(instruction);
                     }
                     OpCode::AssertEq { lhs: _, rhs: _ } => {
@@ -292,7 +414,11 @@ impl UntaintControlFlow {
                         assert_eq!(ptr_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
-                    OpCode::ArrayGet { result: _, array: arr, index: idx } => {
+                    OpCode::ArrayGet {
+                        result: _,
+                        array: arr,
+                        index: idx,
+                    } => {
                         let arr_taint = function_taint
                             .get_value_taint(arr)
                             .toplevel_taint()
@@ -306,7 +432,12 @@ impl UntaintControlFlow {
                         assert_eq!(idx_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
-                    OpCode::ArraySet { result: _, array: arr, index: idx, value: _ } => {
+                    OpCode::ArraySet {
+                        result: _,
+                        array: arr,
+                        index: idx,
+                        value: _,
+                    } => {
                         let arr_taint = function_taint
                             .get_value_taint(arr)
                             .toplevel_taint()
@@ -320,11 +451,19 @@ impl UntaintControlFlow {
                         assert_eq!(idx_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
-                    OpCode::Alloc { result: _, elem_type: _, result_annotation: _ } => {
+                    OpCode::Alloc {
+                        result: _,
+                        elem_type: _,
+                        result_annotation: _,
+                    } => {
                         new_instructions.push(instruction);
                     }
 
-                    OpCode::Call { results: ret, function: tgt, mut args } => {
+                    OpCode::Call {
+                        results: ret,
+                        function: tgt,
+                        mut args,
+                    } => {
                         match block_taint {
                             Some(arg) => {
                                 args.push(arg);
@@ -334,7 +473,7 @@ impl UntaintControlFlow {
                         new_instructions.push(OpCode::Call {
                             results: ret,
                             function: tgt,
-                            args: args
+                            args: args,
                         });
                     }
 
@@ -361,7 +500,7 @@ impl UntaintControlFlow {
                                         kind: BinaryArithOpKind::And,
                                         result: result_val,
                                         lhs: tnt,
-                                        rhs: cond
+                                        rhs: cond,
                                     });
                                     result_val
                                 }
@@ -449,14 +588,14 @@ impl UntaintControlFlow {
                                 for ((res, _), (lhs, rhs)) in merge_params.iter().zip(
                                     args_passed_from_lhs.iter().zip(args_passed_from_rhs.iter()),
                                 ) {
-                                    function
-                                        .get_block_mut(merger_block)
-                                        .push_instruction(OpCode::Select {
+                                    function.get_block_mut(merger_block).push_instruction(
+                                        OpCode::Select {
                                             result: *res,
                                             cond: cond,
                                             if_t: *lhs,
-                                            if_f: *rhs
-                                        });
+                                            if_f: *rhs,
+                                        },
+                                    );
                                 }
                             }
                         }

@@ -5,7 +5,7 @@ use itertools::Itertools;
 use tracing::instrument;
 
 use crate::compiler::{
-    analysis::{symbolic_executor::{self, SymbolicExecutor}, types::TypeInfo}, ir::r#type::{Type, TypeExpr}, ssa::{BinaryArithOpKind, CastTarget, CmpKind, Endianness, FunctionId, MemOp, SeqType, SSA}, taint_analysis::ConstantTaint, Field
+    analysis::{symbolic_executor::{self, SymbolicExecutor}, types::TypeInfo}, ir::r#type::{Type, TypeExpr}, ssa::{BinaryArithOpKind, CastTarget, CmpKind, Endianness, FunctionId, MemOp, Radix, SeqType, SSA}, taint_analysis::ConstantTaint, Field
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -346,7 +346,7 @@ impl Value {
 
     fn to_radix(
         &self,
-        radix: &Value,
+        radix: &Radix<Value>,
         _endianness: &crate::compiler::ssa::Endianness,
         _size: usize,
         _instrumenter: &mut dyn OpInstrumenter,
@@ -688,21 +688,29 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
 
     fn to_radix(
         &self,
-        radix: &SpecSplitValue,
+        radix: &Radix<SpecSplitValue>,
         endianness: Endianness,
         size: usize,
         _tp: &Type<ConstantTaint>,
         instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
+        let spec_radix = match radix {
+            Radix::Dyn(v) => Radix::Dyn(v.specialized.clone()),
+            Radix::Bytes => Radix::Bytes,
+        };
+        let unspec_radix = match radix {
+            Radix::Dyn(v) => Radix::Dyn(v.unspecialized.clone()),
+            Radix::Bytes => Radix::Bytes,
+        };
         SpecSplitValue {
             unspecialized: self.unspecialized.to_radix(
-                &radix.unspecialized,
+                &unspec_radix,
                 &endianness,
                 size,
                 instrumenter.get_unspecialized(),
             ),
             specialized: self.specialized.to_radix(
-                &radix.specialized,
+                &spec_radix,
                 &endianness,
                 size,
                 instrumenter.get_specialized(),

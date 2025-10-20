@@ -1,0 +1,6 @@
+[package]
+name = "rangechecks"
+type = "bin"
+authors = [""]
+
+[dependencies]
