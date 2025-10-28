@@ -185,8 +185,8 @@ pub enum Table {
 }
 
 fn field_to_string(c: ark_bn254::Fr) -> String {
-    if c == -ark_bn254::Fr::ONE {
-        "-1".to_string()
+    if c.into_bigint() > crate::compiler::Field::MODULUS_MINUS_ONE_DIV_TWO {
+        format!("-{}", -c)
     } else {
         c.to_string()
     }
@@ -486,6 +486,94 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     }
 }
 
+pub struct ChallengeId(usize);
+
+pub struct WitnessLayout {
+    pub algebraic_size: usize,
+    pub multiplicities_size: usize,
+
+    pub challenges_size: usize,
+
+    pub tables_data_size: usize,
+    pub lookups_data_size: usize,
+}
+
+impl WitnessLayout {
+    pub fn algebraic_start(&self) -> usize {
+        0
+    }
+
+    pub fn algebraic_end(&self) -> usize {
+        self.algebraic_size
+    }
+
+    pub fn multiplicities_start(&self) -> usize {
+        self.algebraic_end()
+    }
+
+    pub fn multiplicities_end(&self) -> usize {
+        self.multiplicities_start() + self.multiplicities_size
+    }
+
+    pub fn challenges_start(&self) -> usize {
+        self.multiplicities_end()
+    }
+
+    pub fn challenges_end(&self) -> usize {
+        self.challenges_start() + self.challenges_size
+    }
+
+    pub fn next_challenge(&mut self) -> usize {
+        let challenge_id = self.challenges_end();
+        self.challenges_size += 1;
+        challenge_id
+    }
+
+    pub fn tables_data_start(&self) -> usize {
+        self.challenges_end()
+    }
+
+    pub fn tables_data_end(&self) -> usize {
+        self.tables_data_size + self.tables_data_start()
+    }
+
+    pub fn next_table_data(&mut self) -> usize {
+        let table_data_id = self.tables_data_end();
+        self.tables_data_size += 1;
+        table_data_id
+    }
+
+    pub fn lookups_data_start(&self) -> usize {
+        self.tables_data_end()
+    }
+
+    pub fn lookups_data_end(&self) -> usize {
+        self.lookups_data_size + self.lookups_data_start()
+    }
+
+    pub fn next_lookups_data(&mut self) -> usize {
+        let lookups_data_id = self.lookups_data_end();
+        self.lookups_data_size += 1;
+        lookups_data_id
+    }
+
+    pub fn size(&self) -> usize {
+        self.algebraic_size + self.multiplicities_size + self.challenges_size + self.tables_data_size + self.lookups_data_size
+    }
+}
+
+pub struct ConstraintsLayout {
+    pub algebraic_size: usize,
+    pub tables_data_size: usize,
+    pub lookups_data_size: usize,
+}
+
+pub struct R1CS {
+    pub witness_layout: WitnessLayout,
+    pub constraints_layout: ConstraintsLayout,
+    pub constraints: Vec<R1C>,
+}
+
 impl R1CGen {
     pub fn new() -> Self {
         Self {
@@ -561,5 +649,158 @@ impl R1CGen {
             }
             _ => panic!("unexpected main params"),
         }
+    }
+
+    pub fn seal(self) -> R1CS {
+        // Algebraic section
+        let mut witness_layout = WitnessLayout {
+            algebraic_size: self.next_witness,
+            multiplicities_size: 0,
+            challenges_size: 0,
+            tables_data_size: 0,
+            lookups_data_size: 0,
+        };
+        let mut constraints_layout = ConstraintsLayout {
+            algebraic_size: self.constraints.len(),
+            tables_data_size: 0,
+            lookups_data_size: 0,
+        };
+        let mut result = self.constraints;
+
+        // multiplicities init + compute the needed challenges
+        struct TableInfo {
+            multiplicities_witness_off: usize,
+            table: Table,
+            sum_constraint_idx: usize,
+        }
+        let mut table_infos = vec![];
+        let mut max_width = 0;
+        for table in self.tables.into_iter() {
+            match table {
+                Table::Range(len) => {
+                    let len = 1 << len;
+                    table_infos.push(TableInfo {
+                        multiplicities_witness_off: witness_layout.multiplicities_size
+                            + witness_layout.algebraic_size,
+                        table,
+                        sum_constraint_idx: 0,
+                    });
+                    max_width = max_width.max(1);
+                    witness_layout.multiplicities_size += len;
+                }
+                Table::OfElems(els) => {
+                    let len = els.len();
+                    table_infos.push(TableInfo {
+                        multiplicities_witness_off: witness_layout.multiplicities_size
+                            + witness_layout.algebraic_size,
+                        table: Table::OfElems(els),
+                        sum_constraint_idx: 0,
+                    });
+                    max_width = max_width.max(2);
+                    witness_layout.multiplicities_size += len;
+                }
+            }
+        }
+
+        if table_infos.is_empty() {
+            panic!("this is easy, do it later, just purely algebraic constraints");
+        }
+
+        // challenges init
+        let alpha = witness_layout.challenges_end();
+        witness_layout.challenges_size += 1;
+        let beta = if max_width > 1 {
+            let beta = witness_layout.challenges_end();
+            witness_layout.challenges_size += 1;
+            beta
+        } else {
+            usize::MAX // hoping this crashes soon if used
+        };
+
+        // tables contents init
+        for table_info in table_infos.iter_mut() {
+            match &table_info.table {
+                Table::Range(bits) => {
+                    // for each element i, we need one witness `y = mᵢ / (α - i)`
+                    // and one constraint saying `y * (α - i) - mᵢ = 0`
+                    let len = 1 << bits;
+                    let mut sum_lhs : LC = vec![];
+                    for i in 0..len {
+                        let y = witness_layout.next_table_data();
+                        let m = table_info.multiplicities_witness_off + i;
+                        result.push(R1C {
+                            a: vec![(y, ark_bn254::Fr::ONE)],
+                            b: vec![(alpha, ark_bn254::Fr::ONE), (0, -crate::compiler::Field::from(i as u64))],
+                            c: vec![(m, ark_bn254::Fr::ONE)],
+                        });
+                        sum_lhs.push((y, ark_bn254::Fr::ONE));
+                    }
+                    result.push(R1C {
+                        a: sum_lhs,
+                        b: vec![(0, ark_bn254::Fr::ONE)],
+                        c: vec![], // this is prepared for the looked up values to come into
+                    });
+                    table_info.sum_constraint_idx = result.len() - 1;
+                }
+                Table::OfElems(els) => {
+                    // for each element (i, v), we need two witness/constraint pairs:
+                    // -> x = β * v, with the constraint `β * v - x = 0`
+                    // -> y = mᵢ / (α - i - x), with the constraint `y * (α - i - x) - mᵢ = 0`
+                    let mut sum_lhs : LC = vec![];
+                    for (i, v) in els.iter().enumerate() {
+                        let x = witness_layout.next_table_data();
+                        let y = witness_layout.next_table_data();
+                        let m = table_info.multiplicities_witness_off + i;
+                        result.push(R1C {
+                            a: vec![(beta, crate::compiler::Field::ONE)],
+                            b: v.clone(),
+                            c: vec![(x, -crate::compiler::Field::ONE)],
+                        });
+                        result.push(R1C {
+                            a: vec![(y, ark_bn254::Fr::ONE)],
+                            b: vec![(alpha, ark_bn254::Fr::ONE), (0, -crate::compiler::Field::from(i as u64)), (x, -crate::compiler::Field::ONE)],
+                            c: vec![(m, crate::compiler::Field::ONE)],
+                        });
+                        sum_lhs.push((y, ark_bn254::Fr::ONE));
+                    }
+                    result.push(R1C {
+                        a: sum_lhs,
+                        b: vec![(0, ark_bn254::Fr::ONE)],
+                        c: vec![], // this is prepared for the looked up values to come into
+                    });
+                    table_info.sum_constraint_idx = result.len() - 1;
+                }
+            }
+        }
+
+        constraints_layout.tables_data_size = result.len() - constraints_layout.algebraic_size;
+
+        // lookups init
+        for lookup in self.lookups.into_iter() {
+            if lookup.elements.len() >= 2 {
+                todo!("wide tables");
+            }
+            
+            let y = witness_layout.next_lookups_data();
+            let mut b = vec![(alpha, ark_bn254::Fr::ONE)];
+            for (w, coeff) in lookup.elements[0].iter() {
+                b.push((*w, -*coeff));
+            }
+            result.push(R1C {
+                a: vec![(y, ark_bn254::Fr::ONE)],
+                b,
+                c: vec![(0, ark_bn254::Fr::ONE)],
+            });
+
+            result[table_infos[lookup.table_id].sum_constraint_idx].c.push((y, ark_bn254::Fr::ONE));
+        }
+
+        constraints_layout.lookups_data_size = result.len() - constraints_layout.algebraic_size - constraints_layout.tables_data_size;
+
+        return R1CS {
+            witness_layout,
+            constraints_layout,
+            constraints: result,
+        };
     }
 }

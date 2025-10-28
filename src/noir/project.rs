@@ -2,14 +2,14 @@
 
 use std::fs;
 
-use crate::compiler::passes::arithmetic_simplifier::ArithmeticSimplifier;
-use crate::compiler::passes::box_fields::BoxFields;
 use crate::compiler::Field;
 use crate::compiler::analysis::types::Types;
 use crate::compiler::codegen::CodeGen;
 use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::monomorphization::Monomorphization;
 use crate::compiler::pass_manager::PassManager;
+use crate::compiler::passes::arithmetic_simplifier::ArithmeticSimplifier;
+use crate::compiler::passes::box_fields::BoxFields;
 use crate::compiler::passes::common_subexpression_elimination::CSE;
 use crate::compiler::passes::condition_propagation::ConditionPropagation;
 use crate::compiler::passes::dead_code_elimination::{self, DCE};
@@ -239,15 +239,14 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         r1cs_phase_1.set_debug_output_dir(debug_output_dir.clone());
         r1cs_phase_1.run(&mut r1cs_ssa);
 
-
         let flow_analysis = FlowAnalysis::run(&r1cs_ssa);
         let type_info = Types::new().run(&r1cs_ssa, &flow_analysis);
 
         let mut r1cs_gen = R1CGen::new();
         r1cs_gen.run(&r1cs_ssa, &type_info);
-        let r1cs = r1cs_gen.clone().get_r1cs();
+        let r1cs = r1cs_gen.seal();
         let mut num_non_zero_terms = 0;
-        for r1c in r1cs.iter() {
+        for r1c in r1cs.constraints.iter() {
             for (_, coeff) in r1c.a.iter() {
                 if *coeff != ark_bn254::Fr::ZERO {
                     num_non_zero_terms += 1;
@@ -265,11 +264,25 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
             }
         }
         info!(
-            message = %"R1CS generated", num_constraints = r1cs.len(), witness_size = r1cs_gen.get_witness_size(), num_non_zero_terms = num_non_zero_terms
+            message = %"R1CS generated",
+            num_constraints = r1cs.constraints.len(),
+            num_terms = num_non_zero_terms,
+            algebraic_constraints = r1cs.constraints_layout.algebraic_size,
+            tables_constraints = r1cs.constraints_layout.tables_data_size,
+            lookups_constraints = r1cs.constraints_layout.lookups_data_size,
+            total_witness = r1cs.witness_layout.size()
+
         );
 
+        {
+            use std::io::Write;
+            let mut r1cs_file = fs::File::create(debug_output_dir.join("r1cs.txt")).unwrap();
+            for r1c in r1cs.constraints.iter() {
+                writeln!(r1cs_file, "{}", r1c).unwrap();
+            }
+        }
         // let mut r1cs_coeffs = vec![];
-        // for _ in 0..r1cs.len() {
+        // for _ in s0..r1cs.len() {
         //     r1cs_coeffs.push(ark_bn254::Fr::rand(&mut rand::thread_rng()));
         // }
 
@@ -398,7 +411,7 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         //             .join("\n"),
         //     )
         //     .unwrap();
-    
+
         // }
 
         // // let mut r1cs_phase_2 = PassManager::<ConstantTaint>::new(
