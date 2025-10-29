@@ -601,10 +601,9 @@ impl CodeGen {
                     _ = layouter.alloc_value(*r, &type_info.get_value_type(*r));
                     panic!("ToBits not yet implemented");
                 }
-                ssa::OpCode::ToRadix { result: r, value: _, radix: _, endianness: _, count: _ } => {
+                ssa::OpCode::ToRadix { result: r, value: _, radix, endianness, count: _ } => {
                     // This will bite me soon
-                    _ = layouter.alloc_value(*r, &type_info.get_value_type(*r));
-                    panic!("ToRadix not yet implemented");
+                    panic!("ToRadix not yet implemented {:?}, {:?}", radix, endianness);
                 }
                 ssa::OpCode::NextDCoeff { result: out } => {
                     let v = layouter.alloc_field(*out);

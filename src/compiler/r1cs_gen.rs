@@ -486,8 +486,6 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     }
 }
 
-pub struct ChallengeId(usize);
-
 pub struct WitnessLayout {
     pub algebraic_size: usize,
     pub multiplicities_size: usize,
@@ -703,7 +701,11 @@ impl R1CGen {
         }
 
         if table_infos.is_empty() {
-            panic!("this is easy, do it later, just purely algebraic constraints");
+            return R1CS {
+                witness_layout,
+                constraints_layout,
+                constraints: result,
+            };
         }
 
         // challenges init

@@ -274,13 +274,14 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         );
 
-        {
-            use std::io::Write;
-            let mut r1cs_file = fs::File::create(debug_output_dir.join("r1cs.txt")).unwrap();
-            for r1c in r1cs.constraints.iter() {
-                writeln!(r1cs_file, "{}", r1c).unwrap();
-            }
-        }
+        // {
+        //     use std::io::Write;
+        //     let mut r1cs_file = fs::File::create(debug_output_dir.join("r1cs.txt")).unwrap();
+        //     for r1c in r1cs.constraints.iter() {
+        //         writeln!(r1cs_file, "{}", r1c).unwrap();
+        //     }
+        // }
+
         // let mut r1cs_coeffs = vec![];
         // for _ in s0..r1cs.len() {
         //     r1cs_coeffs.push(ark_bn254::Fr::rand(&mut rand::thread_rng()));
@@ -328,12 +329,10 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
         // )
         // .unwrap();
 
-        // let mut r1cs_phase_1 = PassManager::<ConstantTaint>::new(
-        //     "r1cs_phase_1".to_string(),
+        // let mut r1cs_phase_2 = PassManager::<ConstantTaint>::new(
+        //     "r1cs_phase_2".to_string(),
         //     draw_cfg,
         //     vec![
-        //         Box::new(WitnessWriteToFresh::new()),
-        //         Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
         //         Box::new(BoxFields::new()),
         //         Box::new(RCInsertion::new()),
         //         Box::new(FixDoubleJumps::new()),
@@ -416,87 +415,87 @@ impl<'file_manager, 'parsed_files> Project<'file_manager, 'parsed_files> {
 
         // // let mut r1cs_phase_2 = PassManager::<ConstantTaint>::new(
 
-        // let r1cs_cleanup = R1CSCleanup::new();
-        // r1cs_cleanup.run(&mut custom_ssa);
+        let r1cs_cleanup = R1CSCleanup::new();
+        r1cs_cleanup.run(&mut custom_ssa);
 
-        // let mut pass_manager = PassManager::<ConstantTaint>::new(
-        //     "witgen".to_string(),
-        //     draw_cfg,
-        //     vec![
-        //         Box::new(RCInsertion::new()),
-        //         Box::new(FixDoubleJumps::new()),
-        //     ],
-        // );
-        // pass_manager.set_debug_output_dir(debug_output_dir.clone());
-        // pass_manager.run(&mut custom_ssa);
+        let mut pass_manager = PassManager::<ConstantTaint>::new(
+            "witgen".to_string(),
+            draw_cfg,
+            vec![
+                Box::new(RCInsertion::new()),
+                Box::new(FixDoubleJumps::new()),
+            ],
+        );
+        pass_manager.set_debug_output_dir(debug_output_dir.clone());
+        pass_manager.run(&mut custom_ssa);
 
-        // let flow_analysis = FlowAnalysis::run(&custom_ssa);
-        // let type_info = Types::new().run(&custom_ssa, &flow_analysis);
+        let flow_analysis = FlowAnalysis::run(&custom_ssa);
+        let type_info = Types::new().run(&custom_ssa, &flow_analysis);
 
-        // let codegen = CodeGen::new();
-        // let program = codegen.run(&custom_ssa, &flow_analysis, &type_info);
-        // fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
+        let codegen = CodeGen::new();
+        let program = codegen.run(&custom_ssa, &flow_analysis, &type_info);
+        fs::write(debug_output_dir.join("program.txt"), format!("{}", program)).unwrap();
 
-        // let mut binary = program.to_binary();
+        let mut binary = program.to_binary();
 
-        // println!("binary size: {} bytes", binary.len() * 8);
+        println!("binary size: {} bytes", binary.len() * 8);
 
-        // let (out_wit, out_a, out_b, out_c, instrumenter) = interpreter::run(
-        //     &mut binary,
-        //     r1cs_gen.get_witness_size(),
-        //     r1cs.len(),
-        //     &[
-        //         Field::from(2),
-        //         Field::from_str(
-        //             "8828670086143533245061788684574618475763043903694187796770609410437484537737",
-        //         )
-        //         .unwrap(),
-        //     ],
-        // );
+        let (out_wit, out_a, out_b, out_c, instrumenter) = interpreter::run(
+            &mut binary,
+            r1cs.witness_layout.size(),
+            r1cs.constraints.len(),
+            &[
+                Field::from(2),
+                Field::from_str(
+                    "8828670086143533245061788684574618475763043903694187796770609410437484537737",
+                )
+                .unwrap(),
+            ],
+        );
 
-        // let leftover_memory = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
-        // if leftover_memory > 0 {
-        //     warn!(message = %"VM memory leak detected", leftover_memory);
-        // } else {
-        //     info!(message = %"VM memory leak not detected");
-        // }
+        let leftover_memory = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
+        if leftover_memory > 0 {
+            warn!(message = %"VM memory leak detected", leftover_memory);
+        } else {
+            info!(message = %"VM memory leak not detected");
+        }
 
-        // fs::write(
-        //     debug_output_dir.join("witness_good.txt"),
-        //     out_wit
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("a_good.txt"),
-        //     out_a
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("b_good.txt"),
-        //     out_b
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
-        // fs::write(
-        //     debug_output_dir.join("c_good.txt"),
-        //     out_c
-        //         .iter()
-        //         .map(|w| w.to_string())
-        //         .collect::<Vec<_>>()
-        //         .join("\n"),
-        // )
-        // .unwrap();
+        fs::write(
+            debug_output_dir.join("witness.txt"),
+            out_wit
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("a.txt"),
+            out_a
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("b.txt"),
+            out_b
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        fs::write(
+            debug_output_dir.join("c.txt"),
+            out_c
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
 
         // let mut witness_gen = WitnessGen::new(public_witness);
         // witness_gen.run(&custom_ssa, &type_info);

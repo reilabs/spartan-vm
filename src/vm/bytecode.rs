@@ -767,6 +767,19 @@ mod def {
         let check = bigint.to_bits_le().iter().skip(max_bits).all(|b| !b);
         assert!(check);
     }
+    
+    #[opcode]
+    fn to_bytes_be(#[frame] val: Field, count: u64, #[out] res: *mut BoxedValue, vm: &mut VM) {
+        let val = ark_ff::PrimeField::into_bigint(val);
+        let r = BoxedValue::alloc(BoxedLayout::array(count as usize, false), vm);
+        let b = val.to_bytes_be();
+        unsafe {
+            for i in 0..count {
+                *r.array_idx(i as usize, 1) = b[i as usize] as u64;
+            }
+            *res = r;
+        }
+    }
 }
 
 pub struct Function {

@@ -1156,7 +1156,6 @@ pub enum OpCode<V> {
         kind: MemOp,
         value: ValueId,
     },
-
     WriteWitness {
         result: Option<ValueId>,
         value: ValueId,
