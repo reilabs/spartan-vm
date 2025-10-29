@@ -556,7 +556,11 @@ impl WitnessLayout {
     }
 
     pub fn size(&self) -> usize {
-        self.algebraic_size + self.multiplicities_size + self.challenges_size + self.tables_data_size + self.lookups_data_size
+        self.algebraic_size
+            + self.multiplicities_size
+            + self.challenges_size
+            + self.tables_data_size
+            + self.lookups_data_size
     }
 }
 
@@ -726,13 +730,16 @@ impl R1CGen {
                     // for each element i, we need one witness `y = mᵢ / (α - i)`
                     // and one constraint saying `y * (α - i) - mᵢ = 0`
                     let len = 1 << bits;
-                    let mut sum_lhs : LC = vec![];
+                    let mut sum_lhs: LC = vec![];
                     for i in 0..len {
                         let y = witness_layout.next_table_data();
                         let m = table_info.multiplicities_witness_off + i;
                         result.push(R1C {
                             a: vec![(y, ark_bn254::Fr::ONE)],
-                            b: vec![(alpha, ark_bn254::Fr::ONE), (0, -crate::compiler::Field::from(i as u64))],
+                            b: vec![
+                                (alpha, ark_bn254::Fr::ONE),
+                                (0, -crate::compiler::Field::from(i as u64)),
+                            ],
                             c: vec![(m, ark_bn254::Fr::ONE)],
                         });
                         sum_lhs.push((y, ark_bn254::Fr::ONE));
@@ -748,7 +755,7 @@ impl R1CGen {
                     // for each element (i, v), we need two witness/constraint pairs:
                     // -> x = β * v, with the constraint `β * v - x = 0`
                     // -> y = mᵢ / (α - i - x), with the constraint `y * (α - i - x) - mᵢ = 0`
-                    let mut sum_lhs : LC = vec![];
+                    let mut sum_lhs: LC = vec![];
                     for (i, v) in els.iter().enumerate() {
                         let x = witness_layout.next_table_data();
                         let y = witness_layout.next_table_data();
@@ -760,7 +767,11 @@ impl R1CGen {
                         });
                         result.push(R1C {
                             a: vec![(y, ark_bn254::Fr::ONE)],
-                            b: vec![(alpha, ark_bn254::Fr::ONE), (0, -crate::compiler::Field::from(i as u64)), (x, -crate::compiler::Field::ONE)],
+                            b: vec![
+                                (alpha, ark_bn254::Fr::ONE),
+                                (0, -crate::compiler::Field::from(i as u64)),
+                                (x, -crate::compiler::Field::ONE),
+                            ],
                             c: vec![(m, crate::compiler::Field::ONE)],
                         });
                         sum_lhs.push((y, ark_bn254::Fr::ONE));
@@ -782,7 +793,7 @@ impl R1CGen {
             if lookup.elements.len() >= 2 {
                 todo!("wide tables");
             }
-            
+
             let y = witness_layout.next_lookups_data();
             let mut b = vec![(alpha, ark_bn254::Fr::ONE)];
             for (w, coeff) in lookup.elements[0].iter() {
@@ -794,15 +805,40 @@ impl R1CGen {
                 c: vec![(0, ark_bn254::Fr::ONE)],
             });
 
-            result[table_infos[lookup.table_id].sum_constraint_idx].c.push((y, ark_bn254::Fr::ONE));
+            result[table_infos[lookup.table_id].sum_constraint_idx]
+                .c
+                .push((y, ark_bn254::Fr::ONE));
         }
 
-        constraints_layout.lookups_data_size = result.len() - constraints_layout.algebraic_size - constraints_layout.tables_data_size;
+        constraints_layout.lookups_data_size =
+            result.len() - constraints_layout.algebraic_size - constraints_layout.tables_data_size;
 
         return R1CS {
             witness_layout,
             constraints_layout,
             constraints: result,
         };
+    }
+}
+
+impl R1CS {
+    pub fn compute_derivatives(
+        &self,
+        coeffs: &[crate::compiler::Field],
+        res_a: &mut [crate::compiler::Field],
+        res_b: &mut [crate::compiler::Field],
+        res_c: &mut [crate::compiler::Field],
+    ) {
+        for (r1c, coeff) in self.constraints.iter().zip(coeffs.iter()) {
+            for (a_ix, a_coeff) in r1c.a.iter() {
+                res_a[*a_ix] += *a_coeff * *coeff;
+            }
+            for (b_ix, b_coeff) in r1c.b.iter() {
+                res_b[*b_ix] += *b_coeff * *coeff;
+            }
+            for (c_ix, c_coeff) in r1c.c.iter() {
+                res_c[*c_ix] += *c_coeff * *coeff;
+            }
+        }
     }
 }

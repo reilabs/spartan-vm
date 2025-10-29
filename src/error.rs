@@ -1,15 +1,7 @@
 use thiserror::Error;
 
-use crate::{noir};
-
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error(transparent)]
-    CompilationError(#[from] noir::error::compilation::Error),
-    #[error(transparent)]
-    EmitError(#[from] noir::error::emit::Error),
-    #[error(transparent)]
-    FileError(#[from] noir::error::file::Error),
     #[error(transparent)]
     NoirProjectError(#[from] nargo_toml::ManifestError),
     #[error("Package {package_name}:{} is missing dependency {dependency_name} in configuration", .package_version.as_ref().unwrap_or(&"missing".to_string()))]

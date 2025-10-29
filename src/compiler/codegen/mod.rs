@@ -601,7 +601,7 @@ impl CodeGen {
                     _ = layouter.alloc_value(*r, &type_info.get_value_type(*r));
                     panic!("ToBits not yet implemented");
                 }
-                ssa::OpCode::ToRadix { result: r, value: _, radix, endianness, count: _ } => {
+                ssa::OpCode::ToRadix { result: _r, value: _, radix, endianness, count: _ } => {
                     // This will bite me soon
                     panic!("ToRadix not yet implemented {:?}, {:?}", radix, endianness);
                 }

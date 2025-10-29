@@ -39,7 +39,7 @@ impl Monomorphization {
         ssa.set_entry_point(main_specialized_id);
 
         while let Some(work_item) = self.queue.pop_front() {
-            println!("Processing work item: {:?}", work_item);
+            // println!("Processing work item: {:?}", work_item);
 
             let WorkItem {
                 function_id,
