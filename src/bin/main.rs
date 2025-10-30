@@ -1,5 +1,6 @@
 use std::{fs, path::PathBuf, process::ExitCode};
 
+use ark_ff::{AdditiveGroup as _, UniformRand as _};
 use clap::Parser;
 use spartan_vm::{Error, Project, compiler::Field, driver::Driver, vm::interpreter};
 use tracing::{error, info, warn};
@@ -140,62 +141,30 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     )
     .unwrap();
 
-    // STUFF I WILL NEED TO BRING BACK WITGEN RUNNER
+    let mut ad_binary = driver.compile_ad().unwrap();
 
-    // let mut witness_gen = WitnessGen::new(public_witness);
-    // witness_gen.run(&custom_ssa, &type_info);
-    // let witness = witness_gen.get_witness();
-    // fs::write(
-    //     debug_output_dir.join("witness.txt"),
-    //     witness
-    //         .iter()
-    //         .map(|w| w.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
-    // fs::write(
-    //     debug_output_dir.join("a.txt"),
-    //     witness_gen
-    //         .get_a()
-    //         .iter()
-    //         .map(|w| w.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
-    // fs::write(
-    //     debug_output_dir.join("b.txt"),
-    //     witness_gen
-    //         .get_b()
-    //         .iter()
-    //         .map(|w| w.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
-    // fs::write(
-    //     debug_output_dir.join("c.txt"),
-    //     witness_gen
-    //         .get_c()
-    //         .iter()
-    //         .map(|w| w.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
+    let mut ad_coeffs: Vec<Field> = vec![];
+    for _ in 0..r1cs.constraints.len() {
+        ad_coeffs.push(ark_bn254::Fr::rand(&mut rand::thread_rng()));
+    }
 
-    // let success = r1cs_gen.verify(&witness);
-    // if success {
-    //     info!(message = %"R1CS verification succeeded");
-    // } else {
-    //     warn!(message = %"R1CS verification failed");
-    // }
+    let (ad_a, ad_b, ad_c, ad_instrumenter) = interpreter::run_ad(&mut ad_binary, r1cs.witness_layout.size(), &ad_coeffs);
 
-    // let public_witness: Vec<_> = args.public_witness.iter().map(|s| ark_bn254::Fr::from_str(s).unwrap()).collect();
-    // println!("Public witness: {:?}", public_witness);
+    let leftover_memory = ad_instrumenter
+        .plot(&driver.get_debug_output_dir().join("vm_memory.png"));
+    if leftover_memory > 0 {
+        warn!(message = %"AD VM memory leak detected", leftover_memory);
+    } else {
+        info!(message = %"AD VM memory leak not detected");
+    }
 
-    // project.extract(public_witness)?;
+    let correct = r1cs.check_ad_output(&ad_coeffs, &ad_a, &ad_b, &ad_c);
+    if !correct {
+        error!(message = %"AD output is incorrect");
+    } else {
+        info!(message = %"AD output is correct");
+    }
+
     Ok(ExitCode::SUCCESS)
 }
 

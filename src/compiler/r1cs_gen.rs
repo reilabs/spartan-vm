@@ -923,4 +923,36 @@ impl R1CS {
         }
         return true;
     }
+
+    pub fn check_ad_output(&self, coeffs: &[crate::compiler::Field], a: &[crate::compiler::Field], b: &[crate::compiler::Field], c: &[crate::compiler::Field]) -> bool {
+        let mut a = a.to_vec();
+        let mut b = b.to_vec();
+        let mut c = c.to_vec();
+        for (r1c, coeff) in self.constraints.iter().zip(coeffs.iter()) {
+            for (a_ix, a_coeff) in r1c.a.iter() {
+                a[*a_ix] -= *a_coeff * *coeff;
+            }
+            for (b_ix, b_coeff) in r1c.b.iter() {
+                b[*b_ix] -= *b_coeff * *coeff;
+            }
+            for (c_ix, c_coeff) in r1c.c.iter() {
+                c[*c_ix] -= *c_coeff * *coeff;
+            }
+        }
+        for i in 0..a.len() {
+            if a[i] != crate::compiler::Field::ZERO {
+                error!(message = %"Wrong A deriv for witness", index = i, actual = a[i].to_string(), expected = 0.to_string());
+                return false;
+            }
+            if b[i] != crate::compiler::Field::ZERO {
+                error!(message = %"Wrong B deriv for witness", index = i, actual = b[i].to_string(), expected = 0.to_string());
+                return false;
+            }
+            if c[i] != crate::compiler::Field::ZERO {
+                error!(message = %"Wrong C deriv for witness", index = i, actual = c[i].to_string(), expected = 0.to_string());
+                return false;
+            }
+        }
+        return true;
+    }
 }

@@ -140,6 +140,9 @@ impl BoxFields {
                                 sensitivity: new_val
                             });
                         }
+                        OpCode::Lookup { target, keys, results } => {
+                            todo!()
+                        }
                         OpCode::Cmp { kind, result: r, lhs: a, rhs: b } => {
                             let a_type = type_info.get_value_type(a);
                             let b_type = type_info.get_value_type(b);
@@ -363,7 +366,6 @@ impl BoxFields {
                         | OpCode::BoxField { .. }
                         | OpCode::UnboxField { .. }
                         | OpCode::MulConst { .. }
-                        | OpCode::Lookup { .. }
                         | OpCode::BumpD { .. } => new_instructions.push(instruction),
                     };
                 }

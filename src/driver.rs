@@ -6,9 +6,20 @@ use tracing::info;
 use crate::{
     Project,
     compiler::{
-        Field, analysis::types::Types, codegen::CodeGen, flow_analysis::FlowAnalysis, ir::r#type::Empty, monomorphization::Monomorphization, pass_manager::PassManager, passes::{
-            arithmetic_simplifier::ArithmeticSimplifier, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, specializer::Specializer, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
-        }, r1cs_gen::{R1CGen, R1CS}, ssa::{DefaultSsaAnnotator, SSA}, taint_analysis::{ConstantTaint, TaintAnalysis}, untaint_control_flow::UntaintControlFlow
+        Field,
+        analysis::types::Types,
+        codegen::CodeGen,
+        flow_analysis::FlowAnalysis,
+        ir::r#type::Empty,
+        monomorphization::Monomorphization,
+        pass_manager::PassManager,
+        passes::{
+            arithmetic_simplifier::ArithmeticSimplifier, box_fields::BoxFields, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, specializer::Specializer, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
+        },
+        r1cs_gen::{R1CGen, R1CS},
+        ssa::{DefaultSsaAnnotator, SSA},
+        taint_analysis::{ConstantTaint, TaintAnalysis},
+        untaint_control_flow::UntaintControlFlow,
     },
 };
 
@@ -17,6 +28,7 @@ pub struct Driver {
     initial_ssa: Option<SSA<Empty>>,
     monomorphized_ssa: Option<SSA<ConstantTaint>>,
     explicit_witness_ssa: Option<SSA<ConstantTaint>>,
+    r1cs_ssa: Option<SSA<ConstantTaint>>,
     draw_cfg: bool,
 }
 
@@ -37,6 +49,7 @@ impl Driver {
             initial_ssa: None,
             monomorphized_ssa: None,
             explicit_witness_ssa: None,
+            r1cs_ssa: None,
             draw_cfg,
         }
     }
@@ -228,6 +241,7 @@ impl Driver {
                 }
             }
         }
+        self.r1cs_ssa = Some(r1cs_ssa);
         info!(
             message = %"R1CS generated",
             num_constraints = r1cs.constraints.len(),
@@ -263,11 +277,45 @@ impl Driver {
 
         let codegen = CodeGen::new();
         let program = codegen.run(&ssa, &flow_analysis, &type_info);
-        fs::write(self.get_debug_output_dir().join("witgen_bytecode.txt"), format!("{}", program)).unwrap();
+        fs::write(
+            self.get_debug_output_dir().join("witgen_bytecode.txt"),
+            format!("{}", program),
+        )
+        .unwrap();
 
         let binary = program.to_binary();
 
         info!(message = %"Witgen binary generated", binary_size = binary.len() * 8);
+
+        Ok(binary)
+    }
+
+    pub fn compile_ad(&self) -> Result<Vec<u64>, Error> {
+        let mut ssa = self.r1cs_ssa.clone().unwrap();
+        let mut ad_pm = PassManager::<ConstantTaint>::new(
+            "ad".to_string(),
+            self.draw_cfg,
+            vec![
+                Box::new(BoxFields::new()),
+                Box::new(RCInsertion::new()),
+                Box::new(FixDoubleJumps::new()),
+            ],
+        );
+        ad_pm.set_debug_output_dir(self.get_debug_output_dir().clone());
+        ad_pm.run(&mut ssa);
+        let flow_analysis = FlowAnalysis::run(&ssa);
+        let type_info = Types::new().run(&ssa, &flow_analysis);
+
+        let codegen = CodeGen::new();
+        let program = codegen.run(&ssa, &flow_analysis, &type_info);
+        fs::write(
+            self.get_debug_output_dir().join("ad_bytecode.txt"),
+            format!("{}", program),
+        )
+        .unwrap();
+        let binary = program.to_binary();
+
+        info!(message = %"AD binary generated", binary_size = binary.len() * 8);
 
         Ok(binary)
     }
