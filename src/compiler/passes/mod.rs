@@ -1,3 +1,4 @@
+pub mod arithmetic_simplifier;
 pub mod box_fields;
 pub mod common_subexpression_elimination;
 pub mod condition_propagation;
@@ -10,4 +11,4 @@ pub mod pull_into_assert;
 pub mod rc_insertion;
 pub mod specializer;
 pub mod witness_write_to_fresh;
-pub mod arithmetic_simplifier;
+pub mod witness_write_to_void;

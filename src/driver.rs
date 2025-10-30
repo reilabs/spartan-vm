@@ -7,8 +7,8 @@ use crate::{
     Project,
     compiler::{
         Field, analysis::types::Types, codegen::CodeGen, flow_analysis::FlowAnalysis, ir::r#type::Empty, monomorphization::Monomorphization, pass_manager::PassManager, passes::{
-            arithmetic_simplifier::ArithmeticSimplifier, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, specializer::Specializer, witness_write_to_fresh::WitnessWriteToFresh
-        }, r1cs_cleanup::R1CSCleanup, r1cs_gen::{R1CGen, R1CS}, ssa::{DefaultSsaAnnotator, SSA}, taint_analysis::{ConstantTaint, TaintAnalysis}, untaint_control_flow::UntaintControlFlow
+            arithmetic_simplifier::ArithmeticSimplifier, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, specializer::Specializer, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
+        }, r1cs_gen::{R1CGen, R1CS}, ssa::{DefaultSsaAnnotator, SSA}, taint_analysis::{ConstantTaint, TaintAnalysis}, untaint_control_flow::UntaintControlFlow
     },
 };
 
@@ -244,13 +244,13 @@ impl Driver {
 
     pub fn compile_witgen(&self) -> Result<Vec<u64>, Error> {
         let mut ssa = self.explicit_witness_ssa.clone().unwrap();
-        let r1cs_cleanup = R1CSCleanup::new();
-        r1cs_cleanup.run(&mut ssa);
 
         let mut pass_manager = PassManager::<ConstantTaint>::new(
             "witgen".to_string(),
             self.draw_cfg,
             vec![
+                Box::new(WitnessWriteToVoid::new()),
+                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
                 Box::new(RCInsertion::new()),
                 Box::new(FixDoubleJumps::new()),
             ],

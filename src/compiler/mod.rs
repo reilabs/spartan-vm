@@ -6,7 +6,6 @@ pub mod ir;
 pub mod monomorphization;
 pub mod pass_manager;
 pub mod passes;
-pub mod r1cs_cleanup;
 pub mod r1cs_gen;
 pub mod ssa;
 pub mod ssa_gen;

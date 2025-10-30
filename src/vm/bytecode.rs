@@ -257,17 +257,47 @@ impl AllocationInstrumenter {
     }
 }
 
-pub struct VM {
+pub struct TableInfo {
+    pub multiplicities_wit: *mut Field,
+    pub num_indices: usize,
+    pub num_values: usize,
+    pub length: usize,
+    pub elem_inverses_witness_section_offset: usize,
+    pub elem_inverses_constraint_section_offset: usize,
+}
+
+#[derive(Copy, Clone)]
+pub struct FwdArrays {
     pub out_a: *mut Field,
     pub out_b: *mut Field,
     pub out_c: *mut Field,
-    pub out_wit: *mut Field,
+    pub algebraic_witness: *mut Field,
+    pub multiplicities_witness: *mut Field,
+    pub lookups_a: *mut Field,
+    pub lookups_b: *mut Field,
+    pub elem_inverses_constraint_section_offset: usize,
+    pub elem_inverses_witness_section_offset: usize,
+}
+
+#[derive(Copy, Clone)]
+pub struct AdArrays {
     pub out_da: *mut Field,
     pub out_db: *mut Field,
     pub out_dc: *mut Field,
     pub ad_coeffs: *const Field,
     pub current_wit_off: usize,
+}
+
+pub union Arrays {
+    pub as_forward: FwdArrays,
+    pub as_ad: AdArrays,
+}
+
+pub struct VM {
+    pub data: Arrays,
     pub allocation_instrumenter: AllocationInstrumenter,
+    pub tables: Vec<TableInfo>,
+    pub rgchk_8: Option<usize>,
 }
 
 impl VM {
@@ -275,19 +305,30 @@ impl VM {
         out_a: *mut Field,
         out_b: *mut Field,
         out_c: *mut Field,
-        out_wit: *mut Field,
+        algebraic_witness: *mut Field,
+        multiplicities_witness: *mut Field,
+        lookups_a: *mut Field,
+        lookups_b: *mut Field,
+        elem_inverses_constraint_section_offset: usize,
+        elem_inverses_witness_section_offset: usize,
     ) -> Self {
         Self {
-            out_a,
-            out_b,
-            out_c,
-            out_wit,
-            out_da: std::ptr::null_mut(),
-            out_db: std::ptr::null_mut(),
-            out_dc: std::ptr::null_mut(),
-            ad_coeffs: std::ptr::null(),
-            current_wit_off: 0,
+            data: Arrays {
+                as_forward: FwdArrays {
+                    out_a,
+                    out_b,
+                    out_c,
+                    algebraic_witness,
+                    multiplicities_witness,
+                    lookups_b,
+                    lookups_a,
+                    elem_inverses_constraint_section_offset,
+                    elem_inverses_witness_section_offset,
+                },
+            },
             allocation_instrumenter: AllocationInstrumenter::new(),
+            tables: vec![],
+            rgchk_8: None,
         }
     }
 
@@ -298,16 +339,18 @@ impl VM {
         ad_coeffs: *const Field,
     ) -> Self {
         Self {
-            out_a: std::ptr::null_mut(),
-            out_b: std::ptr::null_mut(),
-            out_c: std::ptr::null_mut(),
-            out_wit: std::ptr::null_mut(),
-            out_da,
-            out_db,
-            out_dc,
-            ad_coeffs,
-            current_wit_off: 1,
+            data: Arrays {
+                as_ad: AdArrays {
+                    out_da,
+                    out_db,
+                    out_dc,
+                    ad_coeffs,
+                    current_wit_off: 1,
+                },
+            },
             allocation_instrumenter: AllocationInstrumenter::new(),
+            tables: vec![],
+            rgchk_8: None,
         }
     }
 
@@ -394,15 +437,15 @@ mod def {
         // println!("r1cs");
 
         unsafe {
-            *vm.out_a = a;
-            *vm.out_b = b;
-            *vm.out_c = c;
+            *vm.data.as_forward.out_a = a;
+            *vm.data.as_forward.out_b = b;
+            *vm.data.as_forward.out_c = c;
         }
 
         unsafe {
-            vm.out_a = vm.out_a.offset(1);
-            vm.out_b = vm.out_b.offset(1);
-            vm.out_c = vm.out_c.offset(1);
+            vm.data.as_forward.out_a = vm.data.as_forward.out_a.offset(1);
+            vm.data.as_forward.out_b = vm.data.as_forward.out_b.offset(1);
+            vm.data.as_forward.out_c = vm.data.as_forward.out_c.offset(1);
         };
         let pc = unsafe { pc.offset(4) };
         dispatch(pc, frame, vm);
@@ -411,8 +454,8 @@ mod def {
     #[raw_opcode]
     fn write_witness(pc: *const u64, frame: Frame, vm: &mut VM, #[frame] val: Field) {
         unsafe {
-            *vm.out_wit = val;
-            vm.out_wit = vm.out_wit.offset(1)
+            *vm.data.as_forward.algebraic_witness = val;
+            vm.data.as_forward.algebraic_witness = vm.data.as_forward.algebraic_witness.offset(1);
         };
         let pc = unsafe { pc.offset(2) };
         dispatch(pc, frame, vm);
@@ -686,15 +729,15 @@ mod def {
     #[opcode]
     fn next_d_coeff(#[out] v: *mut Field, vm: &mut VM) {
         unsafe {
-            *v = *vm.ad_coeffs;
-            vm.ad_coeffs = vm.ad_coeffs.offset(1);
+            *v = *vm.data.as_ad.ad_coeffs;
+            vm.data.as_ad.ad_coeffs = vm.data.as_ad.ad_coeffs.offset(1);
         };
     }
 
     #[opcode]
     fn fresh_witness(#[out] res: *mut BoxedValue, vm: &mut VM) {
-        let index = vm.current_wit_off as u64;
-        vm.current_wit_off += 1;
+        let index = unsafe { vm.data.as_ad.current_wit_off as u64 };
+        unsafe { vm.data.as_ad.current_wit_off += 1 };
         let val = BoxedValue::alloc(BoxedLayout::ad_witness(), vm);
         let d = val.as_ad_witness();
         unsafe {
@@ -767,17 +810,54 @@ mod def {
         let check = bigint.to_bits_le().iter().skip(max_bits).all(|b| !b);
         assert!(check);
     }
-    
+
     #[opcode]
-    fn to_bytes_be(#[frame] val: Field, count: u64, #[out] res: *mut BoxedValue, vm: &mut VM) {
+    fn to_bytes_be_lt_8(#[frame] val: Field, count: u64, #[out] res: *mut BoxedValue, vm: &mut VM) {
         let val = ark_ff::PrimeField::into_bigint(val);
+        let low = val.0[0];
         let r = BoxedValue::alloc(BoxedLayout::array(count as usize, false), vm);
-        let b = val.to_bytes_be();
         unsafe {
             for i in 0..count {
-                *r.array_idx(i as usize, 1) = b[i as usize] as u64;
+                *r.array_idx((count - i - 1) as usize, 1) = (low >> (i * 8)) & 0xFF;
             }
             *res = r;
+        }
+    }
+
+    #[opcode]
+    fn to_bits_le(#[out] res: *mut BoxedValue, #[frame] val: Field, count: u64, vm: &mut VM) {
+        panic!("to_bits_be_lt_8 not implemented");
+    }
+
+    #[opcode]
+    fn rngchk_8_field(#[frame] val: Field, vm: &mut VM) {
+        if vm.rgchk_8.is_none() {
+            let table_info = TableInfo {
+                multiplicities_wit: unsafe { vm.data.as_forward.multiplicities_witness },
+                num_indices: 1,
+                num_values: 0,
+                length: 256,
+                elem_inverses_constraint_section_offset: unsafe { vm.data.as_forward.elem_inverses_constraint_section_offset },
+                elem_inverses_witness_section_offset: unsafe { vm.data.as_forward.elem_inverses_witness_section_offset },
+            };
+            vm.rgchk_8 = Some(vm.tables.len());
+            vm.tables.push(table_info);
+            unsafe {
+                vm.data.as_forward.multiplicities_witness = vm.data.as_forward.multiplicities_witness.offset(256);
+                vm.data.as_forward.elem_inverses_constraint_section_offset += 257;
+                vm.data.as_forward.elem_inverses_witness_section_offset += 256;
+            }
+        }
+        let table_idx = *vm.rgchk_8.as_ref().unwrap();
+        let table_info = &vm.tables[table_idx];
+        let val_u64 = ark_ff::PrimeField::into_bigint(val).0[0];
+        unsafe {
+            let ptr = table_info.multiplicities_wit.offset(val_u64 as isize);
+            *(ptr as *mut u64) += 1; // Use u64 for counting, convert to field later
+            *(vm.data.as_forward.lookups_a as *mut u64) = table_idx as u64;
+            vm.data.as_forward.lookups_a = vm.data.as_forward.lookups_a.offset(1);
+            *(vm.data.as_forward.lookups_b as *mut u64) = val_u64;
+            vm.data.as_forward.lookups_b = vm.data.as_forward.lookups_b.offset(1);
         }
     }
 }

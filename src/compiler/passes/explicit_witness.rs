@@ -269,7 +269,7 @@ impl ExplicitWitness {
                                 new_instructions.push(OpCode::ToRadix { result: bytes_val, value: value, radix: Radix::Bytes, endianness: Endianness::Big, count: max_bits / 8 });
                                 let chunks = max_bits / 8;
                                 let mut result = function.push_field_const(Field::ZERO);
-                                let two = function.push_field_const(Field::from(2));
+                                let two_to_8 = function.push_field_const(Field::from(256));
                                 let one = function.push_field_const(Field::from(1));
                                 for i in 0..chunks {
                                     let byte = function.fresh_value();
@@ -279,11 +279,11 @@ impl ExplicitWitness {
                                     let byte_wit = function.fresh_value();
                                     new_instructions.push(OpCode::WriteWitness { result: Some(byte_wit), value: byte_field, witness_annotation: ConstantTaint::Witness });
                                     new_instructions.push(OpCode::Lookup { target: LookupTarget::Rangecheck(8), keys: vec![byte_wit], results: vec![] });
-                                    let sum = function.fresh_value();
-                                    new_instructions.push(OpCode::BinaryArithOp { kind: BinaryArithOpKind::Add, result: sum, lhs: result, rhs: byte_wit });
-                                    let double = function.fresh_value();
-                                    new_instructions.push(OpCode::BinaryArithOp { kind: BinaryArithOpKind::Mul, result: double, lhs: sum, rhs: two });
-                                    result = double;
+                                    let shift_prev_res = function.fresh_value();
+                                    new_instructions.push(OpCode::BinaryArithOp { kind: BinaryArithOpKind::Mul, result: shift_prev_res, lhs: result, rhs: two_to_8 });
+                                    let new_result = function.fresh_value();
+                                    new_instructions.push(OpCode::BinaryArithOp { kind: BinaryArithOpKind::Add, result: new_result, lhs: shift_prev_res, rhs: byte_wit });
+                                    result = new_result;
                                 }
                                 new_instructions.push(OpCode::Constrain { a: result, b: one, c: value });
                             }

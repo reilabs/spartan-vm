@@ -1,17 +1,30 @@
 use crate::compiler::{
-    passes::fix_double_jumps::ValueReplacements,
-    ssa::{OpCode, SSA},
-    taint_analysis::ConstantTaint,
+    pass_manager::{Pass, PassInfo, PassManager}, passes::fix_double_jumps::ValueReplacements, ssa::{OpCode, SSA}, taint_analysis::ConstantTaint
 };
 
-pub struct R1CSCleanup {}
+pub struct WitnessWriteToVoid {}
 
-impl R1CSCleanup {
+impl Pass<ConstantTaint> for WitnessWriteToVoid {
+    fn run(&self, ssa: &mut SSA<ConstantTaint>, _pass_manager: &PassManager<ConstantTaint>) {
+        self.do_run(ssa);
+    }
+    fn pass_info(&self) -> PassInfo {
+        PassInfo {
+            name: "witness_write_to_void",
+            needs: vec![],
+        }
+    }
+    fn invalidates_cfg(&self) -> bool {
+        false
+    }
+}
+
+impl WitnessWriteToVoid {
     pub fn new() -> Self {
         Self {}
     }
 
-    pub fn run(&self, ssa: &mut SSA<ConstantTaint>) {
+    fn do_run(&self, ssa: &mut SSA<ConstantTaint>) {
         for (_, function) in ssa.iter_functions_mut() {
             let mut replacements = ValueReplacements::new();
 

@@ -1,7 +1,8 @@
 use std::{fs, path::PathBuf, process::ExitCode};
 
 use clap::Parser;
-use spartan_vm::{Error, Project, driver::Driver};
+use spartan_vm::{Error, Project, compiler::Field, driver::Driver, vm::interpreter};
+use tracing::{error, info, warn};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -67,65 +68,79 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         }
     }
 
-    let _binary = driver.compile_witgen().unwrap();
+    let mut binary = driver.compile_witgen().unwrap();
+
+    let witgen_result = interpreter::run(
+        &mut binary,
+        r1cs.witness_layout,
+        r1cs.constraints_layout,
+        &[Field::from(253)],
+    );
+
+    let correct = r1cs.check_witgen_output(
+        &witgen_result.out_wit_pre_comm,
+        &witgen_result.out_wit_post_comm,
+        &witgen_result.out_a,
+        &witgen_result.out_b,
+        &witgen_result.out_c,
+    );
+    if !correct {
+        error!(message = %"Witgen output is incorrect");
+    } else {
+        info!(message = %"Witgen output is correct");
+    }
+
+    let leftover_memory = witgen_result
+        .instrumenter
+        .plot(&driver.get_debug_output_dir().join("vm_memory.png"));
+    if leftover_memory > 0 {
+        warn!(message = %"VM memory leak detected", leftover_memory);
+    } else {
+        info!(message = %"VM memory leak not detected");
+    }
+
+    fs::write(
+        driver.get_debug_output_dir().join("witness_pre_comm.txt"),
+        witgen_result
+            .out_wit_pre_comm
+            .iter()
+            .map(|w| w.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    fs::write(
+        driver.get_debug_output_dir().join("a.txt"),
+        witgen_result
+            .out_a
+            .iter()
+            .map(|w| w.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    fs::write(
+        driver.get_debug_output_dir().join("b.txt"),
+        witgen_result
+            .out_b
+            .iter()
+            .map(|w| w.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    fs::write(
+        driver.get_debug_output_dir().join("c.txt"),
+        witgen_result
+            .out_c
+            .iter()
+            .map(|w| w.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
 
     // STUFF I WILL NEED TO BRING BACK WITGEN RUNNER
-    // let (out_wit, out_a, out_b, out_c, instrumenter) = interpreter::run(
-    //     &mut binary,
-    //     r1cs.witness_layout.size(),
-    //     r1cs.constraints.len(),
-    //     &[
-    //         Field::from(2),
-    //         Field::from_str(
-    //             "8828670086143533245061788684574618475763043903694187796770609410437484537737",
-    //         )
-    //         .unwrap(),
-    //     ],
-    // );
-
-    // let leftover_memory = instrumenter.plot(&debug_output_dir.join("vm_memory.png"));
-    // if leftover_memory > 0 {
-    //     warn!(message = %"VM memory leak detected", leftover_memory);
-    // } else {
-    //     info!(message = %"VM memory leak not detected");
-    // }
-
-    // fs::write(
-    //     debug_output_dir.join("witness.txt"),
-    //     out_wit
-    //         .iter()
-    //         .map(|w| w.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
-    // fs::write(
-    //     debug_output_dir.join("a.txt"),
-    //     out_a
-    //         .iter()
-    //         .map(|w| w.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
-    // fs::write(
-    //     debug_output_dir.join("b.txt"),
-    //     out_b
-    //         .iter()
-    //         .map(|w| w.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
-    // fs::write(
-    //     debug_output_dir.join("c.txt"),
-    //     out_c
-    //         .iter()
-    //         .map(|w| w.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
 
     // let mut witness_gen = WitnessGen::new(public_witness);
     // witness_gen.run(&custom_ssa, &type_info);

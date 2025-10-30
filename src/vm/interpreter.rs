@@ -2,24 +2,27 @@ use std::{
     alloc::{self, Layout},
     marker::PhantomData,
     mem,
+    str::FromStr,
 };
 
-use ark_ff::{AdditiveGroup, BigInt, Fp};
+use ark_ff::{AdditiveGroup, BigInt, Field as _, Fp, PrimeField as _};
 use tracing::instrument;
 
 use crate::{
-    compiler::Field,
-    vm::{array::BoxedValue, bytecode::{self, AllocationInstrumenter, AllocationType, OpCode, VM}},
+    compiler::{
+        Field,
+        r1cs_gen::{ConstraintsLayout, WitnessLayout},
+    },
+    vm::{
+        array::BoxedValue,
+        bytecode::{self, AllocationInstrumenter, AllocationType, OpCode, VM},
+    },
 };
 
 pub type Handler = fn(*const u64, Frame, &mut VM);
 
 #[inline(always)]
-pub fn dispatch(
-    pc: *const u64,
-    frame: Frame,
-    vm: &mut VM,
-) {
+pub fn dispatch(pc: *const u64, frame: Frame, vm: &mut VM) {
     let opcode: Handler = unsafe { mem::transmute(*pc) };
     opcode(pc, frame, vm);
 }
@@ -37,7 +40,8 @@ impl Frame {
             *data = size;
             *data.offset(1) = parent.data as u64;
             let data = data.offset(2);
-            vm.allocation_instrumenter.alloc(AllocationType::Stack, size as usize + 2);
+            vm.allocation_instrumenter
+                .alloc(AllocationType::Stack, size as usize + 2);
             Frame { data }
         }
     }
@@ -52,7 +56,8 @@ impl Frame {
                 real_data as *mut u8,
                 Layout::array::<u64>(size as usize + 2).unwrap(),
             );
-            vm.allocation_instrumenter.free(AllocationType::Stack, size as usize + 2);
+            vm.allocation_instrumenter
+                .free(AllocationType::Stack, size as usize + 2);
             Frame { data: parent_data }
         }
     }
@@ -152,23 +157,64 @@ fn prepare_dispatch(program: &mut [u64]) {
     }
 }
 
+pub struct WitgenResult {
+    pub out_wit_pre_comm: Vec<Field>,
+    pub out_wit_post_comm: Vec<Field>,
+    pub out_a: Vec<Field>,
+    pub out_b: Vec<Field>,
+    pub out_c: Vec<Field>,
+    pub instrumenter: AllocationInstrumenter,
+}
+
+fn fix_multiplicities_section(wit: &mut [Field], witness_layout: WitnessLayout) {
+    for i in witness_layout.multiplicities_start()..witness_layout.multiplicities_end() {
+        // We used this as a *mut u64 when writing multiplicities, so we need to convert to an actual field element
+        wit[i] = Field::from(wit[i].0.0[0]);
+    }
+}
+
 #[instrument(skip_all, name = "Interpreter::run")]
 pub fn run(
     program: &[u64],
-    witness_size: usize,
-    r1cs_size: usize,
+    witness_layout: WitnessLayout,
+    constraints_layout: ConstraintsLayout,
     inputs: &[Field],
-) -> (Vec<Field>, Vec<Field>, Vec<Field>, Vec<Field>, AllocationInstrumenter) {
-
-    let mut out_wit = vec![Field::ZERO; witness_size];
-    let mut out_a = vec![Field::ZERO; r1cs_size];
-    let mut out_b = vec![Field::ZERO; r1cs_size];
-    let mut out_c = vec![Field::ZERO; r1cs_size];
+) -> WitgenResult {
+    let mut out_a = vec![Field::ZERO; constraints_layout.size()];
+    let mut out_b = vec![Field::ZERO; constraints_layout.size()];
+    let mut out_c = vec![Field::ZERO; constraints_layout.size()];
+    let mut out_wit_pre_comm = vec![Field::ZERO; witness_layout.pre_commitment_size()];
+    out_wit_pre_comm[0] = Field::ONE;
+    for i in 0..inputs.len() {
+        out_wit_pre_comm[1 + i] = inputs[i];
+    }
+    let mut out_wit_post_comm = vec![Field::ZERO; witness_layout.post_commitment_size()];
     let mut vm = VM::new_witgen(
         out_a.as_mut_ptr(),
         out_b.as_mut_ptr(),
         out_c.as_mut_ptr(),
-        out_wit.as_mut_ptr(),
+        unsafe {
+            out_wit_pre_comm
+                .as_mut_ptr()
+                .offset(1 + inputs.len() as isize)
+        },
+        unsafe {
+            out_wit_pre_comm
+                .as_mut_ptr()
+                .offset(witness_layout.multiplicities_start() as isize)
+        },
+        unsafe {
+            out_a
+                .as_mut_ptr()
+                .offset(constraints_layout.lookups_data_start() as isize)
+        },
+        unsafe {
+            out_b
+                .as_mut_ptr()
+                .offset(constraints_layout.lookups_data_start() as isize)
+        },
+        constraints_layout.tables_data_start(),
+        witness_layout.tables_data_start() - witness_layout.challenges_start(),
     );
 
     let frame = Frame::push(
@@ -176,7 +222,7 @@ pub fn run(
         Frame {
             data: std::ptr::null_mut(),
         },
-        &mut vm
+        &mut vm,
     );
     for (i, el) in inputs.iter().enumerate() {
         frame.write_field(2 + (i as isize) * 4, *el);
@@ -187,13 +233,109 @@ pub fn run(
 
     let pc = unsafe { program.as_mut_ptr().offset(2) };
 
-    dispatch(
-        pc,
-        frame,
-        &mut vm
-    );
+    dispatch(pc, frame, &mut vm);
 
-    (out_wit, out_a, out_b, out_c, vm.allocation_instrumenter)
+    fix_multiplicities_section(&mut out_wit_pre_comm, witness_layout);
+
+    let mut random =
+        Field::from_bigint(BigInt::from_str("18765435241434657586764563434227903").unwrap())
+            .unwrap();
+    for i in 0..witness_layout.challenges_size {
+        // so random, wow
+        out_wit_post_comm[i] = random;
+        random = (random + Field::from(17)) * random;
+    }
+
+    let mut running_prod = Field::from(1);
+    for tbl in vm.tables.iter() {
+        if tbl.num_indices != 1 || tbl.num_values != 0 {
+            todo!("wide tables");
+        }
+
+        let alpha = out_wit_post_comm[0];
+        for i in 0..tbl.length {
+            let multiplicity = unsafe { *tbl.multiplicities_wit.offset(i as isize) };
+            let denom = alpha - Field::from(i as u64);
+            out_b[tbl.elem_inverses_constraint_section_offset + i] = denom;
+            out_c[tbl.elem_inverses_constraint_section_offset + i] = multiplicity;
+            if multiplicity != Field::ZERO {
+                // Skip all of inversion logic, it's just zero
+                out_a[tbl.elem_inverses_constraint_section_offset + i] = running_prod;
+                running_prod *= denom;
+            }
+        }
+    }
+
+    let mut running_inv = running_prod.inverse().unwrap();
+
+    for tbl in vm.tables.iter().rev() {
+        if tbl.num_indices != 1 || tbl.num_values != 0 {
+            todo!("wide tables");
+        }
+
+        for i in (0..tbl.length).rev() {
+            let multiplicity = out_c[tbl.elem_inverses_constraint_section_offset + i];
+            let denom = out_b[tbl.elem_inverses_constraint_section_offset + i];
+            let running_prod = out_a[tbl.elem_inverses_constraint_section_offset + i];
+
+            if multiplicity != Field::ZERO {
+                let elem = running_prod * running_inv;
+                out_a[tbl.elem_inverses_constraint_section_offset + i] = elem;
+                running_inv *= denom;
+            }
+        }
+    }
+
+    let mut current_lookup_off = 0;
+
+    while current_lookup_off < constraints_layout.lookups_data_size {
+        let cnst_off = constraints_layout.lookups_data_start() + current_lookup_off;
+        let wit_off = witness_layout.lookups_data_start() - witness_layout.challenges_start() + current_lookup_off;
+
+        let table_ix = out_a[cnst_off].0.0[0];
+        let table = &vm.tables[table_ix as usize];
+        if table.num_indices != 1 || table.num_values != 0 {
+            todo!("wide tables");
+        }
+        let ix_in_table = out_b[cnst_off].0.0[0];
+        out_a[cnst_off] = out_a[table.elem_inverses_constraint_section_offset + ix_in_table as usize];
+        out_b[cnst_off] = out_b[table.elem_inverses_constraint_section_offset + ix_in_table as usize];
+        out_c[cnst_off] = Field::ONE;
+        out_wit_post_comm[wit_off] = out_a[cnst_off];
+        out_c[table.elem_inverses_constraint_section_offset + table.length] += out_a[cnst_off];
+
+        current_lookup_off += 1;
+    }
+
+    for tbl in vm.tables.iter() {
+        if tbl.num_indices != 1 || tbl.num_values != 0 {
+            todo!("wide tables");
+        }
+        for i in 0..tbl.length {
+            let multiplicity = out_c[tbl.elem_inverses_constraint_section_offset + i];
+            if multiplicity != Field::ZERO {
+                let elem = out_a[tbl.elem_inverses_constraint_section_offset + i] * multiplicity;
+                out_a[tbl.elem_inverses_constraint_section_offset + i] = elem;
+                out_wit_post_comm[tbl.elem_inverses_witness_section_offset + i] = elem;
+                out_a[tbl.elem_inverses_constraint_section_offset + tbl.length] += elem;
+            }
+        }
+        out_b[tbl.elem_inverses_constraint_section_offset + tbl.length] = Field::ONE;
+
+    }
+
+
+
+    let result = WitgenResult {
+        out_wit_pre_comm,
+        out_wit_post_comm,
+        out_a,
+        out_b,
+        out_c,
+        instrumenter: vm.allocation_instrumenter,
+    };
+
+    result
 }
 
 #[instrument(skip_all, name = "Interpreter::run_ad")]
@@ -217,7 +359,7 @@ pub fn run_ad(
         Frame {
             data: std::ptr::null_mut(),
         },
-        &mut vm
+        &mut vm,
     );
 
     // for (i, el) in bytecode::DISPATCH.iter().enumerate() {
@@ -229,12 +371,7 @@ pub fn run_ad(
 
     let pc = unsafe { program.as_mut_ptr().offset(2) };
 
-    dispatch(
-        pc,
-        frame,
-        &mut vm
-    );
+    dispatch(pc, frame, &mut vm);
 
     (out_da, out_db, out_dc, vm.allocation_instrumenter)
-
 }

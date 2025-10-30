@@ -167,22 +167,23 @@ impl BoxedValue {
     #[inline(always)]
     pub fn bump_da(&self, amount: Field, vm: &mut VM) {
         match self.layout().data_type() {
-            DataType::ADConst => unsafe { *vm.out_da += amount * (*self.as_ad_const()).value },
-            DataType::ADWitness => unsafe {
-                *vm.out_da.offset((*self.as_ad_witness()).index as isize) += amount
+            DataType::ADConst => unsafe {
+                *vm.data.as_ad.out_da += amount * (*self.as_ad_const()).value
             },
-            DataType::ADSum => {
-                unsafe {
-                    let ad_sum = self.as_ad_sum();
-                    (*ad_sum).da += amount;
-                }
-            }
-            DataType::ADMulConst => {
-                unsafe {
-                    let ad_mul_const = self.as_mul_const();
-                    (*ad_mul_const).da += amount;
-                }
-            }
+            DataType::ADWitness => unsafe {
+                *vm.data
+                    .as_ad
+                    .out_da
+                    .offset((*self.as_ad_witness()).index as isize) += amount
+            },
+            DataType::ADSum => unsafe {
+                let ad_sum = self.as_ad_sum();
+                (*ad_sum).da += amount;
+            },
+            DataType::ADMulConst => unsafe {
+                let ad_mul_const = self.as_mul_const();
+                (*ad_mul_const).da += amount;
+            },
             DataType::PrimArray => {
                 panic!("bump_da for PrimArray")
             }
@@ -195,22 +196,23 @@ impl BoxedValue {
     #[inline(always)]
     pub fn bump_db(&self, amount: Field, vm: &mut VM) {
         match self.layout().data_type() {
-            DataType::ADConst => unsafe { *vm.out_db += amount * (*self.as_ad_const()).value },
-            DataType::ADWitness => unsafe {
-                *vm.out_db.offset((*self.as_ad_witness()).index as isize) += amount
+            DataType::ADConst => unsafe {
+                *vm.data.as_ad.out_db += amount * (*self.as_ad_const()).value
             },
-            DataType::ADSum => {
-                unsafe {
-                    let ad_sum = self.as_ad_sum();
-                    (*ad_sum).db += amount;
-                }
-            }
-            DataType::ADMulConst => {
-                unsafe {
-                    let ad_mul_const = self.as_mul_const();
-                    (*ad_mul_const).db += amount;
-                }
-            }
+            DataType::ADWitness => unsafe {
+                *vm.data
+                    .as_ad
+                    .out_db
+                    .offset((*self.as_ad_witness()).index as isize) += amount
+            },
+            DataType::ADSum => unsafe {
+                let ad_sum = self.as_ad_sum();
+                (*ad_sum).db += amount;
+            },
+            DataType::ADMulConst => unsafe {
+                let ad_mul_const = self.as_mul_const();
+                (*ad_mul_const).db += amount;
+            },
             DataType::PrimArray => {
                 panic!("bump_db for PrimArray")
             }
@@ -223,22 +225,23 @@ impl BoxedValue {
     #[inline(always)]
     pub fn bump_dc(&self, amount: Field, vm: &mut VM) {
         match self.layout().data_type() {
-            DataType::ADConst => unsafe { *vm.out_dc += amount * (*self.as_ad_const()).value },
-            DataType::ADWitness => unsafe {
-                *vm.out_dc.offset((*self.as_ad_witness()).index as isize) += amount
+            DataType::ADConst => unsafe {
+                *vm.data.as_ad.out_dc += amount * (*self.as_ad_const()).value
             },
-            DataType::ADSum => {
-                unsafe {
-                    let ad_sum = self.as_ad_sum();
-                    (*ad_sum).dc += amount;
-                }
-            }
-            DataType::ADMulConst => {
-                unsafe {
-                    let ad_mul_const = self.as_mul_const();
-                    (*ad_mul_const).dc += amount;
-                }
-            }
+            DataType::ADWitness => unsafe {
+                *vm.data
+                    .as_ad
+                    .out_dc
+                    .offset((*self.as_ad_witness()).index as isize) += amount
+            },
+            DataType::ADSum => unsafe {
+                let ad_sum = self.as_ad_sum();
+                (*ad_sum).dc += amount;
+            },
+            DataType::ADMulConst => unsafe {
+                let ad_mul_const = self.as_mul_const();
+                (*ad_mul_const).dc += amount;
+            },
             DataType::PrimArray => {
                 panic!("bump_dc for PrimArray")
             }
@@ -320,9 +323,15 @@ impl BoxedValue {
                     }
                     DataType::ADMulConst => {
                         let ad_mul_const = unsafe { *item.as_mul_const() };
-                        ad_mul_const.value.bump_da(ad_mul_const.da * ad_mul_const.coeff, vm);
-                        ad_mul_const.value.bump_db(ad_mul_const.db * ad_mul_const.coeff, vm);
-                        ad_mul_const.value.bump_dc(ad_mul_const.dc * ad_mul_const.coeff, vm);
+                        ad_mul_const
+                            .value
+                            .bump_da(ad_mul_const.da * ad_mul_const.coeff, vm);
+                        ad_mul_const
+                            .value
+                            .bump_db(ad_mul_const.db * ad_mul_const.coeff, vm);
+                        ad_mul_const
+                            .value
+                            .bump_dc(ad_mul_const.dc * ad_mul_const.coeff, vm);
                         queue.push_back(ad_mul_const.value);
                         item.free(vm);
                     }

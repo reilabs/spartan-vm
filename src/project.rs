@@ -12,16 +12,9 @@ use noirc_frontend::hir::ParsedFiles;
 use crate::error::Error;
 
 pub struct Project {
-    /// The root directory of the project
     project_root: PathBuf,
-
-    /// Nargo object keeping the workspace data
     nargo_workspace: Workspace,
-
-    /// Nargo object keeping loaded files
     nargo_file_manager: FileManager,
-
-    /// Nargo object keeping parsed files
     nargo_parsed_files: ParsedFiles,
 }
 
@@ -35,7 +28,6 @@ fn parse_workspace(workspace: &Workspace) -> (FileManager, ParsedFiles) {
 impl Project {
     pub fn new(project_root: PathBuf) -> Result<Self, Error> {
         // Workspace loading was done based on https://github.com/noir-lang/noir/blob/c3a43abf9be80c6f89560405b65f5241ed67a6b2/tooling/nargo_cli/src/cli/mod.rs#L180
-        // It can be replaced when integrated into nargo tool.
         let toml_path = nargo_toml::get_package_manifest(&project_root)?;
 
         let nargo_workspace = nargo_toml::resolve_workspace_from_toml(&toml_path, All, None)?;

@@ -10,7 +10,7 @@ use crate::compiler::{
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
 use itertools::Itertools;
-use tracing::{instrument, warn};
+use tracing::{error, instrument, warn};
 
 // #[derive(Clone, Debug, Copy, PartialEq, PartialOrd, Eq, Ord)]
 // pub enum WitnessIndex {
@@ -165,20 +165,20 @@ impl Value {
 
 type LC = Vec<(usize, crate::compiler::Field)>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct R1C {
     pub a: LC,
     pub b: LC,
     pub c: LC,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LookupConstraint {
     pub table_id: usize,
     pub elements: Vec<LC>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Table {
     Range(u64),
     OfElems(Vec<LC>),
@@ -486,6 +486,8 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     }
 }
 
+
+#[derive(Clone, Debug, Copy)]
 pub struct WitnessLayout {
     pub algebraic_size: usize,
     pub multiplicities_size: usize,
@@ -562,14 +564,38 @@ impl WitnessLayout {
             + self.tables_data_size
             + self.lookups_data_size
     }
+
+    pub fn pre_commitment_size(&self) -> usize {
+        self.algebraic_size + self.multiplicities_size
+    }
+
+    pub fn post_commitment_size(&self) -> usize {
+        self.challenges_size + self.tables_data_size + self.lookups_data_size
+    }
 }
 
+#[derive(Clone, Debug, Copy)]
 pub struct ConstraintsLayout {
     pub algebraic_size: usize,
     pub tables_data_size: usize,
     pub lookups_data_size: usize,
 }
 
+impl ConstraintsLayout {
+    pub fn size(&self) -> usize {
+        self.algebraic_size + self.tables_data_size + self.lookups_data_size
+    }
+
+    pub fn tables_data_start(&self) -> usize {
+        self.algebraic_size
+    }
+
+    pub fn lookups_data_start(&self) -> usize {
+        self.algebraic_size + self.tables_data_size
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct R1CS {
     pub witness_layout: WitnessLayout,
     pub constraints_layout: ConstraintsLayout,
@@ -840,5 +866,61 @@ impl R1CS {
                 res_c[*c_ix] += *c_coeff * *coeff;
             }
         }
+    }
+
+    pub fn check_witgen_output(&self, pre_comm_witness: &[crate::compiler::Field], post_comm_witness: &[crate::compiler::Field], a: &[crate::compiler::Field], b: &[crate::compiler::Field], c: &[crate::compiler::Field]) -> bool {
+        let witness = [pre_comm_witness, post_comm_witness].concat();
+        if a.len() != self.constraints_layout.size() {
+            error!(message = %"The a vector has the wrong length", expected = self.constraints_layout.size(), actual = a.len());
+            return false;
+        }
+        if b.len() != self.constraints_layout.size() {
+            error!(message = %"The b vector has the wrong length", expected = self.constraints_layout.size(), actual = b.len());
+            return false;
+        }
+        if c.len() != self.constraints_layout.size() {
+            error!(message = %"The c vector has the wrong length", expected = self.constraints_layout.size(), actual = c.len());
+            return false;
+        }
+        for (i, r1c) in self.constraints.iter().enumerate() {
+            let av = r1c
+                .a
+                .iter()
+                .map(|(i, c)| c * &witness[*i])
+                .sum::<ark_bn254::Fr>();
+
+            let bv = r1c
+                .b
+                .iter()
+                .map(|(i, c)| c * &witness[*i])
+                .sum::<ark_bn254::Fr>();
+
+            let cv = r1c
+                .c
+                .iter()
+                .map(|(i, c)| c * &witness[*i])
+                .sum::<ark_bn254::Fr>();
+            let mut fail = false;
+            if av * bv != cv {
+                error!(message = %"R1CS constraint failed to verify", index = i);
+                fail = true;
+            }
+            if av != a[i] {
+                error!(message = %"Wrong A value for constraint", index = i, actual = a[i].to_string(), expected = av.to_string());
+                fail = true;
+            }
+            if bv != b[i] {
+                error!(message = %"Wrong B value for constraint", index = i, actual = b[i].to_string(), expected = bv.to_string());
+                fail = true;
+            }
+            if cv != c[i] {
+                error!(message = %"Wrong C value for constraint", index = i, actual = c[i].to_string(), expected = cv.to_string());
+                fail = true;
+            }
+            if fail {
+                return false;
+            }
+        }
+        return true;
     }
 }
