@@ -78,6 +78,10 @@ pub trait Context<V, Taint> {
     fn lookup(&mut self, _target: LookupTarget<V>, _keys: Vec<V>, _results: Vec<V>) {
         panic!("ICE: backend does not implement lookup");
     }
+
+    fn dlookup(&mut self, _target: LookupTarget<V>, _keys: Vec<V>, _results: Vec<V>) {
+        panic!("ICE: backend does not implement dlookup");
+    }
 }
 
 pub struct SymbolicExecutor {}
@@ -325,6 +329,19 @@ impl SymbolicExecutor {
                         let keys = keys.iter().map(|id| scope[id.0 as usize].as_ref().unwrap().clone()).collect::<Vec<_>>();
                         let results = results.iter().map(|id| scope[id.0 as usize].as_ref().unwrap().clone()).collect::<Vec<_>>();
                         ctx.lookup(target, keys, results);
+                    }
+                    crate::compiler::ssa::OpCode::DLookup { target, keys, results } => {
+                        let target = match target {
+                            LookupTarget::Rangecheck(n) => {
+                                LookupTarget::Rangecheck(*n)
+                            }
+                            LookupTarget::Array(arr) => {
+                                LookupTarget::Array(scope[arr.0 as usize].as_ref().unwrap().clone())
+                            }
+                        };
+                        let keys = keys.iter().map(|id| scope[id.0 as usize].as_ref().unwrap().clone()).collect::<Vec<_>>();
+                        let results = results.iter().map(|id| scope[id.0 as usize].as_ref().unwrap().clone()).collect::<Vec<_>>();
+                        ctx.dlookup(target, keys, results);
                     }
                 }
             }

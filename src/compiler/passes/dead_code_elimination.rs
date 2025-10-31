@@ -100,6 +100,9 @@ impl DCE {
                         OpCode::Lookup { .. } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
+                        OpCode::DLookup { .. } => {
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
                         OpCode::NextDCoeff { result: _ } => {
                             // This also has the side-effect of bumping the counter, so we need to keep it live.
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));

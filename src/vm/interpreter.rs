@@ -341,17 +341,20 @@ pub fn run(
 #[instrument(skip_all, name = "Interpreter::run_ad")]
 pub fn run_ad(
     program: &[u64],
-    witness_size: usize,
     coeffs: &[Field],
+    witness_layout: WitnessLayout,
+    constraints_layout: ConstraintsLayout,
 ) -> (Vec<Field>, Vec<Field>, Vec<Field>, AllocationInstrumenter) {
-    let mut out_da = vec![Field::ZERO; witness_size];
-    let mut out_db = vec![Field::ZERO; witness_size];
-    let mut out_dc = vec![Field::ZERO; witness_size];
+    let mut out_da = vec![Field::ZERO; witness_layout.size()];
+    let mut out_db = vec![Field::ZERO; witness_layout.size()];
+    let mut out_dc = vec![Field::ZERO; witness_layout.size()];
     let mut vm = VM::new_ad(
         out_da.as_mut_ptr(),
         out_db.as_mut_ptr(),
         out_dc.as_mut_ptr(),
         coeffs.as_ptr(),
+        witness_layout,
+        constraints_layout,
     );
 
     let frame = Frame::push(

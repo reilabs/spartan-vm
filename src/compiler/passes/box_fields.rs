@@ -64,60 +64,76 @@ impl BoxFields {
                 let mut new_instructions = vec![];
                 for instruction in block.take_instructions().into_iter() {
                     match instruction {
-                        OpCode::Cast { result: r, value: v, target: t } => {
+                        OpCode::Cast {
+                            result: r,
+                            value: v,
+                            target: t,
+                        } => {
                             let v_type = type_info.get_value_type(v);
                             let v = if v_type.is_field() {
                                 let new_v = function.fresh_value();
                                 new_instructions.push(OpCode::UnboxField {
                                     result: new_v,
-                                    value: v
+                                    value: v,
                                 });
                                 new_v
                             } else {
                                 v
                             };
-                            
+
                             if matches!(t, CastTarget::Field) {
                                 let new_r = function.fresh_value();
                                 new_instructions.push(OpCode::Cast {
                                     result: new_r,
                                     value: v,
-                                    target: CastTarget::Field
+                                    target: CastTarget::Field,
                                 });
                                 new_instructions.push(OpCode::BoxField {
                                     result: r,
                                     value: new_r,
-                                    result_annotation: type_info.get_value_type(r).annotation
+                                    result_annotation: type_info.get_value_type(r).annotation,
                                 });
                             } else {
                                 new_instructions.push(OpCode::Cast {
                                     result: r,
                                     value: v,
-                                    target: t
+                                    target: t,
                                 });
                             };
                         }
-                        OpCode::FreshWitness { result: r, result_type: tp } => {
+                        OpCode::FreshWitness {
+                            result: r,
+                            result_type: tp,
+                        } => {
                             let i = OpCode::FreshWitness {
                                 result: r,
-                                result_type: self.box_fields_in_type(&tp)
+                                result_type: self.box_fields_in_type(&tp),
                             };
                             new_instructions.push(i);
                         }
-                        OpCode::MkSeq { result: r, elems: vs, seq_type: s, elem_type: tp } => {
+                        OpCode::MkSeq {
+                            result: r,
+                            elems: vs,
+                            seq_type: s,
+                            elem_type: tp,
+                        } => {
                             let i = OpCode::MkSeq {
                                 result: r,
                                 elems: vs.clone(),
                                 seq_type: s,
-                                elem_type: self.box_fields_in_type(&tp)
+                                elem_type: self.box_fields_in_type(&tp),
                             };
                             new_instructions.push(i);
                         }
-                        OpCode::Alloc { result: r, elem_type: tp, result_annotation: v } => {
+                        OpCode::Alloc {
+                            result: r,
+                            elem_type: tp,
+                            result_annotation: v,
+                        } => {
                             let i = OpCode::Alloc {
                                 result: r,
                                 elem_type: self.box_fields_in_type(&tp),
-                                result_annotation: v
+                                result_annotation: v,
                             };
                             new_instructions.push(i);
                         }
@@ -127,23 +143,48 @@ impl BoxFields {
                             new_instructions.push(OpCode::BumpD {
                                 matrix: DMatrix::A,
                                 variable: a,
-                                sensitivity: new_val
+                                sensitivity: new_val,
                             });
                             new_instructions.push(OpCode::BumpD {
                                 matrix: DMatrix::B,
                                 variable: b,
-                                sensitivity: new_val
+                                sensitivity: new_val,
                             });
                             new_instructions.push(OpCode::BumpD {
                                 matrix: DMatrix::C,
                                 variable: c,
-                                sensitivity: new_val
+                                sensitivity: new_val,
                             });
                         }
-                        OpCode::Lookup { target, keys, results } => {
-                            todo!()
+                        OpCode::Lookup {
+                            target,
+                            keys,
+                            results,
+                        } => {
+                            for key in keys.iter() {
+                                assert!(
+                                    type_info.get_value_type(*key).is_field(),
+                                    "Keys of lookup must be fields"
+                                );
+                            }
+                            for result in results.iter() {
+                                assert!(
+                                    type_info.get_value_type(*result).is_field(),
+                                    "Results of lookup must be fields"
+                                );
+                            }
+                            new_instructions.push(OpCode::DLookup {
+                                target,
+                                keys,
+                                results,
+                            });
                         }
-                        OpCode::Cmp { kind, result: r, lhs: a, rhs: b } => {
+                        OpCode::Cmp {
+                            kind,
+                            result: r,
+                            lhs: a,
+                            rhs: b,
+                        } => {
                             let a_type = type_info.get_value_type(a);
                             let b_type = type_info.get_value_type(b);
                             assert!(
@@ -161,17 +202,17 @@ impl BoxFields {
                                     let new_b = function.fresh_value();
                                     new_instructions.push(OpCode::UnboxField {
                                         result: new_a,
-                                        value: a
+                                        value: a,
                                     });
                                     new_instructions.push(OpCode::UnboxField {
                                         result: new_b,
-                                        value: b
+                                        value: b,
                                     });
                                     new_instructions.push(OpCode::Cmp {
                                         kind: kind,
                                         result: r,
                                         lhs: new_a,
-                                        rhs: new_b
+                                        rhs: new_b,
                                     });
                                 }
                                 _ => {
@@ -179,12 +220,17 @@ impl BoxFields {
                                         kind: kind,
                                         result: r,
                                         lhs: a,
-                                        rhs: b
+                                        rhs: b,
                                     });
                                 }
                             }
                         }
-                        OpCode::BinaryArithOp { kind, result: r, lhs: a, rhs: b } => {
+                        OpCode::BinaryArithOp {
+                            kind,
+                            result: r,
+                            lhs: a,
+                            rhs: b,
+                        } => {
                             let a_type = type_info.get_value_type(a);
                             let b_type = type_info.get_value_type(b);
                             if *a_type.get_annotation() == ConstantTaint::Pure
@@ -197,23 +243,22 @@ impl BoxFields {
                                         let new_r = function.fresh_value();
                                         new_instructions.push(OpCode::UnboxField {
                                             result: new_a,
-                                            value: a
+                                            value: a,
                                         });
                                         new_instructions.push(OpCode::UnboxField {
                                             result: new_b,
-                                            value: b
+                                            value: b,
                                         });
-                                        new_instructions
-                                            .push(OpCode::BinaryArithOp {
-                                                kind: kind,
-                                                result: new_r,
-                                                lhs: new_a,
-                                                rhs: new_b
-                                            });
+                                        new_instructions.push(OpCode::BinaryArithOp {
+                                            kind: kind,
+                                            result: new_r,
+                                            lhs: new_a,
+                                            rhs: new_b,
+                                        });
                                         new_instructions.push(OpCode::BoxField {
                                             result: r,
                                             value: new_r,
-                                            result_annotation: ConstantTaint::Witness
+                                            result_annotation: ConstantTaint::Witness,
                                         });
                                     }
                                     _ => {
@@ -221,7 +266,7 @@ impl BoxFields {
                                             kind: kind,
                                             result: r,
                                             lhs: a,
-                                            rhs: b
+                                            rhs: b,
                                         });
                                     }
                                 }
@@ -237,7 +282,7 @@ impl BoxFields {
                                             kind: kind,
                                             result: r,
                                             lhs: a,
-                                            rhs: b
+                                            rhs: b,
                                         });
                                     }
                                     BinaryArithOpKind::Mul => {
@@ -256,101 +301,126 @@ impl BoxFields {
                                                 let new_pure_v = function.fresh_value();
                                                 new_instructions.push(OpCode::UnboxField {
                                                     result: new_pure_v,
-                                                    value: pure_v
+                                                    value: pure_v,
                                                 });
                                                 new_instructions.push(OpCode::MulConst {
                                                     result: r,
                                                     const_val: new_pure_v,
-                                                    var: witness_v
+                                                    var: witness_v,
                                                 });
                                             }
                                             _ => {
-                                                panic!("Cannot multiply two witness values, should be removed already");
+                                                panic!(
+                                                    "Cannot multiply two witness values, should be removed already"
+                                                );
                                             }
                                         }
                                     }
                                     BinaryArithOpKind::Div | BinaryArithOpKind::And => {
-                                        panic!("Cannot handle this operation with witness values, should be removed already {:?}", kind);
+                                        panic!(
+                                            "Cannot handle this operation with witness values, should be removed already {:?}",
+                                            kind
+                                        );
                                     }
                                 }
                             }
                         }
-                        OpCode::Truncate { result: r, value: v, to_bits: f, from_bits: t } => {
+                        OpCode::Truncate {
+                            result: r,
+                            value: v,
+                            to_bits: f,
+                            from_bits: t,
+                        } => {
                             let v_type = type_info.get_value_type(v);
                             if matches!(v_type.expr, TypeExpr::Field) {
-                                assert!(*v_type.get_annotation() == ConstantTaint::Pure, "Cannot truncate witness values, should be removed already");
+                                assert!(
+                                    *v_type.get_annotation() == ConstantTaint::Pure,
+                                    "Cannot truncate witness values, should be removed already"
+                                );
                                 let new_r = function.fresh_value();
                                 let new_v = function.fresh_value();
                                 new_instructions.push(OpCode::UnboxField {
                                     result: new_v,
-                                    value: v
+                                    value: v,
                                 });
                                 new_instructions.push(OpCode::Truncate {
                                     result: new_r,
                                     value: new_v,
                                     to_bits: f,
-                                    from_bits: t
+                                    from_bits: t,
                                 });
                                 new_instructions.push(OpCode::BoxField {
                                     result: r,
                                     value: new_r,
-                                    result_annotation: v_type.annotation.clone()
+                                    result_annotation: v_type.annotation.clone(),
                                 });
                             } else {
                                 new_instructions.push(OpCode::Truncate {
                                     result: r,
                                     value: v,
                                     to_bits: f,
-                                    from_bits: t
+                                    from_bits: t,
                                 });
                             }
                         }
                         OpCode::AssertEq { lhs: a, rhs: b } => {
                             let a_type = type_info.get_value_type(a);
                             let b_type = type_info.get_value_type(b);
-                            if matches!(a_type.expr, TypeExpr::Field) && matches!(b_type.expr, TypeExpr::Field) {
-                                assert!(*a_type.get_annotation() == ConstantTaint::Pure, "Cannot handle impure assertions, should be removed already");
-                                assert!(*b_type.get_annotation() == ConstantTaint::Pure, "Cannot handle impure assertions, should be removed already");
+                            if matches!(a_type.expr, TypeExpr::Field)
+                                && matches!(b_type.expr, TypeExpr::Field)
+                            {
+                                assert!(
+                                    *a_type.get_annotation() == ConstantTaint::Pure,
+                                    "Cannot handle impure assertions, should be removed already"
+                                );
+                                assert!(
+                                    *b_type.get_annotation() == ConstantTaint::Pure,
+                                    "Cannot handle impure assertions, should be removed already"
+                                );
                                 let new_a = function.fresh_value();
                                 let new_b = function.fresh_value();
                                 new_instructions.push(OpCode::UnboxField {
                                     result: new_a,
-                                    value: a
+                                    value: a,
                                 });
                                 new_instructions.push(OpCode::UnboxField {
                                     result: new_b,
-                                    value: b
+                                    value: b,
                                 });
                                 new_instructions.push(OpCode::AssertEq {
                                     lhs: new_a,
-                                    rhs: new_b
+                                    rhs: new_b,
                                 });
                             } else {
-                                new_instructions.push(OpCode::AssertEq {
-                                    lhs: a,
-                                    rhs: b
-                                });
+                                new_instructions.push(OpCode::AssertEq { lhs: a, rhs: b });
                             }
                         }
-                        OpCode::Rangecheck { value: val, max_bits } => {
+                        OpCode::Rangecheck {
+                            value: val,
+                            max_bits,
+                        } => {
                             let unboxed_val = function.fresh_value();
                             new_instructions.push(OpCode::UnboxField {
                                 result: unboxed_val,
-                                value: val
+                                value: val,
                             });
                             new_instructions.push(OpCode::Rangecheck {
                                 value: unboxed_val,
-                                max_bits: max_bits
+                                max_bits: max_bits,
                             });
                         }
-                        OpCode::ReadGlobal { result: r, offset: index, result_type: tp } => {
+                        OpCode::ReadGlobal {
+                            result: r,
+                            offset: index,
+                            result_type: tp,
+                        } => {
                             new_instructions.push(OpCode::ReadGlobal {
                                 result: r,
                                 offset: index,
-                                result_type: self.box_fields_in_type(&tp)
+                                result_type: self.box_fields_in_type(&tp),
                             });
                         }
-                        | OpCode::Not { .. }
+                        OpCode::Not { .. }
                         | OpCode::Store { .. }
                         | OpCode::Load { .. }
                         | OpCode::AssertR1C { .. }
@@ -366,7 +436,8 @@ impl BoxFields {
                         | OpCode::BoxField { .. }
                         | OpCode::UnboxField { .. }
                         | OpCode::MulConst { .. }
-                        | OpCode::BumpD { .. } => new_instructions.push(instruction),
+                        | OpCode::BumpD { .. }
+                        | OpCode::DLookup { .. } => new_instructions.push(instruction),
                     };
                 }
                 block.put_instructions(new_instructions);

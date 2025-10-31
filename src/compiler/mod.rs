@@ -12,6 +12,5 @@ pub mod ssa_gen;
 pub mod taint_analysis;
 pub mod union_find;
 pub mod untaint_control_flow;
-pub mod witness_generation;
 
 pub type Field = ark_bn254::Fr;

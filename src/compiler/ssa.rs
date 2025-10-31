@@ -1183,6 +1183,11 @@ pub enum OpCode<V> {
         keys: Vec<ValueId>,
         results: Vec<ValueId>,
     },
+    DLookup {
+        target: LookupTarget<ValueId>,
+        keys: Vec<ValueId>,
+        results: Vec<ValueId>,
+    },
     BoxField {
         result: ValueId,
         value: ValueId,
@@ -1414,6 +1419,22 @@ impl<V: Display + Clone> OpCode<V> {
                     DMatrix::C => "C",
                 };
                 format!("∂{} / ∂v{} += v{}", matrix_str, result.0, value.0)
+            }
+            OpCode::DLookup {
+                target,
+                keys,
+                results,
+            } => {
+                let keys_str = keys.iter().map(|v| format!("v{}", v.0)).join(", ");
+                let results_str = results.iter().map(|v| format!("v{}", v.0)).join(", ");
+                let target_str = match target {
+                    LookupTarget::Rangecheck(n) => format!("rngchk({})", n),
+                    LookupTarget::Array(arr) => format!("v{}", arr.0),
+                };
+                format!(
+                    "∂lookup({}, ({}) => ({}))",
+                    target_str, keys_str, results_str
+                )
             }
             OpCode::MkSeq {
                 result,
@@ -1661,6 +1682,11 @@ impl<V> OpCode<V> {
                 target,
                 keys,
                 results,
+            }
+            | Self::DLookup {
+                target,
+                keys,
+                results,
             } => {
                 let mut ret_vec = vec![];
                 match target {
@@ -1842,7 +1868,7 @@ impl<V> OpCode<V> {
                     Radix::Dyn(radix) => {
                         ret_vec.push(radix);
                     }
-                }   
+                }
                 ret_vec.into_iter()
             }
             Self::MemOp { kind: _, value: v } => vec![v].into_iter(),
@@ -1856,6 +1882,11 @@ impl<V> OpCode<V> {
                 result_type: _,
             } => vec![].into_iter(),
             Self::Lookup {
+                target,
+                keys,
+                results,
+            }
+            | Self::DLookup {
                 target,
                 keys,
                 results,
@@ -2006,6 +2037,11 @@ impl<V> OpCode<V> {
                 target,
                 keys,
                 results,
+            }
+            | Self::DLookup {
+                target,
+                keys,
+                results,
             } => {
                 let mut ret_vec = vec![];
                 match target {
@@ -2143,7 +2179,7 @@ impl<V> OpCode<V> {
                 offset: _,
                 result_type: _,
             } => vec![r].into_iter(),
-            Self::Lookup { .. } => vec![].into_iter(),
+            Self::Lookup { .. } | Self::DLookup { .. } => vec![].into_iter(),
         }
     }
 }

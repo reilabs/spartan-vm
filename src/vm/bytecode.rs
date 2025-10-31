@@ -1,5 +1,6 @@
 #![allow(unused_variables)]
 
+use crate::compiler::r1cs_gen::{ConstraintsLayout, WitnessLayout};
 use crate::vm::interpreter::dispatch;
 use ark_ff::{AdditiveGroup as _, BigInteger as _};
 use opcode_gen::interpreter;
@@ -286,6 +287,13 @@ pub struct AdArrays {
     pub out_dc: *mut Field,
     pub ad_coeffs: *const Field,
     pub current_wit_off: usize,
+    pub logup_wit_challenge_off: usize,
+    pub current_wit_multiplicities_off: usize,
+    pub current_wit_tables_off: usize,
+    pub current_wit_lookups_off: usize,
+    pub current_cnst_off: usize,
+    pub current_cnst_tables_off: usize,
+    pub current_cnst_lookups_off: usize,
 }
 
 pub union Arrays {
@@ -337,6 +345,9 @@ impl VM {
         out_db: *mut Field,
         out_dc: *mut Field,
         ad_coeffs: *const Field,
+
+        witness_layout: WitnessLayout,
+        constraints_layout: ConstraintsLayout,
     ) -> Self {
         Self {
             data: Arrays {
@@ -346,6 +357,13 @@ impl VM {
                     out_dc,
                     ad_coeffs,
                     current_wit_off: 1,
+                    logup_wit_challenge_off: witness_layout.challenges_start(),
+                    current_wit_multiplicities_off: witness_layout.multiplicities_start(),
+                    current_wit_tables_off: witness_layout.tables_data_start(),
+                    current_wit_lookups_off: witness_layout.lookups_data_start(),
+                    current_cnst_off: 0,
+                    current_cnst_tables_off: constraints_layout.tables_data_start(),
+                    current_cnst_lookups_off: constraints_layout.lookups_data_start(),
                 },
             },
             allocation_instrumenter: AllocationInstrumenter::new(),
@@ -729,8 +747,12 @@ mod def {
     #[opcode]
     fn next_d_coeff(#[out] v: *mut Field, vm: &mut VM) {
         unsafe {
-            *v = *vm.data.as_ad.ad_coeffs;
-            vm.data.as_ad.ad_coeffs = vm.data.as_ad.ad_coeffs.offset(1);
+            *v = *vm
+                .data
+                .as_ad
+                .ad_coeffs
+                .offset(vm.data.as_ad.current_cnst_off as isize);
+            vm.data.as_ad.current_cnst_off += 1;
         };
     }
 
@@ -837,13 +859,18 @@ mod def {
                 num_indices: 1,
                 num_values: 0,
                 length: 256,
-                elem_inverses_constraint_section_offset: unsafe { vm.data.as_forward.elem_inverses_constraint_section_offset },
-                elem_inverses_witness_section_offset: unsafe { vm.data.as_forward.elem_inverses_witness_section_offset },
+                elem_inverses_constraint_section_offset: unsafe {
+                    vm.data.as_forward.elem_inverses_constraint_section_offset
+                },
+                elem_inverses_witness_section_offset: unsafe {
+                    vm.data.as_forward.elem_inverses_witness_section_offset
+                },
             };
             vm.rgchk_8 = Some(vm.tables.len());
             vm.tables.push(table_info);
             unsafe {
-                vm.data.as_forward.multiplicities_witness = vm.data.as_forward.multiplicities_witness.offset(256);
+                vm.data.as_forward.multiplicities_witness =
+                    vm.data.as_forward.multiplicities_witness.offset(256);
                 vm.data.as_forward.elem_inverses_constraint_section_offset += 257;
                 vm.data.as_forward.elem_inverses_witness_section_offset += 256;
             }
@@ -859,6 +886,120 @@ mod def {
             *(vm.data.as_forward.lookups_b as *mut u64) = val_u64;
             vm.data.as_forward.lookups_b = vm.data.as_forward.lookups_b.offset(1);
         }
+    }
+
+    #[opcode]
+    fn drngchk_8_field(#[frame] val: BoxedValue, vm: &mut VM) {
+        if vm.rgchk_8.is_none() {
+            let inverses_constraint_section_offset =
+                unsafe { vm.data.as_ad.current_cnst_tables_off };
+            let inverses_witness_section_offset = unsafe { vm.data.as_ad.current_wit_tables_off };
+            let multiplicities_wit_offset = unsafe { vm.data.as_ad.current_wit_multiplicities_off };
+            let table_info = TableInfo {
+                multiplicities_wit: ptr::null_mut(),
+                num_indices: 1,
+                num_values: 0,
+                length: 256,
+                elem_inverses_witness_section_offset: inverses_witness_section_offset,
+                elem_inverses_constraint_section_offset: inverses_constraint_section_offset,
+            };
+            vm.rgchk_8 = Some(vm.tables.len());
+            vm.tables.push(table_info);
+            unsafe {
+                vm.data.as_ad.current_wit_multiplicities_off += 256;
+                vm.data.as_ad.current_wit_tables_off += 256;
+                vm.data.as_ad.current_cnst_tables_off += 257;
+            }
+            let inv_sum_coeff = unsafe {
+                *vm.data
+                    .as_ad
+                    .ad_coeffs
+                    .offset(inverses_constraint_section_offset as isize + 256)
+            };
+
+            for i in 0..256 {
+                // For each element in the table, we have constraint `elem_inv_witness * (alpha - i) - multiplicity_witness = 0`
+                let coeff = unsafe {
+                    *vm.data
+                        .as_ad
+                        .ad_coeffs
+                        .offset(inverses_constraint_section_offset as isize + i)
+                };
+                unsafe {
+                    *vm.data
+                        .as_ad
+                        .out_da
+                        .offset(inverses_witness_section_offset as isize + i) += coeff;
+                    // if i == 0 {
+                    //     println!("bump da at {} from inv by {coeff}", inverses_witness_section_offset as isize + i);
+                    // }
+
+                    *vm.data
+                        .as_ad
+                        .out_db
+                        .offset(vm.data.as_ad.logup_wit_challenge_off as isize) += coeff;
+                    *vm.data.as_ad.out_db -= coeff * Field::from(i as u64);
+
+                    *vm.data
+                        .as_ad
+                        .out_dc
+                        .offset(multiplicities_wit_offset as isize + i) += coeff;
+                }
+
+                // Also each inv goes into the A position of the total sum
+                unsafe {
+                    *vm.data
+                        .as_ad
+                        .out_da
+                        .offset(inverses_witness_section_offset as isize + i) += inv_sum_coeff;
+                }
+            }
+
+            // The coeff at B on the sum constraint is just `1` so we bump it.
+            unsafe {
+                *vm.data.as_ad.out_db += inv_sum_coeff;
+            }
+        }
+        let table_idx = *vm.rgchk_8.as_ref().unwrap();
+        let table_info = &vm.tables[table_idx];
+
+
+        let inv_coeff = unsafe {
+            let r = *vm.data.as_ad.ad_coeffs.offset(vm.data.as_ad.current_cnst_lookups_off as isize);
+            vm.data.as_ad.current_cnst_lookups_off += 1;
+            r
+        };
+        
+        let inv_sum_coeff = unsafe {
+            *vm.data
+                .as_ad
+                .ad_coeffs
+                .offset(table_info.elem_inverses_constraint_section_offset as isize + 256)
+        };
+
+        let current_inv_wit_offset = unsafe {
+            let r = vm.data.as_ad.current_wit_lookups_off;
+            vm.data.as_ad.current_wit_lookups_off += 1;
+            r
+        };
+
+        unsafe {
+            // bump for the RHS of the sum
+            *vm.data.as_ad.out_dc.offset(current_inv_wit_offset as isize) += inv_sum_coeff;
+
+            // bumps for the inversion assert
+            *vm.data.as_ad.out_da.offset(current_inv_wit_offset as isize) += inv_coeff;
+
+            *vm.data.as_ad.out_db.offset(vm.data.as_ad.logup_wit_challenge_off as isize) += inv_coeff;
+            val.bump_db(-inv_coeff, vm);
+
+            *vm.data.as_ad.out_dc += inv_coeff;
+        }
+
+
+
+        // unsafe {}
+        // panic!("TODO: implement drngchk_8_field");
     }
 }
 

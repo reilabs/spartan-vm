@@ -171,6 +171,7 @@ impl RCInsertion {
                     | OpCode::WriteWitness { result: _, value: _, witness_annotation: _ }
                     | OpCode::NextDCoeff { result: _ }
                     | OpCode::Lookup { target: _, keys: _, results: _ }
+                    | OpCode::DLookup { target: _, keys: _, results: _ }
                     | OpCode::Not { result: _, value: _ } => {
                         let rcd_inputs = instruction
                             .get_inputs()

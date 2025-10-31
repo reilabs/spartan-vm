@@ -594,20 +594,40 @@ impl TaintAnalysis {
 
             for instruction in block.get_instructions() {
                 match instruction {
-                    OpCode::BinaryArithOp { kind: _, result: r, lhs, rhs } | OpCode::Cmp { kind: _, result: r, lhs, rhs } => {
+                    OpCode::BinaryArithOp {
+                        kind: _,
+                        result: r,
+                        lhs,
+                        rhs,
+                    }
+                    | OpCode::Cmp {
+                        kind: _,
+                        result: r,
+                        lhs,
+                        rhs,
+                    } => {
                         let lhs_taint = function_taint.value_taints.get(lhs).unwrap();
                         let rhs_taint = function_taint.value_taints.get(rhs).unwrap();
                         let result_taint = lhs_taint.union(rhs_taint);
                         function_taint.value_taints.insert(*r, result_taint);
                     }
-                    OpCode::Select { result: r, cond, if_t: then, if_f: otherwise } => {
+                    OpCode::Select {
+                        result: r,
+                        cond,
+                        if_t: then,
+                        if_f: otherwise,
+                    } => {
                         let cond_taint = function_taint.value_taints.get(cond).unwrap();
                         let then_taint = function_taint.value_taints.get(then).unwrap();
                         let otherwise_taint = function_taint.value_taints.get(otherwise).unwrap();
                         let result_taint = cond_taint.union(then_taint).union(otherwise_taint);
                         function_taint.value_taints.insert(*r, result_taint);
                     }
-                    OpCode::Alloc { result: r, elem_type: t, result_annotation: _ } => {
+                    OpCode::Alloc {
+                        result: r,
+                        elem_type: t,
+                        result_annotation: _,
+                    } => {
                         let free = self.construct_free_taint_for_type(t);
                         function_taint.value_taints.insert(
                             *r,
@@ -646,13 +666,21 @@ impl TaintAnalysis {
                             _ => panic!("Unexpected taint for ptr"),
                         }
                     }
-                    OpCode::ReadGlobal { result: r, offset: _, result_type: tp } => {
+                    OpCode::ReadGlobal {
+                        result: r,
+                        offset: _,
+                        result_type: tp,
+                    } => {
                         let result_taint = self.construct_pure_taint_for_type(tp);
                         function_taint.value_taints.insert(*r, result_taint);
                     }
                     OpCode::AssertEq { lhs: _, rhs: _ } => {}
                     OpCode::AssertR1C { a: _, b: _, c: _ } => {}
-                    OpCode::ArrayGet { result: r, array: arr, index: idx } => {
+                    OpCode::ArrayGet {
+                        result: r,
+                        array: arr,
+                        index: idx,
+                    } => {
                         let arr_taint = function_taint.value_taints.get(arr).unwrap();
                         let idx_taint = function_taint.value_taints.get(idx).unwrap();
                         let elem_taint = arr_taint.child_taint_type().unwrap();
@@ -664,7 +692,12 @@ impl TaintAnalysis {
                         );
                         function_taint.value_taints.insert(*r, result_taint);
                     }
-                    OpCode::ArraySet { result: r, array: arr, index: idx, value } => {
+                    OpCode::ArraySet {
+                        result: r,
+                        array: arr,
+                        index: idx,
+                        value,
+                    } => {
                         let arr_taint = function_taint.value_taints.get(arr).unwrap();
                         let idx_taint = function_taint.value_taints.get(idx).unwrap();
                         let value_taint = function_taint.value_taints.get(value).unwrap();
@@ -676,7 +709,11 @@ impl TaintAnalysis {
                         );
                         function_taint.value_taints.insert(*r, result_taint);
                     }
-                    OpCode::Call { results: outputs, function: func, args: inputs } => {
+                    OpCode::Call {
+                        results: outputs,
+                        function: func,
+                        args: inputs,
+                    } => {
                         let return_types = ssa.get_function(*func).get_returns();
                         for (output, typ) in outputs.iter().zip(return_types.iter()) {
                             function_taint
@@ -708,7 +745,12 @@ impl TaintAnalysis {
                             func_taint.cfg_taint.clone(),
                         ));
                     }
-                    OpCode::MkSeq { result, elems: inputs, seq_type: _, elem_type: tp } => {
+                    OpCode::MkSeq {
+                        result,
+                        elems: inputs,
+                        seq_type: _,
+                        elem_type: tp,
+                    } => {
                         let inputs_taint = inputs
                             .iter()
                             .map(|v| function_taint.value_taints.get(v).unwrap())
@@ -726,11 +768,20 @@ impl TaintAnalysis {
                             ),
                         );
                     }
-                    OpCode::Cast { result, value, target: _ } => {
+                    OpCode::Cast {
+                        result,
+                        value,
+                        target: _,
+                    } => {
                         let value_taint = function_taint.value_taints.get(value).unwrap().clone();
                         function_taint.value_taints.insert(*result, value_taint);
                     }
-                    OpCode::Truncate { result, value, to_bits: _, from_bits: _ } => {
+                    OpCode::Truncate {
+                        result,
+                        value,
+                        to_bits: _,
+                        from_bits: _,
+                    } => {
                         let value_taint = function_taint.value_taints.get(value).unwrap().clone();
                         function_taint.value_taints.insert(*result, value_taint);
                     }
@@ -738,7 +789,12 @@ impl TaintAnalysis {
                         let value_taint = function_taint.value_taints.get(value).unwrap().clone();
                         function_taint.value_taints.insert(*result, value_taint);
                     }
-                    OpCode::ToBits { result, value, endianness: _, count: _ } => {
+                    OpCode::ToBits {
+                        result,
+                        value,
+                        endianness: _,
+                        count: _,
+                    } => {
                         let value_taint = function_taint.value_taints.get(value).unwrap().clone();
                         let result_taint = TaintType::NestedImmutable(
                             Taint::Constant(ConstantTaint::Pure),
@@ -746,7 +802,13 @@ impl TaintAnalysis {
                         );
                         function_taint.value_taints.insert(*result, result_taint);
                     }
-                    OpCode::ToRadix { result, value, radix: _radix, endianness: _, count: _ } => {
+                    OpCode::ToRadix {
+                        result,
+                        value,
+                        radix: _radix,
+                        endianness: _,
+                        count: _,
+                    } => {
                         let value_taint = function_taint.value_taints.get(value).unwrap().clone();
                         let result_taint = TaintType::NestedImmutable(
                             Taint::Constant(ConstantTaint::Pure),
@@ -754,17 +816,47 @@ impl TaintAnalysis {
                         );
                         function_taint.value_taints.insert(*result, result_taint);
                     }
-                    OpCode::Rangecheck { value: _, max_bits: _ } => {}
+                    OpCode::Rangecheck {
+                        value: _,
+                        max_bits: _,
+                    } => {}
                     OpCode::MemOp { kind: _, value: _ } => {}
                     OpCode::WriteWitness { .. }
                     | OpCode::Constrain { .. }
-                    | OpCode::FreshWitness { result: _, result_type: _ }
-                    | OpCode::BumpD { matrix: _, variable: _, sensitivity: _ }
+                    | OpCode::FreshWitness {
+                        result: _,
+                        result_type: _,
+                    }
+                    | OpCode::BumpD {
+                        matrix: _,
+                        variable: _,
+                        sensitivity: _,
+                    }
                     | OpCode::NextDCoeff { result: _ }
-                    | OpCode::BoxField { result: _, value: _, result_annotation: _ }
-                    | OpCode::UnboxField { result: _, value: _ }
-                    | OpCode::MulConst { result: _, const_val: _, var: _ }
-                    | OpCode::Lookup { target: _, keys: _, results: _ } => {
+                    | OpCode::BoxField {
+                        result: _,
+                        value: _,
+                        result_annotation: _,
+                    }
+                    | OpCode::UnboxField {
+                        result: _,
+                        value: _,
+                    }
+                    | OpCode::MulConst {
+                        result: _,
+                        const_val: _,
+                        var: _,
+                    }
+                    | OpCode::Lookup {
+                        target: _,
+                        keys: _,
+                        results: _,
+                    }
+                    | OpCode::DLookup {
+                        target: _,
+                        keys: _,
+                        results: _,
+                    } => {
                         panic!("Should not be present at this stage {:?}", instruction);
                     }
                 }

@@ -93,7 +93,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
 
     let leftover_memory = witgen_result
         .instrumenter
-        .plot(&driver.get_debug_output_dir().join("vm_memory.png"));
+        .plot(&driver.get_debug_output_dir().join("witgen_vm_memory.png"));
     if leftover_memory > 0 {
         warn!(message = %"VM memory leak detected", leftover_memory);
     } else {
@@ -148,10 +148,10 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         ad_coeffs.push(ark_bn254::Fr::rand(&mut rand::thread_rng()));
     }
 
-    let (ad_a, ad_b, ad_c, ad_instrumenter) = interpreter::run_ad(&mut ad_binary, r1cs.witness_layout.size(), &ad_coeffs);
+    let (ad_a, ad_b, ad_c, ad_instrumenter) = interpreter::run_ad(&mut ad_binary, &ad_coeffs, r1cs.witness_layout, r1cs.constraints_layout);
 
     let leftover_memory = ad_instrumenter
-        .plot(&driver.get_debug_output_dir().join("vm_memory.png"));
+        .plot(&driver.get_debug_output_dir().join("ad_vm_memory.png"));
     if leftover_memory > 0 {
         warn!(message = %"AD VM memory leak detected", leftover_memory);
     } else {
@@ -164,6 +164,27 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     } else {
         info!(message = %"AD output is correct");
     }
+
+    fs::write(
+        driver.get_debug_output_dir().join("ad_a.txt"),
+        ad_a.iter().map(|w| w.to_string()).collect::<Vec<_>>().join("\n"),
+    )
+    .unwrap();
+    fs::write(
+        driver.get_debug_output_dir().join("ad_b.txt"),
+        ad_b.iter().map(|w| w.to_string()).collect::<Vec<_>>().join("\n"),
+    )
+    .unwrap();
+    fs::write(
+        driver.get_debug_output_dir().join("ad_c.txt"),
+        ad_c.iter().map(|w| w.to_string()).collect::<Vec<_>>().join("\n"),
+    )
+    .unwrap();
+    fs::write(
+        driver.get_debug_output_dir().join("ad_coeffs.txt"),
+        ad_coeffs.iter().map(|w| w.to_string()).collect::<Vec<_>>().join("\n"),
+    )
+    .unwrap();
 
     Ok(ExitCode::SUCCESS)
 }

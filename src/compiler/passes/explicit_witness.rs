@@ -295,6 +295,9 @@ impl ExplicitWitness {
                         OpCode::Lookup { .. } => {
                             new_instructions.push(instruction);
                         }
+                        OpCode::DLookup { .. } => {
+                            new_instructions.push(instruction);
+                        }
                     }
                 }
                 block.put_instructions(new_instructions);

@@ -775,6 +775,18 @@ impl CodeGen {
                         val: layouter.get_value(keys[0]),
                     });
                 }
+                ssa::OpCode::DLookup {
+                    target: LookupTarget::Rangecheck(8),
+                    keys,
+                    results,
+                } => {
+                    assert!(keys.len() == 1);
+                    assert!(results.len() == 0);
+                    assert!(type_info.get_value_type(keys[0]).is_boxed_field());
+                    emitter.push_op(bytecode::OpCode::Drngchk8Field {
+                        val: layouter.get_value(keys[0]),
+                    });
+                }
                 other => panic!("Unsupported instruction: {:?}", other),
             }
         }

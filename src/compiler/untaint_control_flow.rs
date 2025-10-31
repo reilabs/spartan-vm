@@ -294,6 +294,15 @@ impl UntaintControlFlow {
                         keys,
                         results,
                     },
+                    OpCode::DLookup {
+                        target,
+                        keys,
+                        results,
+                    } => OpCode::DLookup {
+                        target,
+                        keys,
+                        results,
+                    },
                 };
                 new_instructions.push(new);
             }

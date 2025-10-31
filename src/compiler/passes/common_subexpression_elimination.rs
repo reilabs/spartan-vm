@@ -421,7 +421,8 @@ impl CSE {
                     | OpCode::Rangecheck { value: _, max_bits: _ }
                     | OpCode::ToBits { .. }
                     | OpCode::ToRadix { .. }
-                    | OpCode::Lookup { target: _, keys: _, results: _ } => {}
+                    | OpCode::Lookup { target: _, keys: _, results: _ }
+                    | OpCode::DLookup { target: _, keys: _, results: _ } => {}
                      OpCode::BoxField { result: _, value: _, result_annotation: _ }
                     | OpCode::UnboxField { result: _, value: _ }
                     | OpCode::MulConst { result: _, const_val: _, var: _ } => { todo!() }

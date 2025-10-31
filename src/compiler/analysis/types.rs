@@ -315,6 +315,7 @@ impl Types {
                 function_info.values.insert(*result, result_type);
                 Ok(())
             }
+            OpCode::DLookup { target: _, keys: _, results: _ } => Ok(()),
             OpCode::BoxField { result, value: _, result_annotation: annotation } => {
                 function_info
                     .values

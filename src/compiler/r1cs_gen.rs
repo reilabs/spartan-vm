@@ -486,7 +486,6 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     }
 }
 
-
 #[derive(Clone, Debug, Copy)]
 pub struct WitnessLayout {
     pub algebraic_size: usize,
@@ -868,7 +867,14 @@ impl R1CS {
         }
     }
 
-    pub fn check_witgen_output(&self, pre_comm_witness: &[crate::compiler::Field], post_comm_witness: &[crate::compiler::Field], a: &[crate::compiler::Field], b: &[crate::compiler::Field], c: &[crate::compiler::Field]) -> bool {
+    pub fn check_witgen_output(
+        &self,
+        pre_comm_witness: &[crate::compiler::Field],
+        post_comm_witness: &[crate::compiler::Field],
+        a: &[crate::compiler::Field],
+        b: &[crate::compiler::Field],
+        c: &[crate::compiler::Field],
+    ) -> bool {
         let witness = [pre_comm_witness, post_comm_witness].concat();
         if a.len() != self.constraints_layout.size() {
             error!(message = %"The a vector has the wrong length", expected = self.constraints_layout.size(), actual = a.len());
@@ -924,7 +930,13 @@ impl R1CS {
         return true;
     }
 
-    pub fn check_ad_output(&self, coeffs: &[crate::compiler::Field], a: &[crate::compiler::Field], b: &[crate::compiler::Field], c: &[crate::compiler::Field]) -> bool {
+    pub fn check_ad_output(
+        &self,
+        coeffs: &[crate::compiler::Field],
+        a: &[crate::compiler::Field],
+        b: &[crate::compiler::Field],
+        c: &[crate::compiler::Field],
+    ) -> bool {
         let mut a = a.to_vec();
         let mut b = b.to_vec();
         let mut c = c.to_vec();
@@ -939,19 +951,30 @@ impl R1CS {
                 c[*c_ix] -= *c_coeff * *coeff;
             }
         }
+        let mut wrongs = 0;
         for i in 0..a.len() {
             if a[i] != crate::compiler::Field::ZERO {
-                error!(message = %"Wrong A deriv for witness", index = i, actual = a[i].to_string(), expected = 0.to_string());
-                return false;
+                if wrongs == 0 {
+                    error!(message = %"Wrong A deriv for witness", index = i);
+                }
+                wrongs += 1;
             }
             if b[i] != crate::compiler::Field::ZERO {
-                error!(message = %"Wrong B deriv for witness", index = i, actual = b[i].to_string(), expected = 0.to_string());
-                return false;
+                if wrongs == 0 {
+                    error!(message = %"Wrong B deriv for witness", index = i);
+                }
+                wrongs += 1;
             }
             if c[i] != crate::compiler::Field::ZERO {
-                error!(message = %"Wrong C deriv for witness", index = i, actual = c[i].to_string(), expected = 0.to_string());
-                return false;
+                if wrongs == 0 {
+                    error!(message = %"Wrong C deriv for witness", index = i);
+                }
+                wrongs += 1;
             }
+        }
+        if wrongs > 0 {
+            error!("{} out of {} wrong derivatives", wrongs, 3*a.len());
+            return false;
         }
         return true;
     }

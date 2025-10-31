@@ -100,6 +100,7 @@ impl WitnessWriteToFresh {
                         | OpCode::BumpD { .. }
                         | OpCode::Rangecheck { .. }
                         | OpCode::Lookup { .. }
+                        | OpCode::DLookup { .. }
                         | OpCode::ReadGlobal { .. } => instruction.clone(),
                     };
                     *instruction = new_instruction;
