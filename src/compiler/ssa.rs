@@ -47,8 +47,15 @@ impl<'a> LocalFunctionAnnotator<'a> {
 }
 
 #[derive(Clone)]
+pub enum GlobalDef {
+    Const(Const),
+    Array(Vec<usize>, Type<Empty>),
+}
+
+#[derive(Clone)]
 pub struct SSA<V> {
     functions: HashMap<FunctionId, Function<V>>,
+    globals: Vec<GlobalDef>,
     main_id: FunctionId,
     next_function_id: u64,
 }
@@ -64,6 +71,7 @@ where
         functions.insert(main_id, main_function);
         SSA {
             functions,
+            globals: Vec::new(),
             main_id,
             next_function_id: 1,
         }
@@ -73,6 +81,7 @@ where
         (
             SSA {
                 functions: HashMap::new(),
+                globals: self.globals,
                 main_id: self.main_id,
                 next_function_id: self.next_function_id,
             },
@@ -141,6 +150,14 @@ where
 
     pub fn get_function_ids(&self) -> impl Iterator<Item = FunctionId> {
         self.functions.keys().copied()
+    }
+
+    pub fn set_globals(&mut self, globals: Vec<GlobalDef>) {
+        self.globals = globals;
+    }
+
+    pub fn get_globals(&self) -> &[GlobalDef] {
+        &self.globals
     }
 }
 
@@ -1051,6 +1068,7 @@ pub enum DMatrix {
 #[derive(Debug, Clone, Copy)]
 pub enum LookupTarget<V> {
     Rangecheck(u8),
+    DynRangecheck(V),
     Array(V),
 }
 
@@ -1394,6 +1412,7 @@ impl<V: Display + Clone> OpCode<V> {
                 let results_str = results.iter().map(|v| format!("v{}", v.0)).join(", ");
                 let target_str = match target {
                     LookupTarget::Rangecheck(n) => format!("rngchk({})", n),
+                    LookupTarget::DynRangecheck(v) => format!("rngchk(_ < v{})", v.0),
                     LookupTarget::Array(arr) => format!("v{}", arr.0),
                 };
                 format!(
@@ -1429,6 +1448,7 @@ impl<V: Display + Clone> OpCode<V> {
                 let results_str = results.iter().map(|v| format!("v{}", v.0)).join(", ");
                 let target_str = match target {
                     LookupTarget::Rangecheck(n) => format!("rngchk({})", n),
+                    LookupTarget::DynRangecheck(v) => format!("rngchk(_ < v{})", v.0),
                     LookupTarget::Array(arr) => format!("v{}", arr.0),
                 };
                 format!(
@@ -1691,6 +1711,9 @@ impl<V> OpCode<V> {
                 let mut ret_vec = vec![];
                 match target {
                     LookupTarget::Rangecheck(_) => {}
+                    LookupTarget::DynRangecheck(v) => {
+                        ret_vec.push(v);
+                    }
                     LookupTarget::Array(arr) => {
                         ret_vec.push(arr);
                     }
@@ -1894,6 +1917,9 @@ impl<V> OpCode<V> {
                 let mut ret_vec = vec![];
                 match target {
                     LookupTarget::Rangecheck(_) => {}
+                    LookupTarget::DynRangecheck(v) => {
+                        ret_vec.push(v);
+                    }
                     LookupTarget::Array(arr) => {
                         ret_vec.push(arr);
                     }
@@ -2046,6 +2072,9 @@ impl<V> OpCode<V> {
                 let mut ret_vec = vec![];
                 match target {
                     LookupTarget::Rangecheck(_) => {}
+                    LookupTarget::DynRangecheck(v) => {
+                        ret_vec.push(v);
+                    }
                     LookupTarget::Array(arr) => {
                         ret_vec.push(arr);
                     }

@@ -50,6 +50,17 @@ impl<V> TypeExpr<V> {
             _ => false,
         }
     }
+
+    pub fn as_pure<V2: CommutativeMonoid>(&self) -> TypeExpr<V2> {
+        match self {
+            TypeExpr::Field => TypeExpr::Field,
+            TypeExpr::U(size) => TypeExpr::U(*size),
+            TypeExpr::BoxedField => TypeExpr::BoxedField,
+            TypeExpr::Array(inner, size) => TypeExpr::Array(Box::new(inner.as_pure()), *size),
+            TypeExpr::Slice(inner) => TypeExpr::Slice(Box::new(inner.as_pure())),
+            TypeExpr::Ref(inner) => TypeExpr::Ref(Box::new(inner.as_pure())),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,12 +90,9 @@ impl<V: Display> Display for Type<V> {
                 inner,
                 size,
             ),
-            TypeExpr::Slice(inner) => write!(
-                f,
-                "Slice{}<{}>",
-                format_annotation(&self.annotation),
-                inner,
-            ),
+            TypeExpr::Slice(inner) => {
+                write!(f, "Slice{}<{}>", format_annotation(&self.annotation), inner,)
+            }
             TypeExpr::Ref(inner) => {
                 write!(f, "Ref{}<{}>", format_annotation(&self.annotation), inner)
             }
@@ -263,6 +271,13 @@ impl<V> Type<V> {
             TypeExpr::U(size) => *size,
             TypeExpr::Field => 254, // TODO: parametrize
             _ => panic!("Type is not a u"),
+        }
+    }
+
+    pub fn as_pure<V2: CommutativeMonoid>(&self) -> Type<V2> {
+        Type {
+            expr: self.expr.as_pure(),
+            annotation: V2::empty(),
         }
     }
 }

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use tracing::{Level, instrument};
+
 use crate::compiler::{
     flow_analysis::FlowAnalysis,
     ir::r#type::{Empty, Type, TypeExpr},
@@ -14,6 +16,7 @@ impl UntaintControlFlow {
         Self {}
     }
 
+    #[instrument(skip_all, name = "UntaintControlFlow::run")]
     pub fn run(
         &mut self,
         ssa: SSA<Empty>,
@@ -31,6 +34,7 @@ impl UntaintControlFlow {
         result_ssa
     }
 
+    #[instrument(skip_all, name = "UntaintControlFlow::run_function", level = Level::DEBUG, fields(function = function.get_name()))]
     fn run_function(
         &mut self,
         function_id: FunctionId,
@@ -400,19 +404,55 @@ impl UntaintControlFlow {
                     } => {
                         new_instructions.push(instruction);
                     }
-                    OpCode::AssertEq { lhs: _, rhs: _ } => {
-                        assert_eq!(block_taint, None); // TODO: support conditional asserts
-                        new_instructions.push(instruction);
+                    OpCode::AssertEq { lhs, rhs } => {
+                        match block_taint {
+                            Some(taint) => {
+                                let new_rhs = function.fresh_value();
+                                new_instructions.push(OpCode::Select {
+                                    result: new_rhs,
+                                    cond: taint,
+                                    if_t: rhs,
+                                    if_f: lhs,
+                                });
+                                new_instructions.push(OpCode::AssertEq {
+                                    lhs: lhs,
+                                    rhs: new_rhs,
+                                })
+                            }
+                            None => new_instructions.push(instruction),
+                        }
                     }
-                    OpCode::Store { ptr, value: _ } => {
+                    OpCode::Store { ptr, value: v } => {
                         let ptr_taint = function_taint
                             .get_value_taint(ptr)
                             .toplevel_taint()
                             .expect_constant();
                         // writes to dynamic ptr not supported
                         assert_eq!(ptr_taint, ConstantTaint::Pure);
-                        assert_eq!(block_taint, None); // TODO: support conditional writes
-                        new_instructions.push(instruction);
+
+                        match block_taint {
+                            Some(taint) => {
+                                let old_value = function.fresh_value();
+                                new_instructions.push(OpCode::Load {
+                                    result: old_value,
+                                    ptr: ptr,
+                                });
+
+                                let new_value = function.fresh_value();
+                                new_instructions.push(OpCode::Select {
+                                    result: new_value,
+                                    cond: taint,
+                                    if_t: v,
+                                    if_f: old_value,
+                                });
+
+                                new_instructions.push(OpCode::Store {
+                                    ptr: ptr,
+                                    value: new_value,
+                                });
+                            }
+                            None => new_instructions.push(instruction),
+                        }
                     }
                     OpCode::Load { result: _, ptr } => {
                         let ptr_taint = function_taint
@@ -426,19 +466,14 @@ impl UntaintControlFlow {
                     OpCode::ArrayGet {
                         result: _,
                         array: arr,
-                        index: idx,
+                        index: _,
                     } => {
                         let arr_taint = function_taint
                             .get_value_taint(arr)
                             .toplevel_taint()
                             .expect_constant();
-                        let idx_taint = function_taint
-                            .get_value_taint(idx)
-                            .toplevel_taint()
-                            .expect_constant();
                         // dynamic array access not supported
                         assert_eq!(arr_taint, ConstantTaint::Pure);
-                        assert_eq!(idx_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
                     OpCode::ArraySet {
@@ -501,7 +536,6 @@ impl UntaintControlFlow {
                     match cond_taint {
                         ConstantTaint::Pure => {}
                         ConstantTaint::Witness => {
-                            block.set_terminator(Terminator::Jmp(if_true, vec![]));
                             let child_block_taint = match block_taint {
                                 Some(tnt) => {
                                     let result_val = function.fresh_value();
@@ -522,89 +556,108 @@ impl UntaintControlFlow {
 
                             let merge = cfg.get_merge_point(block_id);
 
-                            if merge == function.get_entry_id() {
-                                panic!(
-                                    "TODO: jump back into entry not supported yet. Is it even possible?"
-                                )
-                            }
+                            // If one of the branches is empty, we just jump to the other and
+                            // there's no need to merge any values – this is purely side-effectful,
+                            // which the instruction rewrites will handle.
+                            if merge == if_true {
+                                block.set_terminator(Terminator::Jmp(if_false, vec![]));
+                            } else if merge == if_false {
+                                block.set_terminator(Terminator::Jmp(if_true, vec![]));
+                            } else {
+                                block.set_terminator(Terminator::Jmp(if_true, vec![]));
 
-                            let jumps = cfg.get_jumps_into_merge_from_branch(if_true, merge);
-                            if jumps.len() != 1 {
-                                panic!("TODO: handle multiple jumps into merge");
-                            }
-                            let out_true_block = jumps[0];
-
-                            // We remove the parameters from the merge block – they will be un-phi-fied
-                            let merge_params = function.get_block_mut(merge).take_parameters();
-
-                            for (_, typ) in &merge_params {
-                                match typ {
-                                    Type {
-                                        expr: TypeExpr::Array(_, _),
-                                        ..
-                                    } => {
-                                        panic!("TODO: Witness array not supported yet")
-                                    }
-                                    Type {
-                                        expr: TypeExpr::Ref(_),
-                                        ..
-                                    } => {
-                                        panic!("TODO: Witness ref not supported yet")
-                                    }
-                                    _ => {}
+                                if merge == function.get_entry_id() {
+                                    panic!(
+                                        "TODO: jump back into entry not supported yet. Is it even possible?"
+                                    )
                                 }
-                            }
 
-                            let args_passed_from_lhs = match function
-                                .get_block_mut(out_true_block)
-                                .take_terminator()
-                            {
-                                Some(Terminator::Jmp(_, args)) => args,
-                                _ => panic!(
-                                    "Impossible – out jump must be a JMP, otherwise the join point wouldn't be a join point"
-                                ),
-                            };
-
-                            // Jump straight to the false block
-                            function
-                                .get_block_mut(out_true_block)
-                                .set_terminator(Terminator::Jmp(if_false, vec![]));
-
-                            let jumps = cfg.get_jumps_into_merge_from_branch(if_false, merge);
-                            if jumps.len() != 1 {
-                                panic!("TODO: handle multiple jumps into merge");
-                            }
-                            let out_false_block = jumps[0];
-                            let args_passed_from_rhs = match function
-                                .get_block_mut(out_false_block)
-                                .take_terminator()
-                            {
-                                Some(Terminator::Jmp(_, args)) => args,
-                                _ => panic!(
-                                    "Impossible – out jump must be a JMP, otherwise the join point wouldn't be a join point"
-                                ),
-                            };
-
-                            let merger_block = function.add_block();
-                            function
-                                .get_block_mut(out_false_block)
-                                .set_terminator(Terminator::Jmp(merger_block, vec![]));
-                            function
-                                .get_block_mut(merger_block)
-                                .set_terminator(Terminator::Jmp(merge, vec![]));
-
-                            if args_passed_from_lhs.len() > 0 {
-                                for ((res, _), (lhs, rhs)) in merge_params.iter().zip(
-                                    args_passed_from_lhs.iter().zip(args_passed_from_rhs.iter()),
-                                ) {
-                                    function.get_block_mut(merger_block).push_instruction(
-                                        OpCode::Select {
-                                            result: *res,
-                                            cond: cond,
-                                            if_t: *lhs,
-                                            if_f: *rhs,
-                                        },
+                                let jumps = cfg.get_jumps_into_merge_from_branch(if_true, merge);
+                                if jumps.len() != 1 {
+                                    panic!(
+                                        "TODO: handle multiple jumps into merge {:?} {:?} {:?} {:?}",
+                                        block_id, if_true, merge, jumps
                                     );
+                                }
+                                let out_true_block = jumps[0];
+
+                                // We remove the parameters from the merge block – they will be un-phi-fied
+                                let merge_params = function.get_block_mut(merge).take_parameters();
+
+                                for (_, typ) in &merge_params {
+                                    match typ {
+                                        Type {
+                                            expr: TypeExpr::Array(_, _),
+                                            ..
+                                        } => {
+                                            panic!("TODO: Witness array not supported yet")
+                                        }
+                                        Type {
+                                            expr: TypeExpr::Ref(_),
+                                            ..
+                                        } => {
+                                            panic!("TODO: Witness ref not supported yet")
+                                        }
+                                        _ => {}
+                                    }
+                                }
+
+                                let args_passed_from_lhs = match function
+                                    .get_block_mut(out_true_block)
+                                    .take_terminator()
+                                {
+                                    Some(Terminator::Jmp(_, args)) => args,
+                                    _ => panic!(
+                                        "Impossible – out jump must be a JMP, otherwise the join point wouldn't be a join point"
+                                    ),
+                                };
+
+                                // Jump straight to the false block
+                                function
+                                    .get_block_mut(out_true_block)
+                                    .set_terminator(Terminator::Jmp(if_false, vec![]));
+
+                                let jumps = cfg.get_jumps_into_merge_from_branch(if_false, merge);
+                                if jumps.len() != 1 {
+                                    panic!(
+                                        "TODO: handle multiple jumps into merge {:?} {:?} {:?} {:?}",
+                                        block_id, if_false, merge, jumps
+                                    );
+                                }
+                                let out_false_block = jumps[0];
+                                let args_passed_from_rhs = match function
+                                    .get_block_mut(out_false_block)
+                                    .take_terminator()
+                                {
+                                    Some(Terminator::Jmp(_, args)) => args,
+                                    _ => panic!(
+                                        "Impossible – out jump must be a JMP, otherwise the join point wouldn't be a join point"
+                                    ),
+                                };
+
+                                let merger_block = function.add_block();
+                                function
+                                    .get_block_mut(out_false_block)
+                                    .set_terminator(Terminator::Jmp(merger_block, vec![]));
+                                function
+                                    .get_block_mut(merger_block)
+                                    .set_terminator(Terminator::Jmp(merge, vec![]));
+
+                                if args_passed_from_lhs.len() > 0 {
+                                    for ((res, _), (lhs, rhs)) in merge_params.iter().zip(
+                                        args_passed_from_lhs
+                                            .iter()
+                                            .zip(args_passed_from_rhs.iter()),
+                                    ) {
+                                        function.get_block_mut(merger_block).push_instruction(
+                                            OpCode::Select {
+                                                result: *res,
+                                                cond: cond,
+                                                if_t: *lhs,
+                                                if_f: *rhs,
+                                            },
+                                        );
+                                    }
                                 }
                             }
                         }

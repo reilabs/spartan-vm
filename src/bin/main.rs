@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf, process::ExitCode};
 
-use ark_ff::{AdditiveGroup as _, UniformRand as _};
+use ark_ff::UniformRand as _;
 use clap::Parser;
 use spartan_vm::{Error, Project, compiler::Field, driver::Driver, vm::interpreter};
 use tracing::{error, info, warn};
@@ -148,10 +148,15 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         ad_coeffs.push(ark_bn254::Fr::rand(&mut rand::thread_rng()));
     }
 
-    let (ad_a, ad_b, ad_c, ad_instrumenter) = interpreter::run_ad(&mut ad_binary, &ad_coeffs, r1cs.witness_layout, r1cs.constraints_layout);
+    let (ad_a, ad_b, ad_c, ad_instrumenter) = interpreter::run_ad(
+        &mut ad_binary,
+        &ad_coeffs,
+        r1cs.witness_layout,
+        r1cs.constraints_layout,
+    );
 
-    let leftover_memory = ad_instrumenter
-        .plot(&driver.get_debug_output_dir().join("ad_vm_memory.png"));
+    let leftover_memory =
+        ad_instrumenter.plot(&driver.get_debug_output_dir().join("ad_vm_memory.png"));
     if leftover_memory > 0 {
         warn!(message = %"AD VM memory leak detected", leftover_memory);
     } else {
@@ -167,22 +172,35 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
 
     fs::write(
         driver.get_debug_output_dir().join("ad_a.txt"),
-        ad_a.iter().map(|w| w.to_string()).collect::<Vec<_>>().join("\n"),
+        ad_a.iter()
+            .map(|w| w.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
     )
     .unwrap();
     fs::write(
         driver.get_debug_output_dir().join("ad_b.txt"),
-        ad_b.iter().map(|w| w.to_string()).collect::<Vec<_>>().join("\n"),
+        ad_b.iter()
+            .map(|w| w.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
     )
     .unwrap();
     fs::write(
         driver.get_debug_output_dir().join("ad_c.txt"),
-        ad_c.iter().map(|w| w.to_string()).collect::<Vec<_>>().join("\n"),
+        ad_c.iter()
+            .map(|w| w.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
     )
     .unwrap();
     fs::write(
         driver.get_debug_output_dir().join("ad_coeffs.txt"),
-        ad_coeffs.iter().map(|w| w.to_string()).collect::<Vec<_>>().join("\n"),
+        ad_coeffs
+            .iter()
+            .map(|w| w.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
     )
     .unwrap();
 

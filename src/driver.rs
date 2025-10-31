@@ -14,7 +14,20 @@ use crate::{
         monomorphization::Monomorphization,
         pass_manager::PassManager,
         passes::{
-            arithmetic_simplifier::ArithmeticSimplifier, box_fields::BoxFields, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, specializer::Specializer, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
+            arithmetic_simplifier::ArithmeticSimplifier,
+            box_fields::BoxFields,
+            common_subexpression_elimination::CSE,
+            condition_propagation::ConditionPropagation,
+            dead_code_elimination::{self, DCE},
+            deduplicate_phis::DeduplicatePhis,
+            explicit_witness::ExplicitWitness,
+            fix_double_jumps::FixDoubleJumps,
+            mem2reg::Mem2Reg,
+            pull_into_assert::PullIntoAssert,
+            rc_insertion::RCInsertion,
+            specializer::Specializer,
+            witness_write_to_fresh::WitnessWriteToFresh,
+            witness_write_to_void::WitnessWriteToVoid,
         },
         r1cs_gen::{R1CGen, R1CS},
         ssa::{DefaultSsaAnnotator, SSA},
@@ -154,6 +167,14 @@ impl Driver {
         .unwrap();
 
         let flow_analysis = FlowAnalysis::run(&ssa);
+
+        if self.draw_cfg {
+            flow_analysis.generate_images(
+                self.get_debug_output_dir().join("before_untaint_cf"),
+                &ssa,
+                "before untaint control flow".to_string(),
+            );
+        }
 
         let mut untaint_cf = UntaintControlFlow::new();
         self.monomorphized_ssa = Some(untaint_cf.run(ssa, &taint_analysis, &flow_analysis));
@@ -319,136 +340,4 @@ impl Driver {
 
         Ok(binary)
     }
-
-    // STUFF I WILL NEED TO BRING BACK AD MODE
-    // let mut r1cs_coeffs = vec![];
-    // for _ in s0..r1cs.len() {
-    //     r1cs_coeffs.push(ark_bn254::Fr::rand(&mut rand::thread_rng()));
-    // }
-
-    // let mut res_a = vec![ark_bn254::Fr::ZERO; r1cs_gen.get_witness_size()];
-    // let mut res_b = vec![ark_bn254::Fr::ZERO; r1cs_gen.get_witness_size()];
-    // let mut res_c = vec![ark_bn254::Fr::ZERO; r1cs_gen.get_witness_size()];
-    // self.compute_r1cs_derivatives(&r1cs, &r1cs_coeffs, &mut res_a, &mut res_b, &mut res_c);
-
-    // fs::write(
-    //     debug_output_dir.join("deriv_coeffs.txt"),
-    //     r1cs_coeffs
-    //         .iter()
-    //         .map(|c| c.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
-    // fs::write(
-    //     debug_output_dir.join("deriv_a.txt"),
-    //     res_a
-    //         .iter()
-    //         .map(|c| c.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
-    // fs::write(
-    //     debug_output_dir.join("deriv_b.txt"),
-    //     res_b
-    //         .iter()
-    //         .map(|c| c.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
-    // fs::write(
-    //     debug_output_dir.join("deriv_c.txt"),
-    //     res_c
-    //         .iter()
-    //         .map(|c| c.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join("\n"),
-    // )
-    // .unwrap();
-
-    // let mut r1cs_phase_2 = PassManager::<ConstantTaint>::new(
-    //     "r1cs_phase_2".to_string(),
-    //     draw_cfg,
-    //     vec![
-    //         Box::new(BoxFields::new()),
-    //         Box::new(RCInsertion::new()),
-    //         Box::new(FixDoubleJumps::new()),
-    //     ],
-    // );
-    // r1cs_phase_1.set_debug_output_dir(debug_output_dir.clone());
-    // r1cs_phase_1.run(&mut r1cs_ssa);
-
-    // {
-    //     let flow_analysis = FlowAnalysis::run(&r1cs_ssa);
-    //     let type_info = Types::new().run(&r1cs_ssa, &flow_analysis);
-
-    //     let codegen = CodeGen::new();
-    //     let program = codegen.run(&r1cs_ssa, &flow_analysis, &type_info);
-    //     fs::write(
-    //         debug_output_dir.join("ad_program.txt"),
-    //         format!("{}", program),
-    //     )
-    //     .unwrap();
-    //     let binary = program.to_binary();
-    //     let (da, db, dc, instrumenter) = interpreter::run_ad(
-    //         &binary,
-    //         r1cs_gen.get_witness_size(),
-    //         &r1cs_coeffs,
-    //     );
-    //     let leftover_memory = instrumenter.plot(&debug_output_dir.join("ad_vm_memory.png"));
-    //     if leftover_memory > 0 {
-    //         warn!(message = %"AD VM memory leak detected", leftover_memory);
-    //     } else {
-    //         info!(message = %"AD VM memory leak not detected");
-    //     }
-
-    //     if da != res_a {
-    //         error!(message = %"Derivative of A does not match");
-    //     } else {
-    //         info!(message = %"Derivative of A matches");
-    //     }
-
-    //     if db != res_b {
-    //         error!(message = %"Derivative of B does not match");
-    //     } else {
-    //         info!(message = %"Derivative of B matches");
-    //     }
-
-    //     if dc != res_c {
-    //         error!(message = %"Derivative of C does not match");
-    //     } else {
-    //         info!(message = %"Derivative of C matches");
-    //     }
-
-    //     fs::write(
-    //         debug_output_dir.join("deriv_a_vm.txt"),
-    //         da
-    //             .iter()
-    //             .map(|c| c.to_string())
-    //             .collect::<Vec<_>>()
-    //             .join("\n"),
-    //     )
-    //     .unwrap();
-    //     fs::write(
-    //         debug_output_dir.join("deriv_b_vm.txt"),
-    //         db
-    //             .iter()
-    //             .map(|c| c.to_string())
-    //             .collect::<Vec<_>>()
-    //             .join("\n"),
-    //     )
-    //     .unwrap();
-    //     fs::write(
-    //         debug_output_dir.join("deriv_c_vm.txt"),
-    //         dc
-    //             .iter()
-    //             .map(|c| c.to_string())
-    //             .collect::<Vec<_>>()
-    //             .join("\n"),
-    //     )
-    //     .unwrap();
-
-    // }
 }

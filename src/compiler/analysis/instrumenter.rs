@@ -5,7 +5,16 @@ use itertools::Itertools;
 use tracing::instrument;
 
 use crate::compiler::{
-    analysis::{symbolic_executor::{self, SymbolicExecutor}, types::TypeInfo}, ir::r#type::{Type, TypeExpr}, ssa::{BinaryArithOpKind, CastTarget, CmpKind, Endianness, FunctionId, MemOp, Radix, SeqType, SSA}, taint_analysis::ConstantTaint, Field
+    Field,
+    analysis::{
+        symbolic_executor::{self, SymbolicExecutor},
+        types::TypeInfo,
+    },
+    ir::r#type::{Type, TypeExpr},
+    ssa::{
+        BinaryArithOpKind, CastTarget, CmpKind, Endianness, FunctionId, MemOp, Radix, SSA, SeqType,
+    },
+    taint_analysis::ConstantTaint,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -66,7 +75,7 @@ impl Value {
         &self,
         b: &Value,
         cmp_kind: &crate::compiler::ssa::CmpKind,
-        _instrumenter: &mut dyn OpInstrumenter,
+        instrumenter: &mut dyn OpInstrumenter,
     ) -> Value {
         match (self, b) {
             (Value::U(_, a), Value::U(_, b)) => match cmp_kind {
@@ -77,8 +86,10 @@ impl Value {
                 CmpKind::Eq => Value::U(1, if a == b { 1 } else { 0 }),
                 CmpKind::Lt => Value::U(1, if a < b { 1 } else { 0 }),
             },
-            (Value::UWitness(_), _) | (_, Value::UWitness(_)) => {
-                todo!();
+            (Value::UWitness(i), _) | (_, Value::UWitness(i)) => {
+                instrumenter.record_constraints(1);
+                instrumenter.record_rangechecks(*i as u8, 1);
+                Value::UWitness(1)
             }
             (Value::FWitness, _) | (_, Value::FWitness) => {
                 todo!();
@@ -135,9 +146,13 @@ impl Value {
                     _ => Value::FWitness,
                 }
             }
-            (Value::UWitness(_), _) | (_, Value::UWitness(_)) => {
-                todo!();
-            }
+            (Value::UWitness(1), _) | (_, Value::UWitness(1)) => match binary_arith_op_kind {
+                BinaryArithOpKind::And => {
+                    instrumenter.record_constraints(1);
+                    Value::UWitness(1)
+                }
+                _ => todo!("{:?}", binary_arith_op_kind),
+            },
             (_, _) => panic!("Cannot perform binary arithmetic on {:?} and {:?}", self, b),
         }
     }
@@ -225,7 +240,7 @@ impl Value {
 
     fn rangecheck(&self, max_bits: usize, instrumenter: &mut dyn OpInstrumenter) {
         if self.is_witness() {
-            instrumenter.record_rangecheck(max_bits as u8);
+            instrumenter.record_rangechecks(max_bits as u8, 1);
         }
     }
 
@@ -237,9 +252,14 @@ impl Value {
         }
     }
 
-    fn array_get(&self, index: &Value, _instrumenter: &mut dyn OpInstrumenter) -> Value {
+    fn array_get(&self, index: &Value, tp: &Type<ConstantTaint>, instrumenter: &mut dyn OpInstrumenter) -> Value {
         match (self, index) {
             (Value::Array(vals), Value::U(_, index)) => vals[*index as usize].clone(),
+            (Value::Array(vals), Value::UWitness(_)) => {
+                // TODO: Measure type width
+                instrumenter.record_lookups(vals.len(), 1, 1);
+                Value::witness_of(tp)
+            }
             _ => panic!(
                 "Cannot get array element from {:?} with index {:?}",
                 self, index
@@ -295,7 +315,9 @@ impl Value {
     ) -> Value {
         match (self, cast_target) {
             (Value::U(_, v), CastTarget::U(s2)) => Value::U(*s2, *v),
+            (Value::UWitness(_), CastTarget::U(s2)) => Value::UWitness(*s2),
             (Value::U(_, v), CastTarget::Field) => Value::Field(Field::from(*v)),
+            (Value::UWitness(_), CastTarget::Field) => Value::FWitness,
             (Value::Field(f), CastTarget::Field) => Value::Field(f.clone()),
             (Value::Field(f), CastTarget::U(s)) => {
                 let bigint = f.into_bigint();
@@ -348,10 +370,15 @@ impl Value {
         &self,
         radix: &Radix<Value>,
         _endianness: &crate::compiler::ssa::Endianness,
-        _size: usize,
-        _instrumenter: &mut dyn OpInstrumenter,
+        size: usize,
+        instrumenter: &mut dyn OpInstrumenter,
     ) -> Value {
         match (self, radix) {
+            (Value::FWitness, Radix::Dyn(Value::U(32, 256))) => {
+                instrumenter.record_rangechecks(8, size);
+                instrumenter.record_constraints(1);
+                Value::Array(vec![Value::UWitness(8); size])
+            }
             _ => panic!("Cannot convert {:?} to radix {:?}", self, radix),
         }
     }
@@ -359,6 +386,7 @@ impl Value {
     fn not_op(&self, _instrumenter: &mut dyn OpInstrumenter) -> Value {
         match self {
             Value::U(s, v) => Value::U(*s, !v),
+            Value::UWitness(1) => Value::UWitness(1),
             _ => panic!("Cannot perform not operation on {:?}", self),
         }
     }
@@ -580,10 +608,10 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         let mut res = SpecSplitValue {
             unspecialized: self
                 .unspecialized
-                .array_get(&i.unspecialized, instrumenter.get_unspecialized()),
+                .array_get(&i.unspecialized, tp, instrumenter.get_unspecialized()),
             specialized: self
                 .specialized
-                .array_get(&i.specialized, instrumenter.get_specialized()),
+                .array_get(&i.specialized, tp, instrumenter.get_specialized()),
         };
         res.blind_unspecialized_from(tp);
         res
@@ -661,8 +689,10 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
     }
 
     fn rangecheck(&self, max_bits: usize, instrumenter: &mut CostAnalysis) {
-        self.unspecialized.rangecheck(max_bits, instrumenter.get_unspecialized());
-        self.specialized.rangecheck(max_bits, instrumenter.get_specialized());
+        self.unspecialized
+            .rangecheck(max_bits, instrumenter.get_unspecialized());
+        self.specialized
+            .rangecheck(max_bits, instrumenter.get_specialized());
     }
 
     fn to_bits(
@@ -803,7 +833,8 @@ impl FunctionSignature {
 
 trait OpInstrumenter {
     fn record_constraints(&mut self, number: usize);
-    fn record_rangecheck(&mut self, size: u8);
+    fn record_rangechecks(&mut self, size: u8, count: usize);
+    fn record_lookups(&mut self, keys: usize, results: usize, count:usize);
 }
 
 trait FunctionInstrumenter {
@@ -816,7 +847,8 @@ trait FunctionInstrumenter {
 #[derive(Debug, Clone)]
 struct Instrumenter {
     constraints: usize,
-    rangechecks: HashMap<u8, usize>
+    rangechecks: HashMap<u8, usize>,
+    lookups: HashMap<(usize, usize), usize>,
 }
 
 impl Instrumenter {
@@ -824,6 +856,7 @@ impl Instrumenter {
         Self {
             constraints: 0,
             rangechecks: HashMap::new(),
+            lookups: HashMap::new(),
         }
     }
 }
@@ -833,8 +866,12 @@ impl OpInstrumenter for Instrumenter {
         self.constraints += number;
     }
 
-    fn record_rangecheck(&mut self, size: u8) {
-        *self.rangechecks.entry(size).or_insert(0) += 1;
+    fn record_rangechecks(&mut self, size: u8, count: usize) {
+        *self.rangechecks.entry(size).or_insert(0) += count;
+    }
+
+    fn record_lookups(&mut self, keys: usize, results: usize, count: usize) {
+        *self.lookups.entry((keys, results)).or_insert(0) += count;
     }
 }
 
@@ -883,7 +920,8 @@ impl FunctionInstrumenter for DummyInstrumenter {
 
 impl OpInstrumenter for DummyInstrumenter {
     fn record_constraints(&mut self, _: usize) {}
-    fn record_rangecheck(&mut self, _: u8) {}
+    fn record_rangechecks(&mut self, _: u8, _: usize) {}
+    fn record_lookups(&mut self, _: usize, _: usize, _: usize) {}
 }
 
 pub struct CostAnalysis {
@@ -1126,7 +1164,11 @@ impl CostEstimator {
     }
 
     #[instrument(skip_all, name = "CostEstimator::run")]
-    pub fn run(&self, ssa: &SSA<ConstantTaint>, type_info: &TypeInfo<ConstantTaint>) -> CostAnalysis {
+    pub fn run(
+        &self,
+        ssa: &SSA<ConstantTaint>,
+        type_info: &TypeInfo<ConstantTaint>,
+    ) -> CostAnalysis {
         let main_sig = self.make_main_sig(ssa);
         let mut costs = CostAnalysis {
             functions: HashMap::new(),

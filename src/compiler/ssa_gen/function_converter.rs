@@ -22,11 +22,11 @@ pub struct FunctionConverter {
     type_converter: TypeConverter,
     value_mapper: HashMap<NoirValueId, ValueId>,
     block_mapper: HashMap<BasicBlockId, BlockId>,
-    global_value_mapper: HashMap<NoirValueId, ValueId>,
+    global_value_mapper: HashMap<NoirValueId, usize>,
 }
 
 impl FunctionConverter {
-    pub fn new(global_value_mapper: HashMap<NoirValueId, ValueId>) -> Self {
+    pub fn new(global_value_mapper: HashMap<NoirValueId, usize>) -> Self {
         FunctionConverter {
             type_converter: TypeConverter::new(),
             value_mapper: HashMap::new(),
@@ -604,7 +604,7 @@ impl FunctionConverter {
             },
             Value::Global(global) => custom_function.push_read_global(
                 block,
-                self.global_value_mapper.get(&noir_value_id).unwrap().0,
+                *self.global_value_mapper.get(&noir_value_id).unwrap() as u64,
                 self.type_converter.convert_type(global),
             ),
             _ => *self.value_mapper.get(&noir_value_id).expect(&format!(

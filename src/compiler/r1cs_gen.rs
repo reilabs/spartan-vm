@@ -5,7 +5,7 @@ use crate::compiler::{
         symbolic_executor::{self, SymbolicExecutor},
         types::TypeInfo,
     },
-    ir::r#type::{Type, TypeExpr},
+    ir::r#type::{CommutativeMonoid, Type, TypeExpr},
     ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, MemOp, Radix, SSA},
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
@@ -266,6 +266,7 @@ impl<V: Clone> symbolic_executor::Context<Value, V> for R1CGen {
                     elements: els,
                 });
             }
+            super::ssa::LookupTarget::DynRangecheck(_) => todo!("dyn rangechecks"),
             super::ssa::LookupTarget::Array(_) => todo!("lookups from arrays"),
         }
     }
@@ -637,7 +638,7 @@ impl R1CGen {
     }
 
     #[instrument(skip_all, name = "R1CGen::run")]
-    pub fn run<V: Clone>(&mut self, ssa: &SSA<V>, type_info: &TypeInfo<V>) {
+    pub fn run<V: Clone + CommutativeMonoid>(&mut self, ssa: &SSA<V>, type_info: &TypeInfo<V>) {
         let entry_point = ssa.get_main_id();
         let params = ssa.get_function(entry_point).get_param_types();
         let mut main_params = vec![];
