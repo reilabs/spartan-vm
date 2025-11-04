@@ -787,6 +787,9 @@ impl CodeGen {
                         val: layouter.get_value(keys[0]),
                     });
                 }
+                ssa::OpCode::Todo { payload, .. } => {
+                    panic!("Todo opcode encountered in Codegen: {}", payload);
+                }
                 other => panic!("Unsupported instruction: {:?}", other),
             }
         }

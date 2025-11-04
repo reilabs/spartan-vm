@@ -4,6 +4,7 @@ use crate::compiler::{
 };
 use itertools::Itertools;
 use std::{collections::HashMap, fmt::Display};
+use crate::compiler::taint_analysis::ConstantTaint;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ValueId(pub u64);
@@ -767,6 +768,14 @@ impl<V: Clone> Function<V> {
         value
     }
 
+    pub fn push_todo(&mut self, block_id: BlockId, payload: String, results: Vec<ValueId>, result_types: Vec<Type<V>>) {
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Todo { payload, results, result_types });
+    }
+
     // pub fn push_constrain(&mut self, block_id: BlockId, a: ValueId, b: ValueId, c: ValueId) {
     //     self.blocks
     //         .get_mut(&block_id)
@@ -1229,6 +1238,11 @@ pub enum OpCode<V> {
         offset: u64,
         result_type: Type<V>,
     },
+    Todo {
+        payload: String,
+        results: Vec<ValueId>,
+        result_types: Vec<Type<V>>,
+    },
 }
 
 impl<V: Display + Clone> OpCode<V> {
@@ -1604,6 +1618,13 @@ impl<V: Display + Clone> OpCode<V> {
                     typ
                 )
             }
+            OpCode::Todo { payload, results, result_types } => {
+                let results_str = results.iter()
+                    .zip(result_types.iter())
+                    .map(|(r, tp)| format!("v{}: {}", r.0, tp))
+                    .join(", ");
+                format!("todo(\"{}\", [{}])", payload, results_str)
+            }
         }
     }
 }
@@ -1773,6 +1794,10 @@ impl<V> OpCode<V> {
                 offset: _,
                 result_type: _,
             } => vec![r].into_iter(),
+            Self::Todo { results, .. } => {
+                let ret_vec: Vec<&mut ValueId> = results.iter_mut().collect();
+                ret_vec.into_iter()
+            },
         }
     }
 
@@ -1928,6 +1953,7 @@ impl<V> OpCode<V> {
                 ret_vec.extend(results);
                 ret_vec.into_iter()
             }
+            Self::Todo { .. } => vec![].into_iter(),
         }
     }
 
@@ -2083,6 +2109,7 @@ impl<V> OpCode<V> {
                 ret_vec.extend(results);
                 ret_vec.into_iter()
             }
+            Self::Todo { .. } => vec![].into_iter(),
         }
     }
 
@@ -2209,6 +2236,10 @@ impl<V> OpCode<V> {
                 result_type: _,
             } => vec![r].into_iter(),
             Self::Lookup { .. } | Self::DLookup { .. } => vec![].into_iter(),
+            Self::Todo { results, .. } => {
+                let ret_vec: Vec<&ValueId> = results.iter().collect();
+                ret_vec.into_iter()
+            },
         }
     }
 }
@@ -2236,6 +2267,58 @@ impl Terminator {
                 let values_str = values.iter().map(|v| format!("v{}", v.0)).join(", ");
                 format!("return {}", values_str)
             }
+        }
+    }
+}
+
+impl OpCode<ConstantTaint> {
+    pub fn mk_array_get(result: ValueId, array: ValueId, index: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::ArrayGet {
+            result,
+            array,
+            index,
+        }
+    }
+
+    pub fn mk_cast_to_field(result: ValueId, value: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::Cast {
+            result,
+            value,
+            target: CastTarget::Field,
+        }
+    }
+
+    pub fn mk_write_witness(result: ValueId, value_id: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::WriteWitness {
+            result: Some(result),
+            value: value_id,
+            witness_annotation: ConstantTaint::Witness,
+        }
+    }
+
+    pub fn mk_lookup_rngchk_8(value: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::Lookup {
+            target: LookupTarget::Rangecheck(8),
+            keys: vec![value],
+            results: vec![],
+        }
+    }
+
+    pub fn mk_mul(result: ValueId, lhs: ValueId, rhs: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::BinaryArithOp {
+            kind: BinaryArithOpKind::Mul,
+            result,
+            lhs,
+            rhs,
+        }
+    }
+
+    pub fn mk_add(result: ValueId, lhs: ValueId, rhs: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::BinaryArithOp {
+            kind: BinaryArithOpKind::Add,
+            result,
+            lhs,
+            rhs,
         }
     }
 }

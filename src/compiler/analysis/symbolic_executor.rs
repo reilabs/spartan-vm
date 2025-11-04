@@ -91,6 +91,10 @@ pub trait Context<V, Taint> {
     fn dlookup(&mut self, _target: LookupTarget<V>, _keys: Vec<V>, _results: Vec<V>) {
         panic!("ICE: backend does not implement dlookup");
     }
+
+    fn todo(&mut self, payload: &str, _result_types: &[Type<Taint>]) -> Vec<V> {
+        panic!("Todo opcode encountered: {}", payload);
+    }
 }
 
 pub struct SymbolicExecutor {}
@@ -487,6 +491,20 @@ impl SymbolicExecutor {
                             .map(|id| scope[id.0 as usize].as_ref().unwrap().clone())
                             .collect::<Vec<_>>();
                         ctx.dlookup(target, keys, results);
+                    }
+                    crate::compiler::ssa::OpCode::Todo { payload, results, result_types } => {
+                        // The context handler should return the result values
+                        let result_values = ctx.todo(&payload, result_types);
+                        if result_values.len() != results.len() {
+                            panic!(
+                                "Todo opcode handler returned {} values but {} were expected",
+                                result_values.len(),
+                                results.len()
+                            );
+                        }
+                        for (result_id, result_value) in results.iter().zip(result_values.iter()) {
+                            scope[result_id.0 as usize] = Some(result_value.clone());
+                        }
                     }
                 }
             }

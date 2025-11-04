@@ -307,6 +307,11 @@ impl UntaintControlFlow {
                         keys,
                         results,
                     },
+                    OpCode::Todo { payload, results, result_types } => OpCode::Todo {
+                        payload,
+                        results,
+                        result_types: result_types.iter().map(|tp| self.pure_taint_for_type(tp.clone())).collect(),
+                    },
                 };
                 new_instructions.push(new);
             }
@@ -521,6 +526,13 @@ impl UntaintControlFlow {
                         });
                     }
 
+                    OpCode::Todo { payload, results, result_types } => {
+                        new_instructions.push(OpCode::Todo { 
+                            payload, 
+                            results, 
+                            result_types 
+                        });
+                    }
                     _ => {
                         panic!("Unhandled instruction {:?}", instruction);
                     }

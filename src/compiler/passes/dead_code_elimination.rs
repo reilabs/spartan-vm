@@ -151,6 +151,9 @@ impl DCE {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
                         }
+                        OpCode::Todo { .. } => {
+                            worklist.push(WorkItem::LiveInstruction(*block_id, i));
+                        }
                         OpCode::Load { .. }
                         | OpCode::BinaryArithOp { .. }
                         | OpCode::Cmp { .. }

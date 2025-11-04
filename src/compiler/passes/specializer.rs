@@ -382,6 +382,10 @@ impl<T> symbolic_executor::Context<Val, T> for SpecializationState {
         _param_types: &[&crate::compiler::ir::r#type::Type<T>],
     ) {
     }
+
+    fn todo(&mut self, payload: &str, _result_types: &[crate::compiler::ir::r#type::Type<T>]) -> Vec<Val> {
+        todo!("Todo opcode: {}", payload);
+    }
 }
 
 impl Pass<ConstantTaint> for Specializer {

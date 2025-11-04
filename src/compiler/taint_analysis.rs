@@ -856,7 +856,8 @@ impl TaintAnalysis {
                         target: _,
                         keys: _,
                         results: _,
-                    } => {
+                    }
+                    | OpCode::Todo { .. } => {
                         panic!("Should not be present at this stage {:?}", instruction);
                     }
                 }

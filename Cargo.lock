@@ -3241,6 +3241,7 @@ dependencies = [
  "plotters",
  "rand 0.8.5",
  "serde",
+ "ssa-builder",
  "tempfile",
  "thiserror 2.0.12",
  "toml 0.8.23",
@@ -3258,6 +3259,16 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
+]
+
+[[package]]
+name = "ssa-builder"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "stringcase",
+ "syn 2.0.104",
 ]
 
 [[package]]

@@ -58,6 +58,7 @@ impl WitnessWriteToFresh {
         main_block.put_instructions(new_instructions);
 
         for (function_id, function) in ssa.iter_functions_mut() {
+            println!("Function {}:", function.get_name());
             for (_, block) in function.get_blocks_mut() {
                 for instruction in block.get_instructions_mut() {
                     let new_instruction = match instruction {
@@ -101,7 +102,8 @@ impl WitnessWriteToFresh {
                         | OpCode::Rangecheck { .. }
                         | OpCode::Lookup { .. }
                         | OpCode::DLookup { .. }
-                        | OpCode::ReadGlobal { .. } => instruction.clone(),
+                        | OpCode::ReadGlobal { .. }
+                        | OpCode::Todo { .. } => instruction.clone(),
                     };
                     *instruction = new_instruction;
                 }

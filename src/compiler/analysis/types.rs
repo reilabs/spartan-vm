@@ -348,6 +348,19 @@ impl Types {
                 Ok(())
             }
             OpCode::Lookup { target: _, keys: _, results: _ } => Ok(()),
+            OpCode::Todo { results, result_types, .. } => {
+                if results.len() != result_types.len() {
+                    return Err(format!(
+                        "Todo opcode has {} results but {} result types",
+                        results.len(),
+                        result_types.len()
+                    ));
+                }
+                for (result, result_type) in results.iter().zip(result_types.iter()) {
+                    function_info.values.insert(*result, result_type.clone());
+                }
+                Ok(())
+            }
         }
     }
 }

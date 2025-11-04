@@ -172,7 +172,8 @@ impl RCInsertion {
                     | OpCode::NextDCoeff { result: _ }
                     | OpCode::Lookup { target: _, keys: _, results: _ }
                     | OpCode::DLookup { target: _, keys: _, results: _ }
-                    | OpCode::Not { result: _, value: _ } => {
+                    | OpCode::Not { result: _, value: _ }
+                    | OpCode::Todo { .. } => {
                         let rcd_inputs = instruction
                             .get_inputs()
                             .filter(|v| self.needs_rc(type_info, v))

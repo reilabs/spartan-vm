@@ -270,6 +270,10 @@ impl<V: Clone> symbolic_executor::Context<Value, V> for R1CGen {
             super::ssa::LookupTarget::Array(_) => todo!("lookups from arrays"),
         }
     }
+
+    fn todo(&mut self, payload: &str, _result_types: &[Type<V>]) -> Vec<Value> {
+        panic!("Todo opcode encountered in R1CSGen: {}", payload);
+    }
 }
 
 impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {

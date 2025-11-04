@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["opcode-gen"]
+members = ["opcode-gen", "ssa-builder"]
 
 [package]
 name = "spartan-vm"
@@ -36,6 +36,7 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 rand = "0.8"
 
 opcode-gen = { path = "opcode-gen" }
+ssa-builder = { path = "ssa-builder" }
 
 [dev-dependencies]
 anyhow = "1.0.87"

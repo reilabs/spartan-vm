@@ -1000,6 +1000,10 @@ impl symbolic_executor::Context<SpecSplitValue, ConstantTaint> for CostAnalysis 
             pval.blind_unspecialized_from(ptype);
         }
     }
+
+    fn todo(&mut self, payload: &str, _result_types: &[Type<ConstantTaint>]) -> Vec<SpecSplitValue> {
+        panic!("Todo opcode encountered in CostAnalysis: {}", payload);
+    }
 }
 
 pub struct SpecializationSummary {
