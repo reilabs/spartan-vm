@@ -20,11 +20,12 @@ use tracing::{error, instrument, warn};
 //     LookupValueInverseAux(usize),
 // }
 
+type LC = Vec<(usize, crate::compiler::Field)>;
+
 #[derive(Clone, Debug)]
 pub enum Value {
     Const(ark_bn254::Fr),
-    WitnessVar(usize),
-    Arith(BinaryArithOpKind, Rc<Value>, Rc<Value>),
+    LC(LC),
     Array(Rc<Vec<Value>>),
     Ptr(Rc<RefCell<Value>>),
     Invalid,
@@ -34,33 +35,57 @@ impl Value {
     pub fn add(&self, other: &Value) -> Value {
         match (self, other) {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs + rhs),
-            (lhs, rhs) => Value::Arith(
-                BinaryArithOpKind::Add,
-                Rc::new(lhs.clone()),
-                Rc::new(rhs.clone()),
-            ),
+            (_, _) => {
+                let lhs = self.expect_linear_combination();
+                let rhs = other.expect_linear_combination();
+                let mut lhs_i = 0;
+                let mut rhs_i = 0;
+                let mut result = Vec::new();
+                while lhs_i < lhs.len() && rhs_i < rhs.len() {
+                    if lhs[lhs_i].0 == rhs[rhs_i].0 {
+                        let r = lhs[lhs_i].1 + rhs[rhs_i].1;
+                        if r != ark_bn254::Fr::ZERO {
+                            result.push((lhs[lhs_i].0, r));
+                        }
+                        lhs_i += 1;
+                        rhs_i += 1;
+                    } else if lhs[lhs_i].0 < rhs[rhs_i].0 {
+                        result.push(lhs[lhs_i]);
+                        lhs_i += 1;
+                    } else {
+                        result.push(rhs[rhs_i]);
+                        rhs_i += 1;
+                    }
+                }
+                while lhs_i < lhs.len() {
+                    result.push(lhs[lhs_i]);
+                    lhs_i += 1;
+                }
+                while rhs_i < rhs.len() {
+                    result.push(rhs[rhs_i]);
+                    rhs_i += 1;
+                }
+                Value::LC(result)
+            }
+        }
+    }
+
+    fn neg(&self) -> Value {
+        match self {
+            Value::Const(c) => Value::Const(-*c),
+            Value::LC(lc) => Value::LC(lc.iter().map(|(i, c)| (*i, -*c)).collect()),
+            _ => panic!("expected linear combination"),
         }
     }
 
     pub fn sub(&self, other: &Value) -> Value {
-        match (self, other) {
-            (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs - rhs),
-            (lhs, rhs) => Value::Arith(
-                BinaryArithOpKind::Sub,
-                Rc::new(lhs.clone()),
-                Rc::new(rhs.clone()),
-            ),
-        }
+        self.add(&other.neg())
     }
 
     pub fn div(&self, other: &Value) -> Value {
         match (self, other) {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs / rhs),
-            (lhs, rhs) => Value::Arith(
-                BinaryArithOpKind::Div,
-                Rc::new(lhs.clone()),
-                Rc::new(rhs.clone()),
-            ),
+            (_, _) => panic!("expected constant"),
         }
     }
 
@@ -81,11 +106,17 @@ impl Value {
     pub fn mul(&self, other: &Value) -> Value {
         match (self, other) {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs * rhs),
-            (lhs, rhs) => Value::Arith(
-                BinaryArithOpKind::Mul,
-                Rc::new(lhs.clone()),
-                Rc::new(rhs.clone()),
-            ),
+            (Value::Const(c), Value::LC(lc)) | (Value::LC(lc), Value::Const(c)) => {
+                if *c == ark_bn254::Fr::ZERO {
+                    return Value::Const(ark_bn254::Fr::ZERO);
+                }
+                let mut result = Vec::new();
+                for (i, cl) in lc.iter() {
+                    result.push((*i, *c * *cl));
+                }
+                Value::LC(result)
+            }
+            (_, _) => panic!("expected constant or linear combination and constant"),
         }
     }
 
@@ -114,42 +145,11 @@ impl Value {
     }
 
     pub fn expect_linear_combination(&self) -> Vec<(usize, ark_bn254::Fr)> {
-        let first = match self {
+        match self {
             Value::Const(c) => vec![(0, *c)],
-            Value::Arith(BinaryArithOpKind::Mul, l, r) => match (&**l, &**r) {
-                (Value::Const(c), other) | (other, Value::Const(c)) => {
-                    let mut r = other.expect_linear_combination();
-                    for (_, cx) in r.iter_mut() {
-                        *cx *= *c;
-                    }
-                    r
-                }
-                _ => panic!("expected linear combination, got arb mul"),
-            },
-            Value::Arith(BinaryArithOpKind::Add, l, r) => {
-                let mut l = l.expect_linear_combination();
-                let r = r.expect_linear_combination();
-                l.extend(r);
-                l
-            }
-            Value::Arith(BinaryArithOpKind::Sub, l, r) => {
-                let mut l = l.expect_linear_combination();
-                let r = r.expect_linear_combination();
-                let r_negated: Vec<_> = r.iter().map(|(i, c)| (*i, -*c)).collect();
-                l.extend(r_negated);
-                l
-            }
-            Value::WitnessVar(i) => vec![(*i, ark_bn254::Fr::ONE)],
-            _ => panic!("expected linear combination"),
-        };
-        first
-            .into_iter()
-            .sorted_by_key(|(i, _)| *i)
-            .chunk_by(|(i, _)| *i)
-            .into_iter()
-            .map(|(var, coeffs)| (var, coeffs.map(|(_, c)| c).sum()))
-            .filter(|(_, c)| *c != ark_bn254::Fr::ZERO)
-            .collect()
+            Value::LC(lc) => lc.clone(),
+            _ => panic!("expected constant or linear combination"),
+        }
     }
 
     pub fn eq(&self, other: &Value) -> Value {
@@ -162,8 +162,6 @@ impl Value {
         }
     }
 }
-
-type LC = Vec<(usize, crate::compiler::Field)>;
 
 #[derive(Clone, Debug)]
 pub struct R1C {
@@ -458,12 +456,12 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
 
     fn write_witness(&self, _tp: Option<&Type<V>>, ctx: &mut R1CGen) -> Self {
         let witness_var = ctx.next_witness();
-        Value::WitnessVar(witness_var)
+        Value::LC(vec![(witness_var, ark_bn254::Fr::ONE)])
     }
 
     fn fresh_witness(ctx: &mut R1CGen) -> Self {
         let witness_var = ctx.next_witness();
-        Value::WitnessVar(witness_var)
+        Value::LC(vec![(witness_var, ark_bn254::Fr::ONE)])
     }
 
     fn mem_op(&self, _kind: MemOp, _ctx: &mut R1CGen) {}
@@ -670,8 +668,8 @@ impl R1CGen {
 
     fn initialize_main_input<V: Clone>(&mut self, tp: &Type<V>) -> Value {
         match &tp.expr {
-            TypeExpr::U(_) => Value::WitnessVar(self.next_witness()),
-            TypeExpr::Field => Value::WitnessVar(self.next_witness()),
+            TypeExpr::U(_) => Value::LC(vec![(self.next_witness(), ark_bn254::Fr::ONE)]),
+            TypeExpr::Field => Value::LC(vec![(self.next_witness(), ark_bn254::Fr::ONE)]),
             TypeExpr::Array(tp, size) => {
                 let mut result = vec![];
                 for _ in 0..*size {
@@ -978,7 +976,7 @@ impl R1CS {
             }
         }
         if wrongs > 0 {
-            error!("{} out of {} wrong derivatives", wrongs, 3*a.len());
+            error!("{} out of {} wrong derivatives", wrongs, 3 * a.len());
             return false;
         }
         return true;

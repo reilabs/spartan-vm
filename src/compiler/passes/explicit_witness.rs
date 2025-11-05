@@ -6,11 +6,10 @@ use ssa_builder::{ssa_append, ssa_snippet};
 use crate::compiler::{
     Field,
     analysis::types::TypeInfo,
-    ir::r#type::TypeExpr,
+    ir::r#type::{Type, TypeExpr},
     pass_manager::{DataPoint, Pass},
     ssa::{
-        BinaryArithOpKind, Block, BlockId, CastTarget, Endianness, LookupTarget, OpCode, Radix,
-        SSA, ValueId,
+        BinaryArithOpKind, Block, BlockId, CastTarget, Endianness, LookupTarget, OpCode, Radix, SSA, SeqType, ValueId
     },
     taint_analysis::ConstantTaint,
 };
@@ -201,29 +200,32 @@ impl ExplicitWitness {
                             index: idx,
                         } => {
                             let arr_taint = function_type_info.get_value_type(arr).get_annotation();
-                            let idx_taint = function_type_info.get_value_type(idx).get_annotation();
+                            let idx_type = function_type_info.get_value_type(idx);
+                            let idx_taint = idx_type.get_annotation();
                             assert!(arr_taint.is_pure());
                             match idx_taint {
                                 ConstantTaint::Pure => {
                                     new_instructions.push(instruction);
                                 }
                                 ConstantTaint::Witness => {
-                                    let r_wit_val = function.fresh_value();
-                                    new_instructions.push(OpCode::ArrayGet {
-                                        result: r_wit_val,
-                                        array: arr,
-                                        index: idx,
-                                    });
-                                    new_instructions.push(OpCode::WriteWitness {
-                                        result: Some(result),
-                                        value: r_wit_val,
-                                        witness_annotation: ConstantTaint::Witness,
-                                    });
-                                    new_instructions.push(OpCode::Lookup {
-                                        target: LookupTarget::Array(arr),
-                                        keys: vec![idx],
-                                        results: vec![result],
-                                    });
+
+                                    let back_cast_target = match &idx_type.expr {
+                                        TypeExpr::U(s) => CastTarget::U(*s),
+                                        TypeExpr::Field => CastTarget::Field,
+                                        TypeExpr::BoxedField => CastTarget::Field,
+                                        TypeExpr::Array(_, _) => todo!("array types in witnessed array reads"),
+                                        TypeExpr::Slice(_) => todo!("slice types in witnessed array reads"),
+                                        TypeExpr::Ref(_) => todo!("ref types in witnessed array reads"),
+                                    };
+
+                                    ssa_append!(function, new_instructions, {
+                                        idx_field := cast_to_field(idx);
+                                        r_wit_val := array_get(arr, idx);
+                                        r_wit_field := cast_to_field(r_wit_val);
+                                        r_wit := write_witness(r_wit_field);
+                                        #result := cast_to(back_cast_target, r_wit_val);
+                                        lookup_arr(arr, idx_field, r_wit);
+                                    } ->);
                                 }
                             }
                         }
@@ -369,8 +371,8 @@ impl ExplicitWitness {
                                     endianness: Endianness::Little,
                                     count,
                                 });
-                                let witnesses = vec![ValueId(0); count];
-                                let mut result = function.push_field_const(Field::ZERO);
+                                let mut witnesses = vec![ValueId(0); count];
+                                let mut current_sum = function.push_field_const(Field::ZERO);
                                 let radix_val = match radix {
                                     Radix::Bytes => function.push_field_const(Field::from(256)),
                                     Radix::Dyn(radix) => {
@@ -387,55 +389,32 @@ impl ExplicitWitness {
                                     Radix::Bytes => LookupTarget::Rangecheck(8),
                                     Radix::Dyn(radix) => LookupTarget::DynRangecheck(radix),
                                 };
+                                // TODO this should probably be an SSA loop for codesize reasons.
                                 for i in (0..count).rev() {
-                                    let byte = function.fresh_value();
-                                    new_instructions.push(OpCode::ArrayGet {
-                                        result: byte,
-                                        array: hint,
-                                        index: function.push_u_const(32, i as u128),
-                                    });
-                                    let byte_field = function.fresh_value();
-                                    new_instructions.push(OpCode::Cast {
-                                        result: byte_field,
-                                        value: byte,
-                                        target: CastTarget::Field,
-                                    });
-                                    let byte_wit = function.fresh_value();
-                                    new_instructions.push(OpCode::WriteWitness {
-                                        result: Some(byte_wit),
-                                        value: byte_field,
-                                        witness_annotation: ConstantTaint::Witness,
-                                    });
-                                    new_instructions.push(OpCode::Lookup {
-                                        target: rangecheck_type,
-                                        keys: vec![byte_wit],
-                                        results: vec![],
-                                    });
-                                    let shift_prev_res = function.fresh_value();
-                                    new_instructions.push(OpCode::BinaryArithOp {
-                                        kind: BinaryArithOpKind::Mul,
-                                        result: shift_prev_res,
-                                        lhs: result,
-                                        rhs: radix_val,
-                                    });
-                                    let new_result = function.fresh_value();
-                                    new_instructions.push(OpCode::BinaryArithOp {
-                                        kind: BinaryArithOpKind::Add,
-                                        result: new_result,
-                                        lhs: shift_prev_res,
-                                        rhs: byte_wit,
-                                    });
-                                    result = new_result;
-                                    // let shift_prev_res = function.fresh_value();
+                                    let r = ssa_append!(function, new_instructions, {
+                                        byte := array_get(hint, ! i as u128 : u32);
+                                        byte_field := cast_to_field(byte);
+                                        byte_wit := write_witness(byte_field);
+                                        lookup_rngchk(rangecheck_type, byte_wit);
+                                        shift_prev_res := mul(current_sum, radix_val);
+                                        new_result := add(shift_prev_res, byte_wit);
+                                    } -> new_result, byte_wit);
+                                    current_sum = r.new_result;
+                                    witnesses[i] = r.byte_wit;
                                 }
+                                
+                                new_instructions.push(OpCode::Constrain {
+                                    a: current_sum,
+                                    b: function.push_field_const(Field::from(1)),
+                                    c: value,
+                                });
 
-                                new_instructions.push(OpCode::Todo {
-                                    payload: "to_radix".to_string(),
-                                    results: vec![result],
-                                    result_types: vec![
-                                        function_type_info.get_value_type(value).clone(),
-                                    ],
-                                })
+                                new_instructions.push(OpCode::MkSeq {
+                                    result: result,
+                                    elems: witnesses,
+                                    seq_type: SeqType::Array(count),
+                                    elem_type: Type::field(ConstantTaint::Witness),
+                                });
                             }
                         }
 

@@ -502,6 +502,9 @@ impl FunctionConverter {
                             *max_bit_size as usize,
                         );
                     }
+                    NoirInstruction::IncrementRc { .. } => {
+                        // Ignored, we do our own memory management
+                    }
                     _ => panic!("Unsupported instruction: {:?}", noir_instruction),
                 }
             }

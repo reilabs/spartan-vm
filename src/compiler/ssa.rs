@@ -2304,6 +2304,15 @@ impl OpCode<ConstantTaint> {
         }
     }
 
+
+    pub fn mk_lookup_rngchk(target: LookupTarget<ValueId>, value: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::Lookup {
+            target,
+            keys: vec![value],
+            results: vec![],
+        }
+    }
+
     pub fn mk_mul(result: ValueId, lhs: ValueId, rhs: ValueId) -> OpCode<ConstantTaint> {
         OpCode::BinaryArithOp {
             kind: BinaryArithOpKind::Mul,
@@ -2319,6 +2328,22 @@ impl OpCode<ConstantTaint> {
             result,
             lhs,
             rhs,
+        }
+    }
+
+    pub fn mk_lookup_arr(array: ValueId, index: ValueId, result: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::Lookup {
+            target: LookupTarget::Array(array),
+            keys: vec![index],
+            results: vec![result],
+        }
+    }
+
+    pub fn mk_cast_to(result: ValueId, target: CastTarget, value: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::Cast {
+            result,
+            value,
+            target,
         }
     }
 }

@@ -80,8 +80,19 @@ impl CFGData {
     }
 
     pub fn dominates(&self, a: NodeIndex<u32>, b: NodeIndex<u32>) -> bool {
-        self.node_dominator_pre_order[&a] <= self.node_dominator_pre_order[&b]
-            && self.node_dominator_post_order[&a] >= self.node_dominator_post_order[&b]
+        let Some(a_pre_order) = self.node_dominator_pre_order.get(&a) else {
+            return false;
+        };
+        let Some(b_pre_order) = self.node_dominator_pre_order.get(&b) else {
+            return false;
+        };
+        let Some(a_post_order) = self.node_dominator_post_order.get(&a) else {
+            return false;
+        };
+        let Some(b_post_order) = self.node_dominator_post_order.get(&b) else {
+            return false;
+        };
+        a_pre_order <= b_pre_order && a_post_order >= b_post_order
     }
 
     pub fn get_dominance_frontier(&self, node: NodeIndex<u32>) -> HashSet<NodeIndex<u32>> {

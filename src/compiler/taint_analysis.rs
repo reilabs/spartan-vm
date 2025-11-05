@@ -534,6 +534,7 @@ impl TaintAnalysis {
 
     fn analyze_function(&mut self, ssa: &SSA<Empty>, cfg: &FlowAnalysis, func_id: FunctionId) {
         let func = ssa.get_function(func_id);
+
         let cfg = cfg.get_function_cfg(func_id);
         let block_queue = cfg.get_blocks_bfs();
         let cfg_ty_var = self.fresh_ty_var();

@@ -148,6 +148,14 @@ impl Driver {
             );
         }
 
+        if self.draw_cfg {
+            flow_analysis.generate_images(
+                self.get_debug_output_dir().join("initial_state"),
+                &ssa,
+                "initial state".to_string(),
+            );
+        }
+
         let mut taint_analysis = TaintAnalysis::new();
         taint_analysis.run(&ssa, &flow_analysis).unwrap();
 
