@@ -319,6 +319,19 @@ impl RCInsertion {
                         new_instructions.push(instruction.clone());
                         currently_live.insert(*array);
                     }
+                    OpCode::SliceLen { result: _, slice } => {
+                        // SliceLen returns u32, which doesn't need RC
+                        // But we need to keep the slice alive if it's currently live
+                        if !currently_live.contains(slice) {
+                            // The slice dies here, so we drop it _after_ the read.
+                            new_instructions.push(OpCode::MemOp {
+                                kind: MemOp::Drop,
+                                value: *slice
+                            });
+                        }
+                        new_instructions.push(instruction.clone());
+                        currently_live.insert(*slice);
+                    }
                     OpCode::ReadGlobal { result: r, offset: _, result_type: _ } => {
                         if !currently_live.contains(r) {
                             panic!("ICE: Result of ReadGlobal is immediately dropped. This is a bug.")
@@ -363,6 +376,54 @@ impl RCInsertion {
                             // new_instructions.push(OpCode::MemOp(MemOp::Drop, *result));
                         }
                         currently_live.extend(vec![*array, *value]);
+                    }
+                    OpCode::SlicePush { result, slice, values, dir: _ } => {
+                        new_instructions.push(instruction.clone());
+                        if currently_live.contains(slice) {
+                            // Slice push will decrease the RC and oportunistically reuse the storage,
+                            // if it notices a refcount of 0. So we need to bump _before_
+                            // we enter it.
+                            new_instructions.push(OpCode::MemOp {
+                                kind: MemOp::Bump(1),
+                                value: *slice
+                            });
+                            if self.needs_rc(type_info, slice) {
+                                new_instructions.push(OpCode::MemOp {
+                                    kind: MemOp::Bump(1),
+                                    value: *slice
+                                });
+                            }
+                        }
+                        let slice_type = type_info.get_value_type(*slice);
+                        let elem_type = slice_type.get_array_element();
+                        if self.type_needs_rc(&elem_type) {
+                            // This is an aliasing operation. Each use in the slice needs a bump.
+                            // We then decrease by one, if the original value dies here.
+                            for (value, count) in values
+                                .iter()
+                                .sorted_by_key(|v| v.0)
+                                .chunk_by(|v1| *v1)
+                                .into_iter()
+                            {
+                                let mut count = count.count();
+                                if !currently_live.contains(value) {
+                                    count -= 1;
+                                }
+                                if count > 0 {
+                                    new_instructions
+                                        .push(OpCode::MemOp {
+                                            kind: MemOp::Bump(count),
+                                            value: *value
+                                        });
+                                }
+                            }
+                        }
+                        if !currently_live.contains(result) {
+                            panic!("ICE: Result of SlicePush is immediately dropped. This is a bug.")
+                        }
+                        let mut live_vals = vec![*slice];
+                        live_vals.extend(values.iter().copied());
+                        currently_live.extend(live_vals);
                     }
                     OpCode::Select { result: _, cond: _, if_t: v1, if_f: v2 } => {
                         if self.needs_rc(type_info, v1) || self.needs_rc(type_info, v2) {

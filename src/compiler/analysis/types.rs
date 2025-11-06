@@ -19,7 +19,7 @@ impl<V> TypeInfo<V> {
 }
 
 pub struct FunctionTypeInfo<V> {
-    values: HashMap<ValueId, Type<V>>,
+    values: HashMap<ValueId, Type<V>>, 
 }
 
 impl<V> FunctionTypeInfo<V> {
@@ -217,6 +217,22 @@ impl Types {
                 })?;
 
                 function_info.values.insert(*result, array_type.clone());
+                Ok(())
+            }
+            OpCode::SlicePush { result, slice, values: _, dir: _ } => {
+                let slice_type = function_info.values.get(slice).ok_or_else(|| {
+                    format!("Slice value {:?} not found in type assignments", slice)
+                })?;
+
+                function_info.values.insert(*result, slice_type.clone());
+                Ok(())
+            }
+            OpCode::SliceLen { result, slice: _ } => {
+                // Result is always u32
+                function_info.values.insert(
+                    *result,
+                    Type::u(32, V::empty()),
+                );
                 Ok(())
             }
             OpCode::Select { result, cond: _cond, if_t: then, if_f: otherwise } => {

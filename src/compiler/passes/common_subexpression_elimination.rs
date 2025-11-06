@@ -415,6 +415,8 @@ impl CSE {
                     | OpCode::Call { .. }
                     | OpCode::MkSeq { .. }
                     | OpCode::ArraySet { .. }
+                    | OpCode::SlicePush { .. }
+                    | OpCode::SliceLen { .. }
                     | OpCode::Cast { .. }
                     | OpCode::Truncate { .. }
                     | OpCode::MemOp { kind: _, value: _ }

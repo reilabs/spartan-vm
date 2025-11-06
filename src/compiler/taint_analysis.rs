@@ -710,6 +710,41 @@ impl TaintAnalysis {
                         );
                         function_taint.value_taints.insert(*r, result_taint);
                     }
+                    OpCode::SlicePush {
+                        dir: _,
+                        result: r,
+                        slice: sl,
+                        values,
+                    } => {
+                        let slice_taint = function_taint.value_taints.get(sl).unwrap();
+
+                        let slice_elem_taint = slice_taint.child_taint_type().unwrap();
+                        // Union all value taints together
+                        let mut result_elem_taint = slice_elem_taint.clone();
+                        for value in values {
+                            let value_taint = function_taint.value_taints.get(value).unwrap();
+                            result_elem_taint = result_elem_taint.union(value_taint);
+                        }
+                        let result_taint = TaintType::NestedImmutable(
+                            slice_taint.toplevel_taint().clone(),
+                            Box::new(result_elem_taint),
+                        );
+                        function_taint.value_taints.insert(*r, result_taint);
+                    }
+                    OpCode::SliceLen {
+                        result: r,
+                        slice: sl,
+                    } => {
+                        let slice_taint = function_taint.value_taints.get(sl).unwrap();
+                        // Slice must always be Pure taint
+                        // assert_eq!(
+                        //     slice_taint.toplevel_taint(),
+                        //     Taint::Constant(ConstantTaint::Pure)
+                        // );
+                        // Result is always Pure u32
+                        let result_taint = TaintType::Primitive(Taint::Constant(ConstantTaint::Pure));
+                        function_taint.value_taints.insert(*r, result_taint);
+                    }
                     OpCode::Call {
                         results: outputs,
                         function: func,
@@ -735,10 +770,13 @@ impl TaintAnalysis {
                             outputs_taint.iter().zip(func_taint.returns_taint.iter())
                         {
                             self.deep_le(ret, output, &mut function_taint.judgements);
+                            self.deep_le(output, ret, &mut function_taint.judgements);
                         }
                         for (input, param) in inputs_taint.iter().zip(func_taint.parameters.iter())
                         {
                             self.deep_le(input, param, &mut function_taint.judgements);
+                            self.deep_le(param, input, &mut function_taint.judgements);
+
                         }
                         function_taint.judgements.extend(func_taint.judgements);
                         function_taint.judgements.push(Judgement::Le(

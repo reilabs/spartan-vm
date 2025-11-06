@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::TypeConverter;
 use crate::compiler::{
     ir::r#type::{Empty, TypeExpr},
-    ssa::{BlockId, CastTarget, Endianness, Function, FunctionId, Radix, SeqType, ValueId},
+    ssa::{BlockId, CastTarget, Endianness, Function, FunctionId, Radix, SeqType, SliceOpDir, ValueId},
 };
 use noirc_evaluator::ssa::ir::{
     basic_block::BasicBlockId,
@@ -69,7 +69,6 @@ impl FunctionConverter {
                 let param_id = custom_function.add_parameter(custom_block_id, converted_type);
                 self.value_mapper.insert(*noir_param_id, param_id);
             }
-
             for noir_instruction_id in block.instructions() {
                 let noir_instruction = &noir_function.dfg.instructions[*noir_instruction_id];
                 match noir_instruction {
@@ -240,6 +239,116 @@ impl FunctionConverter {
                                     );
                                     let t = custom_function.push_u_const(1, 1);
                                     custom_function.push_assert_eq(custom_block_id, to_assert_converted, t);
+                                }
+                                Intrinsic::SlicePushBack => {
+                                    let result_ids = noir_function.dfg.instruction_results(*noir_instruction_id);
+                                    if result_ids.len() != 2 {
+                                        panic!("SlicePushBack should return 2 values (length, slice), got {}", result_ids.len());
+                                    }
+                                    let length_result_id = result_ids[0];
+                                    let slice_result_id = result_ids[1];
+                                    
+                                    // Arguments: [slice_length, slice_contents, ...elements_to_push]
+                                    // We drop slice_length (arguments[0])
+                                    if arguments.len() < 2 {
+                                        panic!("SlicePushBack requires at least 2 arguments (slice_length, slice_contents)");
+                                    }
+                                    
+                                    let slice_id = arguments[1];
+                                    let slice_value = &noir_function.dfg.values[slice_id];
+                                    let slice_converted = self.convert_value(
+                                        &mut custom_function,
+                                        custom_block_id,
+                                        slice_id,
+                                        slice_value,
+                                    );
+                                    
+                                    // Convert all elements to push (arguments[2..])
+                                    let values_to_push: Vec<ValueId> = arguments[2..]
+                                        .iter()
+                                        .map(|arg_id| {
+                                            let arg_value = &noir_function.dfg.values[*arg_id];
+                                            self.convert_value(
+                                                &mut custom_function,
+                                                custom_block_id,
+                                                *arg_id,
+                                                arg_value,
+                                            )
+                                        })
+                                        .collect();
+                                    
+                                    // Create the SlicePush instruction to get the new slice
+                                    let slice_push_result = custom_function.push_slice_push(
+                                        custom_block_id,
+                                        slice_converted,
+                                        values_to_push,
+                                        SliceOpDir::Back,
+                                    );
+                                    
+                                    // Create SliceLen instruction on the new slice to get the length
+                                    let slice_len_result = custom_function.push_slice_len(
+                                        custom_block_id,
+                                        slice_push_result,
+                                    );
+                                    
+                                    // Map results: first is length, second is slice
+                                    self.value_mapper.insert(length_result_id, slice_len_result);
+                                    self.value_mapper.insert(slice_result_id, slice_push_result);
+                                }
+                                Intrinsic::SlicePushFront => {
+                                    let result_ids = noir_function.dfg.instruction_results(*noir_instruction_id);
+                                    if result_ids.len() != 2 {
+                                        panic!("SlicePushFront should return 2 values (length, slice), got {}", result_ids.len());
+                                    }
+                                    let length_result_id = result_ids[0];
+                                    let slice_result_id = result_ids[1];
+                                    
+                                    // Arguments: [slice_length, slice_contents, ...elements_to_push]
+                                    // We drop slice_length (arguments[0])
+                                    if arguments.len() < 2 {
+                                        panic!("SlicePushFront requires at least 2 arguments (slice_length, slice_contents)");
+                                    }
+                                    
+                                    let slice_id = arguments[1];
+                                    let slice_value = &noir_function.dfg.values[slice_id];
+                                    let slice_converted = self.convert_value(
+                                        &mut custom_function,
+                                        custom_block_id,
+                                        slice_id,
+                                        slice_value,
+                                    );
+                                    
+                                    // Convert all elements to push (arguments[2..])
+                                    let values_to_push: Vec<ValueId> = arguments[2..]
+                                        .iter()
+                                        .map(|arg_id| {
+                                            let arg_value = &noir_function.dfg.values[*arg_id];
+                                            self.convert_value(
+                                                &mut custom_function,
+                                                custom_block_id,
+                                                *arg_id,
+                                                arg_value,
+                                            )
+                                        })
+                                        .collect();
+                                    
+                                    // Create the SlicePush instruction to get the new slice
+                                    let slice_push_result = custom_function.push_slice_push(
+                                        custom_block_id,
+                                        slice_converted,
+                                        values_to_push,
+                                        SliceOpDir::Front,
+                                    );
+                                    
+                                    // Create SliceLen instruction on the new slice to get the length
+                                    let slice_len_result = custom_function.push_slice_len(
+                                        custom_block_id,
+                                        slice_push_result,
+                                    );
+                                    
+                                    // Map results: first is length, second is slice
+                                    self.value_mapper.insert(length_result_id, slice_len_result);
+                                    self.value_mapper.insert(slice_result_id, slice_push_result);
                                 }
                                 _ => panic!("Unsupported intrinsic: {:?}", intrinsic),
                             }

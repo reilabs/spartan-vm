@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ark_ff::AdditiveGroup;
+use ark_ff::{AdditiveGroup, Field as _};
 use ssa_builder::{ssa_append, ssa_snippet};
 
 use crate::compiler::{
@@ -9,7 +9,7 @@ use crate::compiler::{
     ir::r#type::{Type, TypeExpr},
     pass_manager::{DataPoint, Pass},
     ssa::{
-        BinaryArithOpKind, Block, BlockId, CastTarget, Endianness, LookupTarget, OpCode, Radix, SSA, SeqType, ValueId
+        BinaryArithOpKind, Block, BlockId, CastTarget, CmpKind, Endianness, Function, LookupTarget, OpCode, Radix, SSA, SeqType, ValueId
     },
     taint_analysis::ConstantTaint,
 };
@@ -81,16 +81,69 @@ impl ExplicitWitness {
                             let l_taint = function_type_info.get_value_type(lhs).get_annotation();
                             let r_taint = function_type_info.get_value_type(rhs).get_annotation();
                             if !(l_taint.is_pure() && r_taint.is_pure()) {
-                                new_instructions.push(OpCode::Todo {
-                                    payload: format!(
-                                        "witness cmp {} {} {:?}",
-                                        l_taint, r_taint, kind
-                                    ),
-                                    results: vec![result],
-                                    result_types: vec![
-                                        function_type_info.get_value_type(rhs).clone(),
-                                    ],
-                                });
+                                assert!(function_type_info.get_value_type(rhs).is_numeric());
+                                assert!(function_type_info.get_value_type(lhs).is_numeric());
+                                match kind {
+                                    CmpKind::Eq => {
+                                        let u1 = CastTarget::U(1);
+                                        ssa_append!(function, new_instructions, {
+                                            l_field := cast_to_field(lhs);
+                                            r_field := cast_to_field(rhs);
+                                            lr_diff := sub(l_field, r_field);
+
+                                            div_hint := div(lr_diff, lr_diff);
+                                            div_hint_witness := write_witness(div_hint);
+
+                                            out_hint := eq(lhs, rhs);
+                                            out_hint_field := cast_to_field(out_hint);
+                                            out_hint_witness := write_witness(out_hint_field);
+                                            #result := cast_to(u1, out_hint_witness);
+
+                                            not_res := sub(! Field::ONE : Field, result);
+
+                                            constrain(lr_diff, div_hint_witness, not_res);
+                                            constrain(lr_diff, result, ! Field::ZERO : Field);
+
+
+                                        } ->);
+                                    }
+                                    CmpKind::Lt => {
+                                        let TypeExpr::U(s) = function_type_info.get_value_type(rhs).expr else {
+                                            panic!("ICE: rhs is not a U type");
+                                        };
+                                        let u1 = CastTarget::U(1);
+                                        let r = ssa_append!(function, new_instructions, {
+                                            res_hint := lt(lhs, rhs);
+                                            res_hint_field := cast_to_field(res_hint);
+                                            res_witness := write_witness(res_hint_field);
+                                            #result := cast_to(u1, res_witness);
+
+                                            l_field := cast_to_field(lhs);
+                                            r_field := cast_to_field(rhs);
+                                            lr_diff := sub(l_field, r_field);
+
+                                            two_res := mul(result, ! Field::from(2) : Field);
+                                            adjustment := sub(! Field::ONE : Field, two_res);
+                                            
+                                            adjusted_diff := mul(lr_diff, adjustment);
+                                            adjusted_diff_wit := write_witness(adjusted_diff);
+                                            constrain(lr_diff, adjustment, adjusted_diff_wit);
+                                        } -> adjusted_diff_wit);
+                                        self.gen_witness_rangecheck(function, &mut new_instructions, r.adjusted_diff_wit, s);
+                                    }
+                                    _ => {
+                                        new_instructions.push(OpCode::Todo {
+                                            payload: format!(
+                                                "witness cmp {} {} {:?}",
+                                                l_taint, r_taint, kind
+                                            ),
+                                            results: vec![result],
+                                            result_types: vec![
+                                                function_type_info.get_value_type(rhs).clone(),
+                                            ],
+                                        });
+                                    }
+                                }
                             } else {
                                 new_instructions.push(instruction);
                             }
@@ -144,14 +197,31 @@ impl ExplicitWitness {
                         } => {
                             let l_taint = function_type_info.get_value_type(l).get_annotation();
                             let r_taint = function_type_info.get_value_type(r).get_annotation();
-                            if !(l_taint.is_pure() && r_taint.is_pure()) {
-                                new_instructions.push(OpCode::Todo {
-                                    payload: format!("witness AND {} {}", l_taint, r_taint),
-                                    results: vec![result],
-                                    result_types: vec![function_type_info.get_value_type(r).clone()],
-                                });
-                            } else {
-                                new_instructions.push(instruction);
+                            match (l_taint, r_taint) {
+                                (ConstantTaint::Pure, ConstantTaint::Pure) => {
+                                    new_instructions.push(instruction);
+                                }
+                                (ConstantTaint::Witness, ConstantTaint::Witness) => {
+                                    let u1 = CastTarget::U(1);
+                                    ssa_append!(function, new_instructions, {
+                                        l_field := cast_to_field(l);
+                                        r_field := cast_to_field(r);
+                                        res_hint := and(l, r);
+                                        res_hint_field := cast_to_field(res_hint);
+                                        res_witness := write_witness(res_hint_field);
+                                        constrain(l_field, r_field, res_witness);
+                                        #result := cast_to(u1, res_witness);
+                                    } ->);
+                                }
+                                _ => {
+                                    new_instructions.push(OpCode::Todo {
+                                        payload: format!("witness AND {} {}", l_taint, r_taint),
+                                        results: vec![result],
+                                        result_types: vec![
+                                            function_type_info.get_value_type(r).clone(),
+                                        ],
+                                    });
+                                }
                             }
                         }
                         OpCode::Store { ptr, value: _ } => {
@@ -208,14 +278,19 @@ impl ExplicitWitness {
                                     new_instructions.push(instruction);
                                 }
                                 ConstantTaint::Witness => {
-
                                     let back_cast_target = match &idx_type.expr {
                                         TypeExpr::U(s) => CastTarget::U(*s),
                                         TypeExpr::Field => CastTarget::Field,
                                         TypeExpr::BoxedField => CastTarget::Field,
-                                        TypeExpr::Array(_, _) => todo!("array types in witnessed array reads"),
-                                        TypeExpr::Slice(_) => todo!("slice types in witnessed array reads"),
-                                        TypeExpr::Ref(_) => todo!("ref types in witnessed array reads"),
+                                        TypeExpr::Array(_, _) => {
+                                            todo!("array types in witnessed array reads")
+                                        }
+                                        TypeExpr::Slice(_) => {
+                                            todo!("slice types in witnessed array reads")
+                                        }
+                                        TypeExpr::Ref(_) => {
+                                            todo!("ref types in witnessed array reads")
+                                        }
                                     };
 
                                     ssa_append!(function, new_instructions, {
@@ -223,7 +298,7 @@ impl ExplicitWitness {
                                         r_wit_val := array_get(arr, idx);
                                         r_wit_field := cast_to_field(r_wit_val);
                                         r_wit := write_witness(r_wit_field);
-                                        #result := cast_to(back_cast_target, r_wit_val);
+                                        #result := cast_to(back_cast_target, r_wit);
                                         lookup_arr(arr, idx_field, r_wit);
                                     } ->);
                                 }
@@ -239,6 +314,24 @@ impl ExplicitWitness {
                             let idx_taint = function_type_info.get_value_type(idx).get_annotation();
                             assert!(arr_taint.is_pure());
                             assert!(idx_taint.is_pure());
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::SlicePush {
+                            dir: _,
+                            result: _,
+                            slice: sl,
+                            values: _,
+                        } => {
+                            let slice_taint = function_type_info.get_value_type(sl).get_annotation();
+                            assert!(slice_taint.is_pure());
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::SliceLen {
+                            result: _,
+                            slice: sl,
+                        } => {
+                            let slice_taint = function_type_info.get_value_type(sl).get_annotation();
+                            assert!(slice_taint.is_pure());
                             new_instructions.push(instruction);
                         }
                         OpCode::Select {
@@ -402,7 +495,7 @@ impl ExplicitWitness {
                                     current_sum = r.new_result;
                                     witnesses[i] = r.byte_wit;
                                 }
-                                
+
                                 new_instructions.push(OpCode::Constrain {
                                     a: current_sum,
                                     b: function.push_field_const(Field::from(1)),
@@ -446,36 +539,13 @@ impl ExplicitWitness {
                             if v_taint.is_pure() {
                                 new_instructions.push(instruction);
                             } else {
-                                assert!(max_bits % 8 == 0); // TODO
-                                let bytes_val = function.fresh_value();
-                                new_instructions.push(OpCode::ToRadix {
-                                    result: bytes_val,
-                                    value: value,
-                                    radix: Radix::Bytes,
-                                    endianness: Endianness::Big,
-                                    count: max_bits / 8,
-                                });
-                                let chunks = max_bits / 8;
-                                let mut result = function.push_field_const(Field::ZERO);
-                                let two_to_8 = function.push_field_const(Field::from(256));
-                                let one = function.push_field_const(Field::from(1));
-                                for i in 0..chunks {
-                                    result = ssa_append!(function, new_instructions, {
-                                        byte := array_get(bytes_val, ! i as u128 : u32);
-                                        byte_field := cast_to_field(byte);
-                                        byte_wit := write_witness(byte_field);
-                                        lookup_rngchk_8(byte_wit);
-                                        shift_prev_res := mul(result, two_to_8);
-                                        new_result := add(shift_prev_res, byte_wit);
-                                    } -> new_result).new_result;
-                                }
-                                new_instructions.push(OpCode::Constrain {
-                                    a: result,
-                                    b: one,
-                                    c: value,
-                                });
+                                self.gen_witness_rangecheck(
+                                    function,
+                                    &mut new_instructions,
+                                    value,
+                                    max_bits,
+                                );
                             }
-                            // new_instructions.push(instruction);
                         }
                         OpCode::ReadGlobal {
                             result: _,
@@ -508,5 +578,43 @@ impl ExplicitWitness {
             }
             function.put_blocks(new_blocks);
         }
+    }
+
+    fn gen_witness_rangecheck(
+        &self,
+        function: &mut Function<ConstantTaint>,
+        new_instructions: &mut Vec<OpCode<ConstantTaint>>,
+        value: ValueId,
+        max_bits: usize,
+    ) {
+        assert!(max_bits % 8 == 0); // TODO
+        let bytes_val = function.fresh_value();
+        new_instructions.push(OpCode::ToRadix {
+            result: bytes_val,
+            value: value,
+            radix: Radix::Bytes,
+            endianness: Endianness::Big,
+            count: max_bits / 8,
+        });
+        let chunks = max_bits / 8;
+        let mut result = function.push_field_const(Field::ZERO);
+        let two_to_8 = function.push_field_const(Field::from(256));
+        let one = function.push_field_const(Field::from(1));
+        for i in 0..chunks {
+            result = ssa_append!(function, new_instructions, {
+                byte := array_get(bytes_val, ! i as u128 : u32);
+                byte_field := cast_to_field(byte);
+                byte_wit := write_witness(byte_field);
+                lookup_rngchk_8(byte_wit);
+                shift_prev_res := mul(result, two_to_8);
+                new_result := add(shift_prev_res, byte_wit);
+            } -> new_result)
+            .new_result;
+        }
+        new_instructions.push(OpCode::Constrain {
+            a: result,
+            b: one,
+            c: value,
+        });
     }
 }

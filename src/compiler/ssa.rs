@@ -613,6 +613,46 @@ impl<V: Clone> Function<V> {
         value_id
     }
 
+    pub fn push_slice_push(
+        &mut self,
+        block_id: BlockId,
+        slice: ValueId,
+        values: Vec<ValueId>,
+        dir: SliceOpDir,
+    ) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::SlicePush {
+                result: value_id,
+                slice: slice,
+                values: values,
+                dir: dir,
+            });
+        value_id
+    }
+
+    pub fn push_slice_len(
+        &mut self,
+        block_id: BlockId,
+        slice: ValueId,
+    ) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::SliceLen {
+                result: value_id,
+                slice: slice,
+            });
+        value_id
+    }
+
     pub fn push_mk_array(
         &mut self,
         block_id: BlockId,
@@ -1025,6 +1065,12 @@ pub enum Endianness {
     Little,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SliceOpDir {
+    Front,
+    Back,
+}
+
 impl Display for CastTarget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1159,6 +1205,16 @@ pub enum OpCode<V> {
         array: ValueId,
         index: ValueId,
         value: ValueId,
+    },
+    SlicePush {
+        dir: SliceOpDir,
+        result: ValueId,
+        slice: ValueId,
+        values: Vec<ValueId>,
+    },
+    SliceLen {
+        result: ValueId,
+        slice: ValueId,
     },
     Select {
         result: ValueId,
@@ -1374,6 +1430,37 @@ impl<V: Display + Clone> OpCode<V> {
                     array.0,
                     index.0,
                     element.0
+                )
+            }
+            OpCode::SlicePush {
+                dir,
+                result,
+                slice,
+                values,
+            } => {
+                let dir_str = match dir {
+                    SliceOpDir::Front => "front",
+                    SliceOpDir::Back => "back",
+                };
+                let values_str = values.iter().map(|v| format!("v{}", v.0)).join(", ");
+                format!(
+                    "v{}{} = slice_push_{}(v{}, [{}])",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    dir_str,
+                    slice.0,
+                    values_str
+                )
+            }
+            OpCode::SliceLen {
+                result,
+                slice,
+            } => {
+                format!(
+                    "v{}{} = slice_len(v{})",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    slice.0
                 )
             }
             OpCode::Select {
@@ -1691,6 +1778,21 @@ impl<V> OpCode<V> {
                 index: c,
                 value: d,
             } => vec![a, b, c, d].into_iter(),
+            Self::SlicePush {
+                dir: _,
+                result: a,
+                slice: b,
+                values: c,
+            } => {
+                let mut ret_vec = vec![a, b];
+                let values_vec = c.iter_mut().collect::<Vec<_>>();
+                ret_vec.extend(values_vec);
+                ret_vec.into_iter()
+            }
+            Self::SliceLen {
+                result: a,
+                slice: b,
+            } => vec![a, b].into_iter(),
             Self::AssertR1C { a, b, c } | Self::Constrain { a, b, c } => vec![a, b, c].into_iter(),
             Self::Store { ptr: a, value: b }
             | Self::Load { result: a, ptr: b }
@@ -1841,6 +1943,21 @@ impl<V> OpCode<V> {
                 index: c,
                 value: d,
             } => vec![b, c, d].into_iter(),
+            Self::SlicePush {
+                dir: _,
+                result: _,
+                slice: b,
+                values: c,
+            } => {
+                let mut ret_vec = vec![b];
+                let values_vec: Vec<&mut ValueId> = c.iter_mut().collect();
+                ret_vec.extend(values_vec);
+                ret_vec.into_iter()
+            }
+            Self::SliceLen {
+                result: _,
+                slice: b,
+            } => vec![b].into_iter(),
             Self::AssertEq { lhs: b, rhs: c }
             | Self::Store { ptr: b, value: c }
             | Self::BumpD {
@@ -1992,6 +2109,20 @@ impl<V> OpCode<V> {
                 index: c,
                 value: d,
             } => vec![b, c, d].into_iter(),
+            Self::SlicePush {
+                dir: _,
+                result: _,
+                slice: b,
+                values: c,
+            } => {
+                let mut ret_vec = vec![b];
+                ret_vec.extend(c.iter());
+                ret_vec.into_iter()
+            }
+            Self::SliceLen {
+                result: _,
+                slice: b,
+            } => vec![b].into_iter(),
             Self::AssertEq { lhs: b, rhs: c }
             | Self::Store { ptr: b, value: c }
             | Self::BumpD {
@@ -2146,6 +2277,16 @@ impl<V> OpCode<V> {
                 array: _,
                 index: _,
                 value: _,
+            }
+            | Self::SlicePush {
+                dir: _,
+                result: r,
+                slice: _,
+                values: _,
+            }
+            | Self::SliceLen {
+                result: r,
+                slice: _,
             }
             | Self::Load { result: r, ptr: _ }
             | Self::MkSeq {
@@ -2344,6 +2485,59 @@ impl OpCode<ConstantTaint> {
             result,
             value,
             target,
+        }
+    }
+
+    pub fn mk_constrain(a: ValueId, b: ValueId, c: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::Constrain {
+            a,
+            b,
+            c,
+        }
+    }
+
+    pub fn mk_sub(result: ValueId, lhs: ValueId, rhs: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::BinaryArithOp {
+            kind: BinaryArithOpKind::Sub,
+            result,
+            lhs,
+            rhs,
+        }
+    }
+
+    pub fn mk_div(result: ValueId, lhs: ValueId, rhs: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::BinaryArithOp {
+            kind: BinaryArithOpKind::Div,
+            result,
+            lhs,
+            rhs,
+        }
+    }
+
+    pub fn mk_eq(result: ValueId, lhs: ValueId, rhs: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::Cmp {
+            kind: CmpKind::Eq,
+            result,
+            lhs,
+            rhs,
+        }
+    }
+
+    pub fn mk_and(result: ValueId, lhs: ValueId, rhs: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::BinaryArithOp {
+            kind: BinaryArithOpKind::And,
+            result,
+            lhs,
+            rhs,
+        }
+    }
+
+    pub fn mk_lt(result: ValueId, lhs: ValueId, rhs: ValueId) -> OpCode<ConstantTaint> {
+        OpCode::Cmp {
+            kind: CmpKind::Lt,
+            result,
+            lhs,
+            rhs,
         }
     }
 }

@@ -103,6 +103,24 @@ impl UntaintControlFlow {
                         index: h,
                         value: j,
                     },
+                    OpCode::SlicePush {
+                        dir: d,
+                        result: r,
+                        slice: s,
+                        values: v,
+                    } => OpCode::SlicePush {
+                        dir: d,
+                        result: r,
+                        slice: s,
+                        values: v,
+                    },
+                    OpCode::SliceLen {
+                        result: r,
+                        slice: s,
+                    } => OpCode::SliceLen {
+                        result: r,
+                        slice: s,
+                    },
                     OpCode::Alloc {
                         result: r,
                         elem_type: l,
@@ -498,6 +516,32 @@ impl UntaintControlFlow {
                         // dynamic array access not supported
                         assert_eq!(arr_taint, ConstantTaint::Pure);
                         assert_eq!(idx_taint, ConstantTaint::Pure);
+                        new_instructions.push(instruction);
+                    }
+                    OpCode::SlicePush {
+                        dir: _,
+                        result: _,
+                        slice: sl,
+                        values: _,
+                    } => {
+                        let slice_taint = function_taint
+                            .get_value_taint(sl)
+                            .toplevel_taint()
+                            .expect_constant();
+                        // Slice must always be Pure taint
+                        assert_eq!(slice_taint, ConstantTaint::Pure);
+                        new_instructions.push(instruction);
+                    }
+                    OpCode::SliceLen {
+                        result: _,
+                        slice: sl,
+                    } => {
+                        let slice_taint = function_taint
+                            .get_value_taint(sl)
+                            .toplevel_taint()
+                            .expect_constant();
+                        // Slice must always be Pure taint
+                        assert_eq!(slice_taint, ConstantTaint::Pure);
                         new_instructions.push(instruction);
                     }
                     OpCode::Alloc {

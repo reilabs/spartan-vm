@@ -105,6 +105,7 @@ impl BoxFields {
                             result: r,
                             result_type: tp,
                         } => {
+                            assert!(matches!(tp.expr, TypeExpr::Field));
                             let i = OpCode::FreshWitness {
                                 result: r,
                                 result_type: self.box_fields_in_type(&tp),
@@ -427,6 +428,8 @@ impl BoxFields {
                         | OpCode::Call { .. }
                         | OpCode::ArrayGet { .. }
                         | OpCode::ArraySet { .. }
+                        | OpCode::SlicePush { .. }
+                        | OpCode::SliceLen { .. }
                         | OpCode::Select { .. }
                         | OpCode::ToBits { .. }
                         | OpCode::ToRadix { .. }

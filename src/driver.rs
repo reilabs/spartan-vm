@@ -124,7 +124,7 @@ impl Driver {
         self.initial_ssa = Some(SSA::from_noir(&ssa.ssa));
 
         fs::write(
-            self.get_debug_output_dir().join("initial.ssa"),
+            self.get_debug_output_dir().join("initial_ssa.txt"),
             self.initial_ssa
                 .as_ref()
                 .unwrap()
@@ -160,7 +160,7 @@ impl Driver {
         taint_analysis.run(&ssa, &flow_analysis).unwrap();
 
         fs::write(
-            self.get_debug_output_dir().join("taint_analysed.ssa"),
+            self.get_debug_output_dir().join("taint_analysed_ssa.txt"),
             ssa.to_string(&taint_analysis),
         )
         .unwrap();
@@ -169,7 +169,7 @@ impl Driver {
         monomorphization.run(&mut ssa, &mut taint_analysis).unwrap();
 
         fs::write(
-            self.get_debug_output_dir().join("monomorphized.ssa"),
+            self.get_debug_output_dir().join("monomorphized_ssa.txt"),
             ssa.to_string(&taint_analysis),
         )
         .unwrap();
@@ -188,7 +188,7 @@ impl Driver {
         self.monomorphized_ssa = Some(untaint_cf.run(ssa, &taint_analysis, &flow_analysis));
 
         fs::write(
-            self.get_debug_output_dir().join("untainted.ssa"),
+            self.get_debug_output_dir().join("untainted_ssa.txt"),
             self.monomorphized_ssa
                 .as_ref()
                 .unwrap()

@@ -65,12 +65,12 @@ impl WitnessWriteToFresh {
                             let tp = type_info
                                 .get_function(*function_id)
                                 .get_value_type(r.unwrap());
-                            if !matches!(tp.expr, TypeExpr::Field) {
-                                panic!("Expected field type, got {:?}", tp);
+                            if !tp.is_numeric() {
+                                panic!("Expected numeric type, got {:?}", tp);
                             }
                             OpCode::FreshWitness {
                                 result: r.unwrap(),
-                                result_type: Type::field(ConstantTaint::Witness)
+                                result_type: tp.clone(),
                             }
                         }
                         OpCode::Cmp { .. }
@@ -87,6 +87,8 @@ impl WitnessWriteToFresh {
                         | OpCode::Call { .. }
                         | OpCode::ArrayGet { .. }
                         | OpCode::ArraySet { .. }
+                        | OpCode::SlicePush { .. }
+                        | OpCode::SliceLen { .. }
                         | OpCode::Select { .. }
                         | OpCode::ToBits { .. }
                         | OpCode::ToRadix { .. }

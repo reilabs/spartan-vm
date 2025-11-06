@@ -5,8 +5,7 @@ use crate::compiler::{
     analysis::types::TypeInfo,
     ir::r#type::{CommutativeMonoid, Type},
     ssa::{
-        BinaryArithOpKind, BlockId, CastTarget, CmpKind, Const, Endianness, FunctionId, GlobalDef,
-        LookupTarget, MemOp, Radix, SSA, SeqType, Terminator,
+        BinaryArithOpKind, BlockId, CastTarget, CmpKind, Const, Endianness, FunctionId, GlobalDef, LookupTarget, MemOp, Radix, SSA, SeqType, SliceOpDir, Terminator
     },
 };
 
@@ -94,6 +93,14 @@ pub trait Context<V, Taint> {
 
     fn todo(&mut self, payload: &str, _result_types: &[Type<Taint>]) -> Vec<V> {
         panic!("Todo opcode encountered: {}", payload);
+    }
+
+    fn slice_push(&mut self, slice: &V, values: &[V], dir: SliceOpDir) -> V {
+        panic!("ICE: backend does not implement slice_push");
+    }
+
+    fn slice_len(&mut self, slice: &V) -> V {
+        panic!("ICE: backend does not implement slice_len");
     }
 }
 
@@ -320,6 +327,25 @@ impl SymbolicExecutor {
                         scope[r.0 as usize] =
                             Some(a.array_set(i, v, &fn_type_info.get_value_type(*r), ctx));
                     }
+                    crate::compiler::ssa::OpCode::SlicePush {
+                        result,
+                        slice,
+                        values,
+                        dir,
+                    } => {                      
+                        let sl = scope[slice.0 as usize].as_ref().unwrap();
+                        let vals: Vec<_> = values.iter()
+                            .map(|v| scope[v.0 as usize].as_ref().unwrap().clone())
+                            .collect();
+                        scope[result.0 as usize] = Some(ctx.slice_push(sl, &vals, *dir));
+                    }
+                    crate::compiler::ssa::OpCode::SliceLen {
+                        result: r,
+                        slice: sl,
+                    } => {
+                        let sl = scope[sl.0 as usize].as_ref().unwrap();
+                        scope[r.0 as usize] = Some(ctx.slice_len(sl));
+                    }
                     crate::compiler::ssa::OpCode::Select {
                         result: r,
                         cond,
@@ -492,7 +518,11 @@ impl SymbolicExecutor {
                             .collect::<Vec<_>>();
                         ctx.dlookup(target, keys, results);
                     }
-                    crate::compiler::ssa::OpCode::Todo { payload, results, result_types } => {
+                    crate::compiler::ssa::OpCode::Todo {
+                        payload,
+                        results,
+                        result_types,
+                    } => {
                         // The context handler should return the result values
                         let result_values = ctx.todo(&payload, result_types);
                         if result_values.len() != results.len() {

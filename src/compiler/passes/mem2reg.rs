@@ -262,6 +262,14 @@ impl Mem2Reg {
                             return false;
                         }
                     }
+                    OpCode::SlicePush { result: _, slice: _, values: vals, dir: _ } => {
+                        for val in vals {
+                            let vtyp = type_info.get_value_type(*val);
+                            if self.type_contains_ptr(vtyp) {
+                                return false;
+                            }
+                        }
+                    }
                     OpCode::ArrayGet { result: _, array: _, index: val } => {
                         let vtyp = type_info.get_value_type(*val);
                         if self.type_contains_ptr(vtyp) {

@@ -161,6 +161,8 @@ impl DCE {
                         | OpCode::Select { .. }
                         | OpCode::ArrayGet { .. }
                         | OpCode::ArraySet { .. }
+                        | OpCode::SlicePush { .. }
+                        | OpCode::SliceLen { .. }
                         | OpCode::MkSeq { .. }
                         | OpCode::Cast { .. }
                         | OpCode::Truncate { .. }

@@ -590,6 +590,20 @@ impl CodeGen {
                             .type_size(&type_info.get_value_type(*arr).get_array_element()),
                     });
                 }
+                ssa::OpCode::SlicePush {
+                    result: r,
+                    slice: sl,
+                    values: _vals,
+                    dir: _,
+                } => {
+                    panic!("SlicePush bytecode opcode not yet implemented");
+                }
+                ssa::OpCode::SliceLen {
+                    result: r,
+                    slice: sl,
+                } => {
+                    panic!("SliceLen bytecode opcode not yet implemented");
+                }
                 ssa::OpCode::MkSeq {
                     result: r,
                     elems: vals,

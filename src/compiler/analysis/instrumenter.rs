@@ -13,6 +13,7 @@ use crate::compiler::{
     ir::r#type::{Type, TypeExpr},
     ssa::{
         BinaryArithOpKind, CastTarget, CmpKind, Endianness, FunctionId, MemOp, Radix, SSA, SeqType,
+        SliceOpDir,
     },
     taint_analysis::ConstantTaint,
 };
@@ -252,7 +253,12 @@ impl Value {
         }
     }
 
-    fn array_get(&self, index: &Value, tp: &Type<ConstantTaint>, instrumenter: &mut dyn OpInstrumenter) -> Value {
+    fn array_get(
+        &self,
+        index: &Value,
+        tp: &Type<ConstantTaint>,
+        instrumenter: &mut dyn OpInstrumenter,
+    ) -> Value {
         match (self, index) {
             (Value::Array(vals), Value::U(_, index)) => vals[*index as usize].clone(),
             (Value::Array(vals), Value::UWitness(_)) => {
@@ -395,6 +401,15 @@ impl Value {
         match self {
             Value::Pointer(val) => val.borrow().clone(),
             _ => panic!("Cannot read from {:?}", self),
+        }
+    }
+
+    fn ptr_write(&self, val: &Value, _instrumenter: &mut dyn OpInstrumenter) {
+        match self {
+            Value::Pointer(ptr) => {
+                *(ptr.borrow_mut()) = val.clone();
+            }
+            _ => panic!("Cannot write to {:?}", self),
         }
     }
 
@@ -550,8 +565,11 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         }
     }
 
-    fn ptr_write(&self, _val: &SpecSplitValue, _instrumenter: &mut CostAnalysis) {
-        todo!()
+    fn ptr_write(&self, val: &SpecSplitValue, _instrumenter: &mut CostAnalysis) {
+        self.unspecialized
+            .ptr_write(&val.unspecialized, _instrumenter.get_unspecialized());
+        self.specialized
+            .ptr_write(&val.specialized, _instrumenter.get_specialized());
     }
 
     fn ptr_read(&self, tp: &Type<ConstantTaint>, ctx: &mut CostAnalysis) -> SpecSplitValue {
@@ -606,12 +624,16 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         instrumenter: &mut CostAnalysis,
     ) -> SpecSplitValue {
         let mut res = SpecSplitValue {
-            unspecialized: self
-                .unspecialized
-                .array_get(&i.unspecialized, tp, instrumenter.get_unspecialized()),
-            specialized: self
-                .specialized
-                .array_get(&i.specialized, tp, instrumenter.get_specialized()),
+            unspecialized: self.unspecialized.array_get(
+                &i.unspecialized,
+                tp,
+                instrumenter.get_unspecialized(),
+            ),
+            specialized: self.specialized.array_get(
+                &i.specialized,
+                tp,
+                instrumenter.get_specialized(),
+            ),
         };
         res.blind_unspecialized_from(tp);
         res
@@ -777,8 +799,8 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
 
     fn alloc(_ctx: &mut CostAnalysis) -> Self {
         Self {
-            unspecialized: Value::FWitness,
-            specialized: Value::FWitness,
+            unspecialized: Value::Pointer(Rc::new(RefCell::new(Value::FWitness))),
+            specialized: Value::Pointer(Rc::new(RefCell::new(Value::FWitness))),
         }
     }
 
@@ -834,7 +856,7 @@ impl FunctionSignature {
 trait OpInstrumenter {
     fn record_constraints(&mut self, number: usize);
     fn record_rangechecks(&mut self, size: u8, count: usize);
-    fn record_lookups(&mut self, keys: usize, results: usize, count:usize);
+    fn record_lookups(&mut self, keys: usize, results: usize, count: usize);
 }
 
 trait FunctionInstrumenter {
@@ -953,21 +975,19 @@ impl symbolic_executor::Context<SpecSplitValue, ConstantTaint> for CostAnalysis 
         // as these could get modified. We can improve in the future by
         // also caching the final results of all input ptrs.
         let ptrs = param_types.iter().any(|tp| tp.contains_ptrs());
-        if ptrs {
-            return None;
-        }
-
-        if let Some(cached) = self.cache.get(&sig).cloned() {
-            self.register_cached_call(sig.clone());
-            return Some(
-                cached
-                    .iter()
-                    .map(|v| SpecSplitValue {
-                        unspecialized: v.to_value(),
-                        specialized: v.to_value(),
-                    })
-                    .collect(),
-            );
+        if !ptrs {
+            if let Some(cached) = self.cache.get(&sig).cloned() {
+                self.register_cached_call(sig.clone());
+                return Some(
+                    cached
+                        .iter()
+                        .map(|v| SpecSplitValue {
+                            unspecialized: v.to_value(),
+                            specialized: v.to_value(),
+                        })
+                        .collect(),
+                );
+            }
         }
 
         self.enter_call(sig);
@@ -1001,8 +1021,56 @@ impl symbolic_executor::Context<SpecSplitValue, ConstantTaint> for CostAnalysis 
         }
     }
 
-    fn todo(&mut self, payload: &str, _result_types: &[Type<ConstantTaint>]) -> Vec<SpecSplitValue> {
+    fn todo(
+        &mut self,
+        payload: &str,
+        _result_types: &[Type<ConstantTaint>],
+    ) -> Vec<SpecSplitValue> {
         panic!("Todo opcode encountered in CostAnalysis: {}", payload);
+    }
+
+    fn slice_push(
+        &mut self,
+        slice: &SpecSplitValue,
+        pushed_values: &[SpecSplitValue],
+        dir: SliceOpDir,
+    ) -> SpecSplitValue {
+        assert_eq!(dir, SliceOpDir::Back); // TODO
+        let new_unspec = match &slice.unspecialized {
+            Value::Array(values) => {
+                let mut new_values = values.clone();
+                new_values.extend(pushed_values.iter().map(|v| v.unspecialized.clone()));
+                Value::Array(new_values)
+            }
+            _ => panic!("Cannot push to {:?}", slice.unspecialized),
+        };
+        let new_spec = match &slice.specialized {
+            Value::Array(values) => {
+                let mut new_values = values.clone();
+                new_values.extend(pushed_values.iter().map(|v| v.specialized.clone()));
+                Value::Array(new_values)
+            }
+            _ => panic!("Cannot push to {:?}", slice.specialized),
+        };
+        SpecSplitValue {
+            unspecialized: new_unspec,
+            specialized: new_spec,
+        }
+    }
+
+    fn slice_len(&mut self, slice: &SpecSplitValue) -> SpecSplitValue {
+        let unspec = match &slice.unspecialized {
+            Value::Array(values) => Value::U(32, values.len() as u128),
+            _ => panic!("Cannot get length of {:?}", slice.unspecialized),
+        };
+        let spec = match &slice.specialized {
+            Value::Array(values) => Value::U(32, values.len() as u128),
+            _ => panic!("Cannot get length of {:?}", slice.specialized),
+        };
+        SpecSplitValue {
+            unspecialized: unspec,
+            specialized: spec,
+        }
     }
 }
 

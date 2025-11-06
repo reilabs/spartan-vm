@@ -6,7 +6,7 @@ use crate::compiler::{
         types::TypeInfo,
     },
     ir::r#type::{CommutativeMonoid, Type, TypeExpr},
-    ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, MemOp, Radix, SSA},
+    ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, MemOp, Radix, SSA, SliceOpDir},
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
 use itertools::Itertools;
@@ -99,7 +99,7 @@ impl Value {
     pub fn expect_u32(&self) -> u32 {
         match self {
             Value::Const(c) => c.into_bigint().to_string().parse().unwrap(),
-            _ => panic!("expected u32"),
+            r => panic!("expected u32, got {:?}", r),
         }
     }
 
@@ -230,10 +230,13 @@ impl<V: Clone> symbolic_executor::Context<Value, V> for R1CGen {
         _params: &mut [Value],
         _param_types: &[&Type<V>],
     ) -> Option<Vec<Value>> {
+        println!("on_call: {}", _func.0);
         None
     }
 
-    fn on_return(&mut self, _returns: &mut [Value], _return_types: &[Type<V>]) {}
+    fn on_return(&mut self, _returns: &mut [Value], _return_types: &[Type<V>]) {
+        println!("on_return");
+    }
 
     fn on_jmp(&mut self, _target: BlockId, _params: &mut [Value], _param_types: &[&Type<V>]) {}
 
@@ -246,6 +249,7 @@ impl<V: Clone> symbolic_executor::Context<Value, V> for R1CGen {
         match target {
             super::ssa::LookupTarget::Rangecheck(i) => {
                 // TODO this will become table resolution logic eventually
+                assert!(i == 8, "TODO: support other rangecheck sizes");
                 if self.tables.is_empty() {
                     self.tables.push(Table::Range(i as u64))
                 } else {
@@ -264,13 +268,55 @@ impl<V: Clone> symbolic_executor::Context<Value, V> for R1CGen {
                     elements: els,
                 });
             }
-            super::ssa::LookupTarget::DynRangecheck(_) => todo!("dyn rangechecks"),
+            super::ssa::LookupTarget::DynRangecheck(v) => {
+                // TODO this will become table resolution logic eventually
+                let v = v.expect_u32();
+                assert!(v == 256, "TODO: support other rangecheck sizes");
+                let i = 8;
+                if self.tables.is_empty() {
+                    self.tables.push(Table::Range(i as u64))
+                } else {
+                    match self.tables[0] {
+                        Table::Range(i1) => assert_eq!(i1, i as u64, "unsupported"),
+                        Table::OfElems(_) => panic!("unsupported"),
+                    }
+                }
+                let els = keys
+                    .into_iter()
+                    .chain(results.into_iter())
+                    .map(|e| e.expect_linear_combination())
+                    .collect();
+                self.lookups.push(LookupConstraint {
+                    table_id: 0,
+                    elements: els,
+                });
+            }
             super::ssa::LookupTarget::Array(_) => todo!("lookups from arrays"),
         }
     }
 
     fn todo(&mut self, payload: &str, _result_types: &[Type<V>]) -> Vec<Value> {
         panic!("Todo opcode encountered in R1CSGen: {}", payload);
+    }
+
+    fn slice_push(&mut self, slice: &Value, values: &[Value], dir: SliceOpDir) -> Value {
+        match dir {
+            SliceOpDir::Front => {
+                let mut r = values.to_vec();
+                r.extend(slice.expect_array().iter().map(|v| v.clone()));
+                Value::Array(Rc::new(r))
+            }
+            SliceOpDir::Back => {
+                let mut r = slice.expect_array().as_ref().clone();
+                r.extend(values.iter().map(|v| v.clone()));
+                Value::Array(Rc::new(r))
+            }
+        }
+    }
+
+    fn slice_len(&mut self, slice: &Value) -> Value {
+        let array = slice.expect_array();
+        Value::Const(ark_bn254::Fr::from(array.len() as u128))
     }
 }
 

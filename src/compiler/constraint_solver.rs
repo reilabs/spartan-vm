@@ -76,7 +76,11 @@ impl ConstraintSolver {
         // println!("{}", self.judgements_string());
         // println!("Number of judgements: {}", self.num_judgements());
 
+        self.simplify_unions_algebraically();
         self.inline_equalities();
+        self.simplify_unions_algebraically();
+        self.inline_equalities();
+
         // println!("\n\n=== Inlined equalities ===");
         // println!("{}", self.judgements_string());
         // println!("Number of judgements: {}", self.num_judgements());
@@ -84,7 +88,6 @@ impl ConstraintSolver {
         if self.num_judgements() > 0 {
             println!("About to fail:\n{}", self.judgements_string());
             panic!("Failed to solve constraints");
-        
         }
 
         // self.unify_cycles();
