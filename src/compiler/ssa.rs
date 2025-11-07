@@ -377,6 +377,19 @@ impl<V: Clone> Function<V> {
     pub fn push_field_const(&mut self, value: ark_bn254::Fr) -> ValueId {
         self.push_const(Const::Field(value))
     }
+
+
+    pub fn push_cmp(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId, kind: CmpKind) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::Cmp { kind, result: value_id, lhs, rhs });
+        value_id
+    }
+
     pub fn push_eq(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;

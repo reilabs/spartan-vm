@@ -333,10 +333,10 @@ impl RCInsertion {
                         currently_live.insert(*slice);
                     }
                     OpCode::ReadGlobal { result: r, offset: _, result_type: _ } => {
-                        if !currently_live.contains(r) {
-                            panic!("ICE: Result of ReadGlobal is immediately dropped. This is a bug.")
-                        }
                         if self.needs_rc(type_info, r) {
+                            if !currently_live.contains(r) {
+                                panic!("ICE: Result of ReadGlobal is immediately dropped. This is a bug.")
+                            }
                             new_instructions.push(OpCode::MemOp {
                                 kind: MemOp::Bump(1),
                                 value: *r

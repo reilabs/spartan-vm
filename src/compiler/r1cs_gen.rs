@@ -23,10 +23,16 @@ use tracing::{error, instrument, warn};
 type LC = Vec<(usize, crate::compiler::Field)>;
 
 #[derive(Clone, Debug)]
+struct ArrayData {
+    table_id: Option<usize>,
+    data: Vec<Value>,
+}
+
+#[derive(Clone, Debug)]
 pub enum Value {
     Const(ark_bn254::Fr),
     LC(LC),
-    Array(Rc<Vec<Value>>),
+    Array(Rc<RefCell<ArrayData>>),
     Ptr(Rc<RefCell<Value>>),
     Invalid,
 }
@@ -137,7 +143,7 @@ impl Value {
         }
     }
 
-    pub fn expect_array(&self) -> Rc<Vec<Value>> {
+    pub fn expect_array(&self) -> Rc<RefCell<ArrayData>> {
         match self {
             Value::Array(array) => array.clone(),
             _ => panic!("expected array"),
@@ -160,6 +166,13 @@ impl Value {
         } else {
             Value::Const(ark_bn254::Fr::ZERO)
         }
+    }
+
+    pub fn mk_array(data: Vec<Value>) -> Value {
+        Value::Array(Rc::new(RefCell::new(ArrayData {
+            table_id: None,
+            data,
+        })))
     }
 }
 
@@ -230,13 +243,10 @@ impl<V: Clone> symbolic_executor::Context<Value, V> for R1CGen {
         _params: &mut [Value],
         _param_types: &[&Type<V>],
     ) -> Option<Vec<Value>> {
-        println!("on_call: {}", _func.0);
         None
     }
 
-    fn on_return(&mut self, _returns: &mut [Value], _return_types: &[Type<V>]) {
-        println!("on_return");
-    }
+    fn on_return(&mut self, _returns: &mut [Value], _return_types: &[Type<V>]) {}
 
     fn on_jmp(&mut self, _target: BlockId, _params: &mut [Value], _param_types: &[&Type<V>]) {}
 
@@ -291,7 +301,32 @@ impl<V: Clone> symbolic_executor::Context<Value, V> for R1CGen {
                     elements: els,
                 });
             }
-            super::ssa::LookupTarget::Array(_) => todo!("lookups from arrays"),
+            super::ssa::LookupTarget::Array(arr) => {
+                let arr = arr.expect_array();
+                let table_id = if arr.borrow().table_id.is_none() {
+                    let elems = arr
+                        .borrow()
+                        .data
+                        .iter()
+                        .map(|e| e.expect_linear_combination())
+                        .collect();
+                    self.tables.push(Table::OfElems(elems));
+                    let idx = self.tables.len() - 1;
+                    arr.borrow_mut().table_id = Some(idx);
+                    idx
+                } else {
+                    arr.borrow().table_id.unwrap()
+                };
+                let els = keys
+                    .into_iter()
+                    .chain(results.into_iter())
+                    .map(|e| e.expect_linear_combination())
+                    .collect();
+                self.lookups.push(LookupConstraint {
+                    table_id,
+                    elements: els,
+                });
+            }
         }
     }
 
@@ -303,20 +338,20 @@ impl<V: Clone> symbolic_executor::Context<Value, V> for R1CGen {
         match dir {
             SliceOpDir::Front => {
                 let mut r = values.to_vec();
-                r.extend(slice.expect_array().iter().map(|v| v.clone()));
-                Value::Array(Rc::new(r))
+                r.extend(slice.expect_array().borrow().data.iter().map(|v| v.clone()));
+                Value::mk_array(r)
             }
             SliceOpDir::Back => {
-                let mut r = slice.expect_array().as_ref().clone();
+                let mut r = slice.expect_array().borrow().data.clone();
                 r.extend(values.iter().map(|v| v.clone()));
-                Value::Array(Rc::new(r))
+                Value::mk_array(r)
             }
         }
     }
 
     fn slice_len(&mut self, slice: &Value) -> Value {
         let array = slice.expect_array();
-        Value::Const(ark_bn254::Fr::from(array.len() as u128))
+        Value::Const(ark_bn254::Fr::from(array.borrow().data.len() as u128))
     }
 }
 
@@ -360,9 +395,8 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     }
 
     fn array_get(&self, index: &Self, _out_type: &Type<V>, _ctx: &mut R1CGen) -> Self {
-        let array = self.expect_array();
         let index = index.expect_u32();
-        let value = array[index as usize].clone();
+        let value = self.expect_array().borrow().data[index as usize].clone();
         value
     }
 
@@ -375,9 +409,9 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     ) -> Self {
         let array = self.expect_array();
         let index = index.expect_u32();
-        let mut new_array = array.as_ref().clone();
+        let mut new_array = array.borrow().data.clone();
         new_array[index as usize] = value.clone();
-        Value::Array(Rc::new(new_array))
+        Value::mk_array(new_array)
     }
 
     fn truncate(&self, _from: usize, to: usize, _out_type: &Type<V>, _ctx: &mut R1CGen) -> Self {
@@ -444,7 +478,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
             };
             bit_values.push(bit_value);
         }
-        Value::Array(Rc::new(bit_values))
+        Value::mk_array(bit_values)
     }
 
     fn not(&self, out_type: &Type<V>, _ctx: &mut R1CGen) -> Self {
@@ -473,7 +507,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
         _seq_type: super::ssa::SeqType,
         _elem_type: &Type<V>,
     ) -> Self {
-        Value::Array(Rc::new(a))
+        Value::mk_array(a)
     }
 
     fn alloc(_ctx: &mut R1CGen) -> Self {
@@ -721,7 +755,7 @@ impl R1CGen {
                 for _ in 0..*size {
                     result.push(self.initialize_main_input(tp));
                 }
-                Value::Array(Rc::new(result))
+                Value::mk_array(result)
             }
             _ => panic!("unexpected main params"),
         }
@@ -864,24 +898,55 @@ impl R1CGen {
 
         // lookups init
         for lookup in self.lookups.into_iter() {
-            if lookup.elements.len() >= 2 {
-                todo!("wide tables");
-            }
+            // if lookup.elements.len() >= 2 {
+            //     todo!("wide tables");
+            // }
 
-            let y = witness_layout.next_lookups_data();
-            let mut b = vec![(alpha, ark_bn254::Fr::ONE)];
-            for (w, coeff) in lookup.elements[0].iter() {
-                b.push((*w, -*coeff));
-            }
-            result.push(R1C {
-                a: vec![(y, ark_bn254::Fr::ONE)],
-                b,
-                c: vec![(0, ark_bn254::Fr::ONE)],
-            });
+            let y_wit = match lookup.elements.len() {
+                1 => {
+                    let y = witness_layout.next_lookups_data();
+                    let mut b = vec![(alpha, ark_bn254::Fr::ONE)];
+                    for (w, coeff) in lookup.elements[0].iter() {
+                        b.push((*w, -*coeff));
+                    }
+                    result.push(R1C {
+                        a: vec![(y, ark_bn254::Fr::ONE)],
+                        b,
+                        c: vec![(0, ark_bn254::Fr::ONE)],
+                    });
+                    y
+                }
+                2 => {
+                    let x = witness_layout.next_lookups_data();
+                    let y = witness_layout.next_lookups_data();
+                    result.push(R1C {
+                        a: vec![(beta, crate::compiler::Field::ONE)],
+                        b: lookup.elements[1].clone(),
+                        c: vec![(x, -crate::compiler::Field::ONE)],
+                    });
+
+                    result.push(R1C {
+                        a: vec![(y, ark_bn254::Fr::ONE)],
+                        b: lookup.elements[0].clone(),
+                        c: vec![(x, -crate::compiler::Field::ONE)],
+                    });
+                    let mut b = vec![(alpha, ark_bn254::Fr::ONE), (x, -crate::compiler::Field::ONE)];
+                    for (w, coeff) in lookup.elements[0].iter() {
+                        b.push((*w, -*coeff));
+                    }
+                    result.push(R1C {
+                        a: vec![(y, ark_bn254::Fr::ONE)],
+                        b,
+                        c: vec![(0, ark_bn254::Fr::ONE)],
+                    });
+                    y
+                }
+                _ => panic!("unsupported lookup width {}", lookup.elements.len()),
+            };
 
             result[table_infos[lookup.table_id].sum_constraint_idx]
                 .c
-                .push((y, ark_bn254::Fr::ONE));
+                .push((y_wit, ark_bn254::Fr::ONE));
         }
 
         constraints_layout.lookups_data_size =
