@@ -1,6 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use ark_ff::AdditiveGroup as _;
+use noirc_driver::gen_abi;
 use tracing::info;
 
 use crate::{
@@ -42,6 +43,7 @@ pub struct Driver {
     monomorphized_ssa: Option<SSA<ConstantTaint>>,
     explicit_witness_ssa: Option<SSA<ConstantTaint>>,
     r1cs_ssa: Option<SSA<ConstantTaint>>,
+    abi: Option<noirc_abi::Abi>,
     draw_cfg: bool,
 }
 
@@ -63,6 +65,7 @@ impl Driver {
             monomorphized_ssa: None,
             explicit_witness_ssa: None,
             r1cs_ssa: None,
+            abi: None,
             draw_cfg,
         }
     }
@@ -98,6 +101,8 @@ impl Driver {
         let program =
             noirc_frontend::monomorphization::monomorphize(main, &mut context.def_interner, false)
                 .unwrap();
+
+        self.abi = Some(gen_abi(&context, &main, program.return_visibility(), BTreeMap::default()));
 
         let ssa = noirc_evaluator::ssa::SsaBuilder::from_program(
             program,
@@ -347,5 +352,9 @@ impl Driver {
         info!(message = %"AD binary generated", binary_size = binary.len() * 8);
 
         Ok(binary)
+    }
+
+    pub fn abi(&self) -> &noirc_abi::Abi {
+        self.abi.as_ref().unwrap()
     }
 }
