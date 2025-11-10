@@ -15,6 +15,7 @@ noirc_driver = { path = "../noir/compiler/noirc_driver" }
 noirc_errors = { path = "../noir/compiler/noirc_errors" }
 noirc_frontend = { path = "../noir/compiler/noirc_frontend" }
 noirc_evaluator = { path = "../noir/compiler/noirc_evaluator" }
+noirc_abi = { path = "../noir/tooling/noirc_abi" }
 
 clap = { version = "4.5.17", features = ["unstable-v5"] }
 derivative = "2.2.0"
