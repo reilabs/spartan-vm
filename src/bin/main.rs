@@ -74,9 +74,8 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap();
     let format = Format::from_ext(ext).unwrap();
     let inputs = std::fs::read_to_string(file_path).unwrap();
-    println!("{:?}", inputs); //Reilabs Debug: 
     let inputs = format.parse(&inputs, driver.abi()).unwrap();
-    let params: Vec<Field> = driver.abi().encode(&inputs, None).unwrap().into_iter().map(|(witness, val)| {
+    let params: Vec<Field> = driver.abi().encode(&inputs, None).unwrap().into_iter().map(|(_, val)| {
         val.into_repr()
     }).collect();
 

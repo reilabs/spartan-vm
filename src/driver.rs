@@ -1,7 +1,6 @@
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use ark_ff::AdditiveGroup as _;
-use noirc_driver::gen_abi;
 use tracing::info;
 
 use crate::{
@@ -102,7 +101,7 @@ impl Driver {
             noirc_frontend::monomorphization::monomorphize(main, &mut context.def_interner, false)
                 .unwrap();
 
-        self.abi = Some(gen_abi(&context, &main, program.return_visibility(), BTreeMap::default()));
+        self.abi = Some(noirc_driver::gen_abi(&context, &main, program.return_visibility(), BTreeMap::default()));
 
         let ssa = noirc_evaluator::ssa::SsaBuilder::from_program(
             program,
