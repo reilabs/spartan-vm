@@ -6,6 +6,7 @@ use spartan_vm::{Error, Project, compiler::Field, driver::Driver, vm::interprete
 use tracing::{error, info, warn};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
+use noirc_abi::{input_parser::Format};
 
 /// The default Noir project path for the CLI to extract from.
 const DEFAULT_NOIR_PROJECT_PATH: &str = "./";
@@ -69,13 +70,22 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         }
     }
 
+    let file_path = args.root.join("Prover.toml");
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap();
+    let format = Format::from_ext(ext).unwrap();
+    let inputs = std::fs::read_to_string(file_path).unwrap();
+    let inputs = format.parse(&inputs, driver.abi()).unwrap();
+    let params: Vec<Field> = driver.abi().encode(&inputs, None).unwrap().into_iter().map(|(_, val)| {
+        val.into_repr()
+    }).collect();
+
     let mut binary = driver.compile_witgen().unwrap();
 
     let witgen_result = interpreter::run(
         &mut binary,
         r1cs.witness_layout,
         r1cs.constraints_layout,
-        &[Field::from(253)],
+        &params,
     );
 
     let correct = r1cs.check_witgen_output(
