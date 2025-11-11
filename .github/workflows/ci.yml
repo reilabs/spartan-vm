@@ -1,23 +1,24 @@
-name: CI
+name: Cargo Build & Run
 
 on:
   push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build_and_test:
+    name: Rust project (stable)
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: actions/setup-rust@v1
-        with:
-          rust-version: stable
+      - name: Set up Rust (stable)
+        run: |
+          rustup update stable
+          rustup default stable
 
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
@@ -29,12 +30,11 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Build in release mode
-        run: cargo build --release
+      - name: Build
+        run: cargo build --verbose
 
-      - name: Run project with environment variables
+      - name: Run
         env:
           RUST_LOG: info
           RUST_BACKTRACE: 1
-        run: |
-          cargo run --release -- --root=noir_examples/power --public-witness 1 --pprint-r1cs
+        run: cargo run --release -- --root=noir_examples/power --public-witness 1 --pprint-r1cs
