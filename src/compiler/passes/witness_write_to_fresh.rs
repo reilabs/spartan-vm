@@ -47,10 +47,18 @@ impl WitnessWriteToFresh {
         let new_instructions = old_params
             .into_iter()
             .map(|(r, tp)| {
-                assert!(matches!(tp.expr, TypeExpr::Field));
-                OpCode::FreshWitness {
-                    result: r,
-                    result_type: Type::field(ConstantTaint::Witness)
+                assert!(matches!(tp.expr, TypeExpr::Field) || matches!(tp.expr, TypeExpr::Array(_, _)));
+                match tp.expr {
+                    TypeExpr::Field => OpCode::FreshWitness {
+                        result: r,
+                        result_type: Type::field(ConstantTaint::Witness),
+                    },
+                    TypeExpr::Array(_, size) => OpCode::FreshWitness {
+                        result: r,
+                        result_type: tp.array_of(size, ConstantTaint::Witness),
+                    },
+                    _ =>
+                        panic!("Expected numeric type or array type, got {:?}", tp),
                 }
             })
             .chain(old_instructions.into_iter())
