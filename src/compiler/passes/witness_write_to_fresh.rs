@@ -53,9 +53,9 @@ impl WitnessWriteToFresh {
                         result: r,
                         result_type: Type::field(ConstantTaint::Witness),
                     },
-                    TypeExpr::Array(_, size) => OpCode::FreshWitness {
+                    TypeExpr::Array(inner , size) => OpCode::FreshWitness {
                         result: r,
-                        result_type: tp.array_of(size, ConstantTaint::Witness),
+                        result_type: inner.array_of(size, ConstantTaint::Witness),
                     },
                     _ =>
                         panic!("Expected numeric type or array type, got {:?}", tp),

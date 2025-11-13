@@ -3,7 +3,7 @@ use tracing::{Level, instrument};
 use crate::compiler::{
     Field,
     analysis::types::TypeInfo,
-    ir::r#type::{CommutativeMonoid, Type},
+    ir::r#type::{CommutativeMonoid, Type, TypeExpr},
     ssa::{
         BinaryArithOpKind, BlockId, CastTarget, CmpKind, Const, Endianness, FunctionId, GlobalDef, LookupTarget, MemOp, Radix, SSA, SeqType, SliceOpDir, Terminator
     },
@@ -409,9 +409,28 @@ impl SymbolicExecutor {
                     }
                     crate::compiler::ssa::OpCode::FreshWitness {
                         result: r,
-                        result_type: _,
+                        result_type: result_type,
                     } => {
-                        scope[r.0 as usize] = Some(V::fresh_witness(ctx));
+                        match &result_type.expr {
+                            TypeExpr::Field => {
+                                scope[r.0 as usize] = Some(V::fresh_witness(ctx));
+                            }
+                            TypeExpr::Array(inner, size) => {
+                                // Nested arrays not supported yet
+                                assert!(matches!(inner.expr, TypeExpr::Field));
+                                let mut items = vec![];
+                                for _ in 0..*size {
+                                    items.push(V::fresh_witness(ctx));
+                                }
+                                scope[r.0 as usize] = Some(V::mk_array(
+                                    items,
+                                    ctx,
+                                    SeqType::Array(*size),
+                                    &inner,
+                                ));
+                            }
+                            _ => (),
+                        }
                     }
                     crate::compiler::ssa::OpCode::Constrain { a, b, c } => {
                         let a = scope[a.0 as usize].as_ref().unwrap();
