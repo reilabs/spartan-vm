@@ -1,0 +1,6 @@
+[package]
+name = "power_small"
+type = "bin"
+authors = [""]
+
+[dependencies]
