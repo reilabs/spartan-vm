@@ -261,11 +261,25 @@ impl SymbolicExecutor {
                         seq_type,
                         elem_type,
                     } => {
-                        let a = a
-                            .iter()
-                            .map(|id| scope[id.0 as usize].as_ref().unwrap().clone())
-                            .collect::<Vec<_>>();
-                        scope[r.0 as usize] = Some(V::mk_array(a, ctx, *seq_type, elem_type));
+                        if let SeqType::Array(size) = *seq_type {
+                            if size == a.len() {
+                                let a = a
+                                    .iter()
+                                    .map(|id| {
+                                        scope[id.0 as usize].as_ref().unwrap().clone()
+                                    })
+                                    .collect::<Vec<_>>();
+                                scope[r.0 as usize] = Some(V::mk_array(a, ctx, *seq_type, elem_type));
+                                // OK
+                            } else {
+                                let a: Vec<V> = (0..size) // Fill with default values
+                                    .map(|_| {
+                                        V::fresh_witness(ctx)
+                                    }).collect();
+                                scope[r.0 as usize] = Some(V::mk_array(a, ctx, *seq_type, elem_type));
+                            }
+                        }
+
                     }
                     crate::compiler::ssa::OpCode::Alloc {
                         result: r,

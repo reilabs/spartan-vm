@@ -1,7 +1,7 @@
 use crate::compiler::{
     ir::r#type::{Type, TypeExpr},
     pass_manager::{DataPoint, Pass},
-    ssa::OpCode,
+    ssa::{OpCode, SeqType},
     taint_analysis::ConstantTaint,
 };
 
@@ -47,11 +47,28 @@ impl WitnessWriteToFresh {
         let new_instructions = old_params
             .into_iter()
             .map(|(r, tp)| {
-                assert!(matches!(tp.expr, TypeExpr::Field));
-                OpCode::FreshWitness {
-                    result: r,
-                    result_type: Type::field(ConstantTaint::Witness)
+                // assert!(matches!(tp.expr, TypeExpr::Field));
+                match tp.expr {
+                    TypeExpr::Field => {
+                        OpCode::FreshWitness {
+                            result: r,
+                            result_type: Type::field(ConstantTaint::Witness)
+                        }
+                    }
+                    TypeExpr::Array(inner_tp, size) => {
+                        OpCode::MkSeq { 
+                            result: r, 
+                            elems: vec![], 
+                            seq_type: SeqType::Array(size),
+                            elem_type: *inner_tp,
+                        }
+                    }
+                    _ => panic!(
+                        "Expected parameter type to be Field or Array, got {:?}",
+                        tp.expr
+                    ),
                 }
+                
             })
             .chain(old_instructions.into_iter())
             .collect();
