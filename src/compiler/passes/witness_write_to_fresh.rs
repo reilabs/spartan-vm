@@ -1,7 +1,7 @@
 use crate::compiler::{
     ir::r#type::{Type, TypeExpr},
     pass_manager::{DataPoint, Pass},
-    ssa::{OpCode, SeqType},
+    ssa::{OpCode, SeqType, ValueId},
     taint_analysis::ConstantTaint,
 };
 
@@ -48,48 +48,15 @@ impl WitnessWriteToFresh {
         let mut new_instructions = vec![];
 
         for (r, tp) in old_params.iter() {
-            match &tp.expr {
-                TypeExpr::Field => {
-                    new_instructions.push(OpCode::FreshWitness { 
-                        result: *r, 
-                        result_type: Type::field(ConstantTaint::Witness),
-                    })
-                }
-                TypeExpr::Array(inner_type, size) => {
-                    let mut value_ids = vec![];
-                    for _ in 0..*size {
-                        let new_value = main_function.fresh_value();
-                        new_instructions.push(OpCode::FreshWitness {      
-                            result: new_value, 
-                            result_type: Type::field(ConstantTaint::Witness),  // TODO: We only handle Field arrays for now
-                        });
-                        value_ids.push(new_value);
-                    }
-                    new_instructions.push(OpCode::MkSeq {
-                        result: *r,
-                        elems: value_ids,
-                        seq_type: SeqType::Array(*size),
-                        elem_type: *inner_type.clone(),
-                    });
-                }
-                _ => panic!("Unsupported parameter type for witness write to fresh"),
-            }
+            Self::generate_fresh_witness_for_parameter(
+                Some(*r),
+                tp.clone(),
+                main_function,
+                &mut new_instructions,
+            );
         }
 
         new_instructions.extend(old_instructions.into_iter());
-        
-        // let new_instructions = old_params
-        //     .into_iter()
-        //     .map(|(r, tp)| {
-        //         assert!(matches!(tp.expr, TypeExpr::Field));
-        //         OpCode::FreshWitness {
-        //             result: r,
-        //             result_type: Type::field(ConstantTaint::Witness)
-        //         }
-        //     })
-        //     .chain(old_instructions.into_iter())
-        //     .collect();
-        // main_block.put_instructions(new_instructions);
         let main_function = ssa.get_function_mut(main_id);
         let main_block = main_function.get_block_mut(main_function.get_entry_id());
         main_block.put_instructions(new_instructions);
@@ -147,6 +114,44 @@ impl WitnessWriteToFresh {
                 }
             }
         }
+    }
+
+    fn generate_fresh_witness_for_parameter(
+        value_id: Option<ValueId>,
+        tp: Type<ConstantTaint>,
+        main_function: &mut crate::compiler::ssa::Function<ConstantTaint>,
+        instruction_collector: &mut Vec<OpCode<ConstantTaint>>,
+    ) -> ValueId {
+        let r = value_id.unwrap_or_else(|| main_function.fresh_value());
+        match &tp.expr {
+            TypeExpr::Field => {
+                instruction_collector.push(OpCode::FreshWitness { 
+                    result: r,
+                    result_type: Type::field(ConstantTaint::Witness),
+                })
+            }
+            TypeExpr::Array(inner_type, size) => {
+                let mut value_ids = vec![];
+                for _ in 0..*size {
+                    let new_value_id = Self::generate_fresh_witness_for_parameter(
+                        None,
+                        *inner_type.clone(),
+                        main_function,
+                        instruction_collector,
+                    );
+                    value_ids.push(new_value_id);
+                }
+                instruction_collector.push(OpCode::MkSeq {
+                    result: r,
+                    elems: value_ids,
+                    seq_type: SeqType::Array(*size),
+                    elem_type: *inner_type.clone(),
+                });
+            }        
+            // NOTE: We only support nested arrays of fields for now
+            _ => panic!("Unsupported parameter type for witness write to fresh"), 
+        }
+        r
     }
 }
 
