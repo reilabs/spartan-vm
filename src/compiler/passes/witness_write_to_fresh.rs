@@ -148,8 +148,7 @@ impl WitnessWriteToFresh {
                     elem_type: *inner_type.clone(),
                 });
             }        
-            // NOTE: We only support nested arrays of fields for now
-            _ => panic!("Unsupported parameter type for witness write to fresh"), 
+            _ => panic!("Unsupported parameter type for witness write to fresh. We only support fields and nested arrays of fields for now"), 
         }
         r
     }
