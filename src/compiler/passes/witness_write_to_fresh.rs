@@ -1,7 +1,8 @@
 use crate::compiler::{
+    analysis::types::TypeInfo,
     ir::r#type::{Type, TypeExpr},
-    pass_manager::{DataPoint, Pass},
-    ssa::{OpCode, SeqType, ValueId},
+    pass_manager::{PassManager, PassInfo, DataPoint, Pass},
+    ssa::{OpCode, SeqType, ValueId, Function, SSA},
     taint_analysis::ConstantTaint,
 };
 
@@ -10,14 +11,14 @@ pub struct WitnessWriteToFresh {}
 impl Pass<ConstantTaint> for WitnessWriteToFresh {
     fn run(
         &self,
-        ssa: &mut crate::compiler::ssa::SSA<ConstantTaint>,
-        pass_manager: &crate::compiler::pass_manager::PassManager<ConstantTaint>,
+        ssa: &mut SSA<ConstantTaint>,
+        pass_manager: &PassManager<ConstantTaint>,
     ) {
         self.do_run(ssa, pass_manager.get_type_info());
     }
 
-    fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
-        crate::compiler::pass_manager::PassInfo {
+    fn pass_info(&self) -> PassInfo {
+        PassInfo {
             name: "witness_write_to_fresh",
             needs: vec![DataPoint::Types],
         }
@@ -36,8 +37,8 @@ impl WitnessWriteToFresh {
 
     pub fn do_run(
         &self,
-        ssa: &mut crate::compiler::ssa::SSA<ConstantTaint>,
-        type_info: &crate::compiler::analysis::types::TypeInfo<ConstantTaint>,
+        ssa: &mut SSA<ConstantTaint>,
+        type_info: &TypeInfo<ConstantTaint>,
     ) {
         let main_id = ssa.get_main_id();
         let main_function = ssa.get_function_mut(main_id);
@@ -119,7 +120,7 @@ impl WitnessWriteToFresh {
     fn generate_fresh_witness_for_parameter(
         value_id: Option<ValueId>,
         tp: Type<ConstantTaint>,
-        main_function: &mut crate::compiler::ssa::Function<ConstantTaint>,
+        main_function: &mut Function<ConstantTaint>,
         instruction_collector: &mut Vec<OpCode<ConstantTaint>>,
     ) -> ValueId {
         let r = value_id.unwrap_or_else(|| main_function.fresh_value());
