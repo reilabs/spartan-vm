@@ -6,7 +6,7 @@ use spartan_vm::{Error, Project, compiler::Field, driver::Driver, vm::interprete
 use tracing::{error, info, warn};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
-use noirc_abi::{input_parser::Format};
+use noirc_abi::input_parser::{Format, InputValue};
 
 /// The default Noir project path for the CLI to extract from.
 const DEFAULT_NOIR_PROJECT_PATH: &str = "./";
@@ -78,6 +78,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     let params: Vec<Field> = driver.abi().encode(&inputs, None).unwrap().into_iter().map(|(_, val)| {
         val.into_repr()
     }).collect();
+    let ordered_params = ordered_params(driver.abi(), &inputs);
 
     let mut binary = driver.compile_witgen().unwrap();
 
@@ -86,6 +87,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         r1cs.witness_layout,
         r1cs.constraints_layout,
         &params,
+        &ordered_params,
     );
 
     let correct = r1cs.check_witgen_output(
@@ -229,4 +231,19 @@ fn parse_path(path: &str) -> Result<PathBuf, String> {
         path = std::env::current_dir().unwrap().join(path).normalize();
     }
     Ok(path)
+}
+
+// TODO: Move this fn somewhere 
+fn ordered_params(
+    abi: &noirc_abi::Abi,
+    unordered_params: &std::collections::BTreeMap<String, InputValue>,
+) -> Vec<InputValue> {
+    let mut ordered_params = Vec::new();
+    for param_mame in abi.parameter_names() {
+        let param = unordered_params
+            .get(param_mame)
+            .expect("Parameter not found in unordered params");
+        ordered_params.push(param.clone());
+    }
+    ordered_params
 }

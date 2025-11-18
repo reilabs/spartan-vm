@@ -132,7 +132,7 @@ impl BoxedValue {
             *ptr = layout.0;
             *ptr.offset(1) = 1;
         }
-        // println!("allocing {:?} of size {} ({:?})", ptr, arr_size, layout.data_type());
+        println!("allocing {:?} of size {} ({:?})", ptr, arr_size, layout.data_type());
         Self(ptr)
     }
 

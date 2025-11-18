@@ -6,6 +6,7 @@ use std::{
 };
 
 use ark_ff::{AdditiveGroup, BigInt, Field as _, Fp, PrimeField as _};
+use noirc_abi::input_parser::InputValue;
 use tracing::instrument;
 
 use crate::{
@@ -14,7 +15,7 @@ use crate::{
         r1cs_gen::{ConstraintsLayout, WitnessLayout},
     },
     vm::{
-        array::BoxedValue,
+        array::{BoxedLayout, BoxedValue},
         bytecode::{self, AllocationInstrumenter, AllocationType, OpCode, VM},
     },
 };
@@ -178,15 +179,16 @@ pub fn run(
     program: &[u64],
     witness_layout: WitnessLayout,
     constraints_layout: ConstraintsLayout,
-    inputs: &[Field],
+    flat_inputs: &[Field],
+    structured_inputs: &[InputValue],
 ) -> WitgenResult {
     let mut out_a = vec![Field::ZERO; constraints_layout.size()];
     let mut out_b = vec![Field::ZERO; constraints_layout.size()];
     let mut out_c = vec![Field::ZERO; constraints_layout.size()];
     let mut out_wit_pre_comm = vec![Field::ZERO; witness_layout.pre_commitment_size()];
     out_wit_pre_comm[0] = Field::ONE;
-    for i in 0..inputs.len() {
-        out_wit_pre_comm[1 + i] = inputs[i];
+    for i in 0..flat_inputs.len() {
+        out_wit_pre_comm[1 + i] = flat_inputs[i];
     }
     let mut out_wit_post_comm = vec![Field::ZERO; witness_layout.post_commitment_size()];
     let mut vm = VM::new_witgen(
@@ -196,7 +198,7 @@ pub fn run(
         unsafe {
             out_wit_pre_comm
                 .as_mut_ptr()
-                .offset(1 + inputs.len() as isize)
+                .offset(1 + flat_inputs.len() as isize)
         },
         unsafe {
             out_wit_pre_comm
@@ -224,8 +226,46 @@ pub fn run(
         },
         &mut vm,
     );
-    for (i, el) in inputs.iter().enumerate() {
-        frame.write_field(2 + (i as isize) * 4, *el);
+    // This needs to change
+    let mut current_offset = 2 as isize ;
+    for (i, el) in structured_inputs.iter().enumerate() {
+        match el {
+            InputValue::Field(field_element) => {
+                frame.write_field(current_offset, field_element.into_repr());
+                current_offset += 4;
+            }
+            InputValue::Vec(vec) => {
+                let layout = BoxedLayout::array(vec.len() * 4, false);
+                let array = BoxedValue::alloc(layout, &mut vm);
+
+                
+                for (elem_ind, input) in vec.iter().enumerate() {
+                    let ptr = array.array_idx(elem_ind, 4);
+                    match input {
+                        InputValue::Field(field_element) => {
+                            let a0 = field_element.into_repr().0.0[0];
+                            let a1 = field_element.into_repr().0.0[1];
+                            let a2 = field_element.into_repr().0.0[2];
+                            let a3 = field_element.into_repr().0.0[3];
+                            unsafe {
+                                *ptr.offset(0) = a0;
+                                *ptr.offset(1) = a1;
+                                *ptr.offset(2) = a2;
+                                *ptr.offset(3) = a3;
+                            }
+                        }
+                        _ => panic!("Only field elements are supported in arrays for now"),
+                    }
+                }
+
+                unsafe {
+                    *frame.read_array_mut(current_offset) = array;
+                    current_offset += 1;
+                }
+            }
+            _ => panic!(""),
+        }
+        // frame.write_field(2 + (i as isize) * 4, *el);
     }
 
     let mut program = program.to_vec();
