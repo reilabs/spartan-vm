@@ -722,12 +722,8 @@ impl R1CGen {
     #[instrument(skip_all, name = "R1CGen::run")]
     pub fn run<V: Clone + CommutativeMonoid>(&mut self, ssa: &SSA<V>, type_info: &TypeInfo<V>) {
         let entry_point = ssa.get_main_id();
-        let params = ssa.get_function(entry_point).get_param_types();
-        let mut main_params = vec![];
-        for value_type in params {
-            main_params.push(self.initialize_main_input(&value_type));
-        }
-
+        assert!(ssa.get_function(entry_point).get_param_types().len() == 0, "Main should not have parameters as WitnessWriteToFresh pass should remove them");
+        let main_params = vec![];
         let executor = SymbolicExecutor::new();
         executor.run(ssa, type_info, entry_point, main_params, self);
     }
@@ -744,21 +740,6 @@ impl R1CGen {
         let result = self.next_witness;
         self.next_witness += 1;
         result
-    }
-
-    fn initialize_main_input<V: Clone>(&mut self, tp: &Type<V>) -> Value {
-        match &tp.expr {
-            TypeExpr::U(_) => Value::LC(vec![(self.next_witness(), ark_bn254::Fr::ONE)]),
-            TypeExpr::Field => Value::LC(vec![(self.next_witness(), ark_bn254::Fr::ONE)]),
-            TypeExpr::Array(tp, size) => {
-                let mut result = vec![];
-                for _ in 0..*size {
-                    result.push(self.initialize_main_input(tp));
-                }
-                Value::mk_array(result)
-            }
-            _ => panic!("unexpected main params"),
-        }
     }
 
     pub fn seal(self) -> R1CS {
