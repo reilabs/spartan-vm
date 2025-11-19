@@ -229,22 +229,7 @@ pub fn run(
 
     let mut current_offset = 2 as isize ;
     for (_, el) in structured_inputs.iter().enumerate() {
-        match el {
-            InputValue::Field(field_element) => {
-                frame.write_field(current_offset, field_element.into_repr());
-                current_offset += 4;
-            }
-            InputValue::Vec(vec) => {
-                let array = populate_array(vec, &mut vm);
-
-                unsafe {
-                    *frame.read_array_mut(current_offset) = array;
-                    current_offset += 1;
-                }
-            }
-            _ => panic!(""),
-        }
-        // frame.write_field(2 + (i as isize) * 4, *el);
+        unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
     }
 
     let mut program = program.to_vec();
@@ -399,54 +384,53 @@ pub fn run_ad(
 }
 
 
-fn populate_array(vec: &Vec<InputValue>, vm: &mut VM) -> BoxedValue {
-    if vec.len() == 0 {
-        let layout = BoxedLayout::array(0, false);
-        return BoxedValue::alloc(layout, vm)
-    } else {
-        match &vec[0] {
-            InputValue::Field(_) => {
-                let layout = BoxedLayout::array(vec.len() * 4, false);
-                let array = BoxedValue::alloc(layout, vm);
-                
-                for (elem_ind, input) in vec.iter().enumerate() {
-                    let ptr = array.array_idx(elem_ind, 4);
-                    match input {
-                        InputValue::Field(field_element) => {
-                            let a0 = field_element.into_repr().0.0[0];
-                            let a1 = field_element.into_repr().0.0[1];
-                            let a2 = field_element.into_repr().0.0[2];
-                            let a3 = field_element.into_repr().0.0[3];
-                            unsafe {
-                                *ptr.offset(0) = a0;
-                                *ptr.offset(1) = a1;
-                                *ptr.offset(2) = a2;
-                                *ptr.offset(3) = a3;
-                            }
-                        }
-                        _ => panic!("Only field elements are supported in arrays for now"),
-                    }
-                }
-                return array;
+fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
+    match el {
+        InputValue::Field(field_element) => {
+            let a0 = field_element.into_repr().0.0[0];
+            let a1 = field_element.into_repr().0.0[1];
+            let a2 = field_element.into_repr().0.0[2];
+            let a3 = field_element.into_repr().0.0[3];
+            unsafe {
+                *ptr.offset(0) = a0;
+                *ptr.offset(1) = a1;
+                *ptr.offset(2) = a2;
+                *ptr.offset(3) = a3;
             }
-            InputValue::Vec(inner_vec) => {
-                let layout = BoxedLayout::array(vec.len(), true);
-                let array = BoxedValue::alloc(layout, vm);
-                
-                for (elem_ind, input) in vec.iter().enumerate() {
-                    if let InputValue::Vec(elem) = input {
-                        let ptr = array.array_idx(elem_ind, 1) as *mut BoxedValue;
-                        let inner_array = populate_array(elem, vm);
-                        unsafe {
-                            *ptr = inner_array;
-                        }
-                    } else {
-                        panic!("Expected Vec in nested array");
-                    }
-                }
-                return array;
-            }
-            _ => panic!("Only field elements are supported in arrays for now"),
+            return 4;
         }
+        InputValue::Vec(vec) => {
+            if vec.len() == 0 {
+                let layout = BoxedLayout::array(0, false);
+                let array = BoxedValue::alloc(layout, vm);
+                unsafe{*(ptr as *mut BoxedValue) = array;}
+            } else {
+                match &vec[0] {
+                    InputValue::Field(_) => {
+                        let layout = BoxedLayout::array(vec.len() * 4, false);
+                        let array = BoxedValue::alloc(layout, vm);
+                        
+                        for (elem_ind, input) in vec.iter().enumerate() {
+                            let ptr = array.array_idx(elem_ind, 4);
+                            write_input_value(ptr, input, vm);
+                        }
+                        unsafe{*(ptr as *mut BoxedValue) = array;}
+                    }
+                    InputValue::Vec(_) => {
+                        let layout = BoxedLayout::array(vec.len(), true);
+                        let array = BoxedValue::alloc(layout, vm);
+                        
+                        for (elem_ind, input) in vec.iter().enumerate() {
+                            let ptr = array.array_idx(elem_ind, 1);
+                            write_input_value(ptr, input, vm);
+                        }
+                        unsafe{*(ptr as *mut BoxedValue) = array;}
+                    }
+                    _ => panic!("Only field elements are supported in arrays for now"),
+                }
+            }
+            return 1;
+        }
+        _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
     }
 }
