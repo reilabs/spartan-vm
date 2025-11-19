@@ -75,9 +75,6 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     let format = Format::from_ext(ext).unwrap();
     let inputs = std::fs::read_to_string(file_path).unwrap();
     let inputs = format.parse(&inputs, driver.abi()).unwrap();
-    let params: Vec<Field> = driver.abi().encode(&inputs, None).unwrap().into_iter().map(|(_, val)| {
-        val.into_repr()
-    }).collect();
     let ordered_params = ordered_params(driver.abi(), &inputs);
 
     let mut binary = driver.compile_witgen().unwrap();
@@ -86,7 +83,6 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         &mut binary,
         r1cs.witness_layout,
         r1cs.constraints_layout,
-        &params,
         &ordered_params,
     );
 
@@ -233,7 +229,6 @@ fn parse_path(path: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-// TODO: Move this fn somewhere 
 fn ordered_params(
     abi: &noirc_abi::Abi,
     unordered_params: &std::collections::BTreeMap<String, InputValue>,

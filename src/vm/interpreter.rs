@@ -179,14 +179,14 @@ pub fn run(
     program: &[u64],
     witness_layout: WitnessLayout,
     constraints_layout: ConstraintsLayout,
-    flat_inputs: &[Field],
-    structured_inputs: &[InputValue],
+    ordered_inputs: &[InputValue],
 ) -> WitgenResult {
     let mut out_a = vec![Field::ZERO; constraints_layout.size()];
     let mut out_b = vec![Field::ZERO; constraints_layout.size()];
     let mut out_c = vec![Field::ZERO; constraints_layout.size()];
     let mut out_wit_pre_comm = vec![Field::ZERO; witness_layout.pre_commitment_size()];
     out_wit_pre_comm[0] = Field::ONE;
+    let flat_inputs = flatten_param_vec(ordered_inputs);
     for i in 0..flat_inputs.len() {
         out_wit_pre_comm[1 + i] = flat_inputs[i];
     }
@@ -228,7 +228,7 @@ pub fn run(
     );
 
     let mut current_offset = 2 as isize ;
-    for (_, el) in structured_inputs.iter().enumerate() {
+    for (_, el) in ordered_inputs.iter().enumerate() {
         unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
     }
 
@@ -424,4 +424,27 @@ fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
         }
         _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
     }
+}
+
+fn flatten_param_vec(vec: &[InputValue]) -> Vec<Field> {
+    let mut encoded_value = Vec::new();
+    for elem in vec {
+        encoded_value.extend(flatten_params(elem));
+    }
+    encoded_value
+}
+
+fn flatten_params(value: &InputValue) -> Vec<Field> {
+    let mut encoded_value = Vec::new();
+    match value {
+        InputValue::Field(elem) => encoded_value.push(elem.into_repr()),
+
+        InputValue::Vec(vec_elements) => {
+            for elem in vec_elements {
+                encoded_value.extend(flatten_params(elem));
+            }
+        }
+        _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
+    }
+    encoded_value
 }
