@@ -387,16 +387,7 @@ pub fn run_ad(
 fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
     match el {
         InputValue::Field(field_element) => {
-            let a0 = field_element.into_repr().0.0[0];
-            let a1 = field_element.into_repr().0.0[1];
-            let a2 = field_element.into_repr().0.0[2];
-            let a3 = field_element.into_repr().0.0[3];
-            unsafe {
-                *ptr.offset(0) = a0;
-                *ptr.offset(1) = a1;
-                *ptr.offset(2) = a2;
-                *ptr.offset(3) = a3;
-            }
+            unsafe{*(ptr as *mut Field) = field_element.into_repr();}
             return 4;
         }
         InputValue::Vec(vec) => {
