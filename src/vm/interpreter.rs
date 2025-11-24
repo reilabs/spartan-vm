@@ -422,7 +422,17 @@ fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
             }
             return 1;
         }
-        _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
+        InputValue::Struct(elements) => {
+            for (elem_ind, (_field_name, input)) in elements.iter().enumerate() {
+                unsafe {
+                    write_input_value(ptr.offset(elem_ind as isize * 4), input, vm);
+                }
+            }
+            return elements.len() as isize * 4;
+        }
+        _ => panic!(
+            "Unsupported input value type. We only support Field and nested Vecs of Fields for now."
+        ),
     }
 }
 
@@ -444,7 +454,15 @@ fn flatten_params(value: &InputValue) -> Vec<Field> {
                 encoded_value.extend(flatten_params(elem));
             }
         }
-        _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
+
+        InputValue::Struct(type_tree) => {
+            for (_field_name, field_value) in type_tree {
+                encoded_value.extend(flatten_params(field_value));
+            }
+        }
+        _ => panic!(
+            "Unsupported input value type. We only support Field and nested Vecs of Fields for now."
+        ),
     }
     encoded_value
 }

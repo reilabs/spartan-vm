@@ -1,9 +1,9 @@
 pub struct IDData {
-    pub id: u8,
     pub lucky_number: Field,
+    pub age: Field,
 }
 
 
-fn main(x: [IDData; 1]) {
-    assert(x[0].id < 100, "ID must be less than 100");
+fn main(x: IDData) {
+    assert_eq(2 * x.age, x.lucky_number);
 }
