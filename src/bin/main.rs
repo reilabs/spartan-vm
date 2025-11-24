@@ -1,12 +1,13 @@
+use core::panic;
 use std::{fs, path::PathBuf, process::ExitCode};
 
 use ark_ff::UniformRand as _;
 use clap::Parser;
-use spartan_vm::{Error, Project, compiler::Field, driver::Driver, vm::interpreter};
+use spartan_vm::{Error, Project, compiler::Field, driver::Driver, vm::interpreter::{self, InputValueOrdered}};
 use tracing::{error, info, warn};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
-use noirc_abi::input_parser::{Format, InputValue};
+use noirc_abi::{AbiType, input_parser::{Format, InputValue}};
 
 /// The default Noir project path for the CLI to extract from.
 const DEFAULT_NOIR_PROJECT_PATH: &str = "./";
@@ -75,7 +76,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     let format = Format::from_ext(ext).unwrap();
     let inputs = std::fs::read_to_string(file_path).unwrap();
     let inputs = format.parse(&inputs, driver.abi()).unwrap();
-    let ordered_params = ordered_params(driver.abi(), &inputs);
+    let ordered_params = ordered_params_from_btreemap(driver.abi(), &inputs);
 
     let mut binary = driver.compile_witgen().unwrap();
 
@@ -229,16 +230,44 @@ fn parse_path(path: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn ordered_params(
+fn ordered_params_from_btreemap(
     abi: &noirc_abi::Abi,
     unordered_params: &std::collections::BTreeMap<String, InputValue>,
-) -> Vec<InputValue> {
+) -> Vec<InputValueOrdered> {
     let mut ordered_params = Vec::new();
-    for param_mame in abi.parameter_names() {
-        let param = unordered_params
-            .get(param_mame)
+    for param in &abi.parameters {
+        let param_value = unordered_params
+            .get(&param.name)
             .expect("Parameter not found in unordered params");
-        ordered_params.push(param.clone());
+
+        ordered_params.push(ordered_param(&param.typ, param_value));
     }
     ordered_params
+}
+
+fn ordered_param(
+    abi_type: &AbiType,
+    value: &InputValue,
+) -> InputValueOrdered {
+    match (value, abi_type) {
+        (InputValue::Field(elem), _) => InputValueOrdered::Field(elem.into_repr()),
+
+        (InputValue::Vec(vec_elements), AbiType::Array { typ, .. }) => {
+            InputValueOrdered::Vec(vec_elements.iter().map(|elem| {ordered_param(typ, elem)}).collect())
+        }
+        (InputValue::Struct(object), AbiType::Struct { fields, .. }) => {
+            InputValueOrdered::Struct(fields.iter().map(|(field_name, field_type)| {
+                let field_value = object.get(field_name).expect("Field not found in struct");
+                (field_name.clone(), ordered_param(field_type, field_value))
+            }).collect::<Vec<_>>())
+        }
+        (InputValue::String(_string), _) => {
+            panic!("Strings are not supported in ordered params");
+        }
+
+        (InputValue::Vec(_vec_elements), AbiType::Tuple { fields: _fields }) => {
+            panic!("Tuples are not supported in ordered params");
+        }
+        _ => unreachable!("value should have already been checked to match abi type"),
+    }
 }

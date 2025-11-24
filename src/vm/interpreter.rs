@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use ark_ff::{AdditiveGroup, BigInt, Field as _, Fp, PrimeField as _};
+use ark_ff::{AdditiveGroup, BigInt, Field as _, Fp, PrimeField as _, fields};
 use noirc_abi::input_parser::InputValue;
 use tracing::instrument;
 
@@ -174,12 +174,19 @@ fn fix_multiplicities_section(wit: &mut [Field], witness_layout: WitnessLayout) 
     }
 }
 
+pub enum InputValueOrdered {
+    Field(Field),
+    String(String),
+    Vec(Vec<InputValueOrdered>),
+    Struct(Vec<(String, InputValueOrdered)>),
+}
+
 #[instrument(skip_all, name = "Interpreter::run")]
 pub fn run(
     program: &[u64],
     witness_layout: WitnessLayout,
     constraints_layout: ConstraintsLayout,
-    ordered_inputs: &[InputValue],
+    ordered_inputs: &[InputValueOrdered],
 ) -> WitgenResult {
     let mut out_a = vec![Field::ZERO; constraints_layout.size()];
     let mut out_b = vec![Field::ZERO; constraints_layout.size()];
@@ -384,20 +391,20 @@ pub fn run_ad(
 }
 
 
-fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
+fn write_input_value(ptr: *mut u64, el: &InputValueOrdered, vm: &mut VM) -> isize {
     match el {
-        InputValue::Field(field_element) => {
-            unsafe{*(ptr as *mut Field) = field_element.into_repr();}
+        InputValueOrdered::Field(field_element) => {
+            unsafe{*(ptr as *mut Field) = *field_element;}
             return 4;
         }
-        InputValue::Vec(vec) => {
+        InputValueOrdered::Vec(vec) => {
             if vec.len() == 0 {
                 let layout = BoxedLayout::array(0, false);
                 let array = BoxedValue::alloc(layout, vm);
                 unsafe{*(ptr as *mut BoxedValue) = array;}
             } else {
                 match &vec[0] {
-                    InputValue::Field(_) => {
+                    InputValueOrdered::Field(_) => {
                         let layout = BoxedLayout::array(vec.len() * 4, false);
                         let array = BoxedValue::alloc(layout, vm);
                         
@@ -407,7 +414,7 @@ fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
                         }
                         unsafe{*(ptr as *mut BoxedValue) = array;}
                     }
-                    InputValue::Vec(_) => {
+                    InputValueOrdered::Vec(_) => {
                         let layout = BoxedLayout::array(vec.len(), true);
                         let array = BoxedValue::alloc(layout, vm);
                         
@@ -422,7 +429,7 @@ fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
             }
             return 1;
         }
-        InputValue::Struct(elements) => {
+        InputValueOrdered::Struct(elements ) => {
             for (elem_ind, (_field_name, input)) in elements.iter().enumerate() {
                 unsafe {
                     write_input_value(ptr.offset(elem_ind as isize * 4), input, vm);
@@ -436,7 +443,7 @@ fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
     }
 }
 
-fn flatten_param_vec(vec: &[InputValue]) -> Vec<Field> {
+fn flatten_param_vec(vec: &[InputValueOrdered]) -> Vec<Field> {
     let mut encoded_value = Vec::new();
     for elem in vec {
         encoded_value.extend(flatten_params(elem));
@@ -444,25 +451,26 @@ fn flatten_param_vec(vec: &[InputValue]) -> Vec<Field> {
     encoded_value
 }
 
-fn flatten_params(value: &InputValue) -> Vec<Field> {
+fn flatten_params(value: &InputValueOrdered) -> Vec<Field> {
     let mut encoded_value = Vec::new();
     match value {
-        InputValue::Field(elem) => encoded_value.push(elem.into_repr()),
+        InputValueOrdered::Field(elem) => encoded_value.push(*elem),
 
-        InputValue::Vec(vec_elements) => {
+        InputValueOrdered::Vec(vec_elements) => {
             for elem in vec_elements {
                 encoded_value.extend(flatten_params(elem));
             }
         }
 
-        InputValue::Struct(type_tree) => {
-            for (_field_name, field_value) in type_tree {
+        InputValueOrdered::Struct(fields) => {
+            for (_field_name, field_value) in fields {
                 encoded_value.extend(flatten_params(field_value));
             }
         }
         _ => panic!(
-            "Unsupported input value type. We only support Field and nested Vecs of Fields for now."
+            "Unsupported input value type. We only support Field, Vecs, and Structs for now."
         ),
     }
     encoded_value
 }
+
