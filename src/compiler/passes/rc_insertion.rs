@@ -550,6 +550,9 @@ impl RCInsertion {
             TypeExpr::Field => false,
             TypeExpr::U(_) => false,
             TypeExpr::BoxedField => true,
+            TypeExpr::Tuple(elements) => {
+                todo!("Tuples not supported yet")
+            }
         }
     }
 }

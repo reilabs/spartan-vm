@@ -1033,6 +1033,9 @@ impl TaintAnalysis {
             TypeExpr::BoxedField => {
                 panic!("ICE: WitnessVal should not be present at this stage");
             }
+            TypeExpr::Tuple(elements) => {
+                todo!("Tuples not supported yet")
+            }
         }
     }
 
@@ -1055,6 +1058,9 @@ impl TaintAnalysis {
             ),
             TypeExpr::BoxedField => {
                 panic!("ICE: WitnessVal should not be present at this stage");
+            }
+            TypeExpr::Tuple(elements) => {
+                todo!("Tuples not supported yet")
             }
         }
     }

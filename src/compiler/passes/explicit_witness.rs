@@ -291,6 +291,9 @@ impl ExplicitWitness {
                                         TypeExpr::Ref(_) => {
                                             todo!("ref types in witnessed array reads")
                                         }
+                                        TypeExpr::Tuple(elements) => {
+                                            todo!("Tuples not supported yet")
+                                        }
                                     };
 
                                     ssa_append!(function, new_instructions, {

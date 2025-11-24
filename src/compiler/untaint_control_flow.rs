@@ -784,6 +784,9 @@ impl UntaintControlFlow {
                 expr: TypeExpr::BoxedField,
                 annotation: ConstantTaint::Pure,
             },
+            TypeExpr::Tuple(elements) => {
+                todo!("Tuples not supported yet")
+            }
         }
     }
 }

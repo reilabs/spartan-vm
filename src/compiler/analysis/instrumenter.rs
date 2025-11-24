@@ -433,6 +433,9 @@ impl Value {
             }
             TypeExpr::Slice(_) => panic!("Cannot witness slice type"),
             TypeExpr::Ref(_) => panic!("Cannot witness pointer type"),
+            TypeExpr::Tuple(elements) => {
+                todo!("Tuples not supported yet")
+            }
         }
     }
 
@@ -1294,6 +1297,9 @@ impl CostEstimator {
             TypeExpr::BoxedField => ValueSignature::FWitness,
             TypeExpr::Slice(_) => panic!("slice not possible here"),
             TypeExpr::Ref(_) => panic!("ref not possible here"),
+            TypeExpr::Tuple(elements) => {
+                todo!("Tuples not supported yet")
+            }
         }
     }
 }
