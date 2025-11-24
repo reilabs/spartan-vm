@@ -1,6 +1,8 @@
 name: Cargo Build & Run
 
 on:
+  push:
+    branches: [main]
   pull_request:
 
 env:
@@ -43,6 +45,6 @@ jobs:
           for dir in noir_tests/*/; do
             if [ -d "$dir" ] && [ -f "${dir}Nargo.toml" ]; then
               echo "Running example: $dir"
-              cargo run --release -- --root="$dir" --public-witness 1 --pprint-r1cs || echo "Failed: $dir"
+              cargo run --release -- --root="$dir" --public-witness 1 || echo "Failed: $dir"
             fi
           done
