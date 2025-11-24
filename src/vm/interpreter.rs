@@ -430,12 +430,13 @@ fn write_input_value(ptr: *mut u64, el: &InputValueOrdered, vm: &mut VM) -> isiz
             return 1;
         }
         InputValueOrdered::Struct(elements ) => {
-            for (elem_ind, (_field_name, input)) in elements.iter().enumerate() {
+            let mut accumulated_offset = 0;
+            for (_elem_ind, (_field_name, input)) in elements.iter().enumerate() {
                 unsafe {
-                    write_input_value(ptr.offset(elem_ind as isize * 4), input, vm);
+                    accumulated_offset += write_input_value(ptr.offset(accumulated_offset), input, vm);
                 }
             }
-            return elements.len() as isize * 4;
+            return accumulated_offset;
         }
         _ => panic!(
             "Unsupported input value type. We only support Field and nested Vecs of Fields for now."

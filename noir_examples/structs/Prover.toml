@@ -1,2 +1,2 @@
-x.age = "23"
-x.lucky_number = "46"
+x.age = "42"
+x.lucky_numbers = ["7", "6"]
