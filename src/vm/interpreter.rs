@@ -7,7 +7,7 @@ use std::{
 
 use ark_ff::{AdditiveGroup, BigInt, Field as _, Fp, PrimeField as _};
 use noirc_abi::input_parser::InputValue;
-use tracing::instrument;
+use tracing::{field, instrument};
 
 use crate::{
     compiler::{
@@ -422,6 +422,14 @@ fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
             }
             return 1;
         }
+        InputValue::Struct(field_map) => {
+            for (elem_ind, (_field_name, input)) in field_map.iter().enumerate() {
+                unsafe {
+                    write_input_value(ptr.offset((elem_ind * 4) as isize), input, vm);
+                }
+            }
+            return field_map.len() as isize * 4;
+        }
         _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
     }
 }
@@ -442,6 +450,12 @@ fn flatten_params(value: &InputValue) -> Vec<Field> {
         InputValue::Vec(vec_elements) => {
             for elem in vec_elements {
                 encoded_value.extend(flatten_params(elem));
+            }
+        }
+
+        InputValue::Struct(field_map) => {
+            for (_field_name, field_value) in field_map {
+                encoded_value.extend(flatten_params(field_value));
             }
         }
         _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),

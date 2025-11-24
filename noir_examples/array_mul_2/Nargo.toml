@@ -1,0 +1,6 @@
+[package]
+name = "array_mul"
+type = "bin"
+authors = [""]
+
+[dependencies]

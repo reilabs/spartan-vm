@@ -1,5 +1,7 @@
 use std::fmt::{Debug, Display, Formatter};
 
+use itertools::Itertools;
+
 pub trait CommutativeMonoid {
     fn empty() -> Self;
     fn op(&self, other: &Self) -> Self;
@@ -102,7 +104,7 @@ impl<V: Display> Display for Type<V> {
             }
             TypeExpr::BoxedField => write!(f, "BoxedField{}", format_annotation(&self.annotation)),
             TypeExpr::Tuple(elements) => {
-                todo!("Tuples not supported yet")
+                write!(f, "Tuple{}<{}>", format_annotation(&self.annotation), elements.iter().map(|e| format!("{}", e)).join(", "))
             }
         }
     }

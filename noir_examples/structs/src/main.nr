@@ -1,8 +1,8 @@
 pub struct IDData {
-    age: u8,
+    age: Field,
     lucky_number: Field,
 }
 
-fn main(x: [IDData; 1]) {
-    assert(x[0].age < 100, "Age must be less than 100");
+fn main(bat: IDData) {
+    assert_eq(bat.age, bat.lucky_number + 1);
 }

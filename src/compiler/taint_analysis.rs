@@ -1033,8 +1033,12 @@ impl TaintAnalysis {
             TypeExpr::BoxedField => {
                 panic!("ICE: WitnessVal should not be present at this stage");
             }
-            TypeExpr::Tuple(elements) => {
-                todo!("Tuples not supported yet")
+            // TypeExpr::Tuple(elements) => TaintType::TupleImmutable(
+            //     Taint::Variable(self.fresh_ty_var());
+            //     Box::new(self.construct_free_taint_for_type(elements)),
+            // ),
+            TypeExpr::Tuple(_elements) => {
+                todo!("Tuples not supported yet");
             }
         }
     }

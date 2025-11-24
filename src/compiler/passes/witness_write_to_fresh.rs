@@ -148,8 +148,11 @@ impl WitnessWriteToFresh {
                     seq_type: SeqType::Array(*size),
                     elem_type: *inner_type.clone(),
                 });
-            }        
-            _ => panic!("Unsupported parameter type for witness write to fresh. We only support fields and nested arrays of fields for now"), 
+            }     
+            TypeExpr::Tuple(types) => {
+                
+            }   
+            _ =>  panic!("Unsupported parameter type for witness write to fresh. We only support fields and nested arrays of fields for now"), 
         }
         r
     }
