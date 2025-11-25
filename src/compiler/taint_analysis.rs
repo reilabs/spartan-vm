@@ -200,7 +200,7 @@ impl TaintType {
             TaintType::Primitive(taint) => taint.clone(),
             TaintType::NestedImmutable(taint, _) => taint.clone(),
             TaintType::NestedMutable(taint, _) => taint.clone(),
-            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
+            TaintType::Tuple(taint, _) => {taint.clone()}
         }
     }
 
@@ -209,7 +209,7 @@ impl TaintType {
             TaintType::NestedImmutable(_, inner) => Some(*inner.clone()),
             TaintType::NestedMutable(_, inner) => Some(*inner.clone()),
             TaintType::Primitive(_) => None,
-            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
+            TaintType::Tuple(_, _) => None, // TODO: return tuple child taint.
         }
     }
 
@@ -220,7 +220,7 @@ impl TaintType {
                 TaintType::NestedImmutable(toplevel, inner.clone())
             }
             TaintType::NestedMutable(_, inner) => TaintType::NestedMutable(toplevel, inner.clone()),
-            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
+            TaintType::Tuple(_, inner) => TaintType::Tuple(toplevel, inner.clone()),
         }
     }
 
