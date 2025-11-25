@@ -465,6 +465,7 @@ impl BoxFields {
                 Type::ref_of(self.box_fields_in_type(inner), tp.annotation.clone())
             }
             TypeExpr::BoxedField => tp.clone(),
+            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
         }
     }
 }

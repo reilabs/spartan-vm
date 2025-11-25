@@ -32,6 +32,7 @@ pub enum TypeExpr<V> {
     Array(Box<Type<V>>, usize),
     Slice(Box<Type<V>>),
     Ref(Box<Type<V>>),
+    Tuple(Vec<Type<V>>),
 }
 
 impl<V> TypeExpr<V> {
@@ -59,6 +60,7 @@ impl<V> TypeExpr<V> {
             TypeExpr::Array(inner, size) => TypeExpr::Array(Box::new(inner.as_pure()), *size),
             TypeExpr::Slice(inner) => TypeExpr::Slice(Box::new(inner.as_pure())),
             TypeExpr::Ref(inner) => TypeExpr::Ref(Box::new(inner.as_pure())),
+            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
         }
     }
 }
@@ -97,6 +99,7 @@ impl<V: Display> Display for Type<V> {
                 write!(f, "Ref{}<{}>", format_annotation(&self.annotation), inner)
             }
             TypeExpr::BoxedField => write!(f, "BoxedField{}", format_annotation(&self.annotation)),
+            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
         }
     }
 }
@@ -132,6 +135,7 @@ impl<V: CommutativeMonoid + Display> Type<V> {
             TypeExpr::Field => false,
             TypeExpr::U(_) => false,
             TypeExpr::BoxedField => false,
+            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
         }
     }
 }
@@ -207,6 +211,13 @@ impl<V> Type<V> {
     pub fn ref_of(self, annotation: V) -> Self {
         Type {
             expr: TypeExpr::Ref(Box::new(self)),
+            annotation,
+        }
+    }
+    
+    pub fn tuple(types: Vec<Self>, annotation: V) -> Self {
+        Type {
+            expr: TypeExpr::Tuple(types),
             annotation,
         }
     }
