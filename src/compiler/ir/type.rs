@@ -99,7 +99,9 @@ impl<V: Display> Display for Type<V> {
                 write!(f, "Ref{}<{}>", format_annotation(&self.annotation), inner)
             }
             TypeExpr::BoxedField => write!(f, "BoxedField{}", format_annotation(&self.annotation)),
-            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
+            TypeExpr::Tuple(elements) => write!(
+                f, "Tuple{}<{}>", format_annotation(&self.annotation), elements.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join(", ")
+            ),
         }
     }
 }
