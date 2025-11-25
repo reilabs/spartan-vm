@@ -32,16 +32,9 @@ impl TypeConverter {
                     let converted_types: Vec<Type<Empty>> = element_types.iter()
                         .map(|t| self.convert_type(t))
                         .collect();
-                    Type::tuple(converted_types, Empty)
-                    // panic!("Only single-type arrays are supported, got element_types = {:?}", element_types)
+                    Type::array_of(Type::tuple(converted_types, Empty), (*size).try_into().unwrap(), Empty)
                 };
                 tp
-                // if element_types.len() != 1 {
-                //     panic!("Only single-type arrays are supported, got element_types = {:?}", element_types)
-                // }
-                // let element_type = &element_types[0];
-                // let converted_element = self.convert_type(element_type);
-                // Type::array_of(converted_element, (*size).try_into().unwrap(), Empty)
             }
             NoirType::Slice(element_types) => {
                 if element_types.len() != 1 {
