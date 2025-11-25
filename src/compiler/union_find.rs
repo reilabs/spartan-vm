@@ -159,6 +159,7 @@ impl UnionFind {
                 self.substitute_variables(taint),
                 Box::new(self.substitute_taint_type(inner)),
             ),
+            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
         }
     }
 

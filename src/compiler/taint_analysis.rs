@@ -161,6 +161,7 @@ pub enum TaintType {
     Primitive(Taint),
     NestedImmutable(Taint, Box<TaintType>),
     NestedMutable(Taint, Box<TaintType>),
+    Tuple(Taint, Vec<TaintType>),
 }
 
 impl TaintType {
@@ -173,6 +174,7 @@ impl TaintType {
             TaintType::NestedMutable(taint, inner) => {
                 format!("[*{} of {}]", taint.to_string(), inner.to_string())
             }
+            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
         }
     }
 
@@ -198,6 +200,7 @@ impl TaintType {
             TaintType::Primitive(taint) => taint.clone(),
             TaintType::NestedImmutable(taint, _) => taint.clone(),
             TaintType::NestedMutable(taint, _) => taint.clone(),
+            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
         }
     }
 
@@ -206,6 +209,7 @@ impl TaintType {
             TaintType::NestedImmutable(_, inner) => Some(*inner.clone()),
             TaintType::NestedMutable(_, inner) => Some(*inner.clone()),
             TaintType::Primitive(_) => None,
+            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
         }
     }
 
@@ -216,6 +220,7 @@ impl TaintType {
                 TaintType::NestedImmutable(toplevel, inner.clone())
             }
             TaintType::NestedMutable(_, inner) => TaintType::NestedMutable(toplevel, inner.clone()),
+            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
         }
     }
 
@@ -232,6 +237,7 @@ impl TaintType {
                 t.gather_vars(result);
                 inner.gather_vars(result);
             }
+            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
         }
     }
 
@@ -248,6 +254,7 @@ impl TaintType {
                 t.substitute(varmap);
                 inner.substitute(varmap);
             }
+            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
         }
     }
 
@@ -262,6 +269,7 @@ impl TaintType {
                 taint.simplify_and_default(),
                 Box::new(inner.simplify_and_default()),
             ),
+            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
         }
     }
 }
@@ -1033,7 +1041,13 @@ impl TaintAnalysis {
             TypeExpr::BoxedField => {
                 panic!("ICE: WitnessVal should not be present at this stage");
             }
-            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
+            TypeExpr::Tuple(elements) => TaintType::Tuple(
+                Taint::Variable(self.fresh_ty_var()),
+                elements
+                    .iter()
+                    .map(|e| self.construct_free_taint_for_type(e))
+                    .collect(),
+            )
         }
     }
 
