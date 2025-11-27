@@ -1,0 +1,6 @@
+[package]
+name = "array_nested"
+type = "bin"
+authors = [""]
+
+[dependencies]
