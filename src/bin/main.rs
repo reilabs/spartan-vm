@@ -17,9 +17,6 @@ pub struct ProgramOptions {
     #[arg(long, value_name = "PATH", default_value = DEFAULT_NOIR_PROJECT_PATH, value_parser = parse_path)]
     pub root: PathBuf,
 
-    #[arg(long, value_name = "PUBLIC WITNESS", default_value = "", num_args = 0..)]
-    pub public_witness: Vec<String>,
-
     /// Enable debugging mode which will generate graphs
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub draw_graphs: bool,

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ark_ff::{AdditiveGroup, Field as _};
+use ark_ff::{AdditiveGroup, Field as _, PrimeField as _};
 use ssa_builder::{ssa_append, ssa_snippet};
 
 use crate::compiler::{
@@ -111,25 +111,39 @@ impl ExplicitWitness {
                                         let TypeExpr::U(s) = function_type_info.get_value_type(rhs).expr else {
                                             panic!("ICE: rhs is not a U type");
                                         };
+                                        assert!(s + 1 < Field::MODULUS_BIT_SIZE as usize);
                                         let u1 = CastTarget::U(1);
                                         let r = ssa_append!(function, new_instructions, {
+
+                                            // If lhs < rhs, then we check rhs - lhs - 1 >= 0;
+                                            // otherwise, we check lhs - rhs >= 0.
+                                            // In other words, we rangecheck:
+                                            //   result * (rhs - lhs - 1) + (1 - result) * (lhs - rhs) >= 0
+                                            // After some algebra-fu, we get to
+                                            //   2 * result * (rhs - lhs) + lhs - rhs - result >= 0
+                                             
                                             res_hint := lt(lhs, rhs);
                                             res_hint_field := cast_to_field(res_hint);
                                             res_witness := write_witness(res_hint_field);
+                                            res_not := sub(! Field::ONE : Field, res_witness);
                                             #result := cast_to(u1, res_witness);
+                                            // assert result is a bool 
+                                            constrain(res_witness, res_not, ! Field::ZERO : Field);
 
-                                            l_field := cast_to_field(lhs);
-                                            r_field := cast_to_field(rhs);
-                                            lr_diff := sub(l_field, r_field);
+                                            two_res := mul(res_witness, ! Field::from(2) : Field);
+                                            rhs_sub_lhs := sub(rhs, lhs);
 
-                                            two_res := mul(result, ! Field::from(2) : Field);
-                                            adjustment := sub(! Field::ONE : Field, two_res);
-                                            
-                                            adjusted_diff := mul(lr_diff, adjustment);
-                                            adjusted_diff_wit := write_witness(adjusted_diff);
-                                            constrain(lr_diff, adjustment, adjusted_diff_wit);
-                                        } -> adjusted_diff_wit);
-                                        self.gen_witness_rangecheck(function, &mut new_instructions, r.adjusted_diff_wit, s);
+                                            lhs_sub_rhs := sub(! Field::ZERO : Field, rhs_sub_lhs);
+                                            lhs_sub_rhs_sub_res := sub(lhs_sub_rhs, res_witness);
+
+                                            rgch_hint_1 := mul(two_res, rhs_sub_lhs);
+                                            rgch_hint_2 := add(rgch_hint_1, lhs_sub_rhs_sub_res);
+
+                                            rgchk_witness := write_witness(rgch_hint_2);
+                                            constrain_c := sub(lhs_sub_rhs_sub_res, rgchk_witness);
+                                            constrain(two_res, rhs_sub_lhs, constrain_c);
+                                        } -> rgchk_witness);
+                                        self.gen_witness_rangecheck(function, &mut new_instructions, r.rgchk_witness, s);
                                     }
                                     _ => {
                                         new_instructions.push(OpCode::Todo {
