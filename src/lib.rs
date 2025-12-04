@@ -7,3 +7,5 @@ pub mod vm;
 
 pub use error::Error;
 pub use project::Project;
+
+pub mod api;
