@@ -907,6 +907,9 @@ impl TaintAnalysis {
                     | OpCode::Todo { .. } => {
                         panic!("Should not be present at this stage {:?}", instruction);
                     }
+                    OpCode::TupleProj { .. } => {
+                        todo!("TupleProj not implemented")
+                    },
                 }
             }
 

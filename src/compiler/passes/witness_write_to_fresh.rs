@@ -110,6 +110,9 @@ impl WitnessWriteToFresh {
                         | OpCode::DLookup { .. }
                         | OpCode::ReadGlobal { .. }
                         | OpCode::Todo { .. } => instruction.clone(),
+                        OpCode::TupleProj { .. } => {
+                            todo!("TupleProj not implemented")
+                        },
                     };
                     *instruction = new_instruction;
                 }

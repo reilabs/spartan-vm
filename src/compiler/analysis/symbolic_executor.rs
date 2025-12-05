@@ -518,6 +518,9 @@ impl SymbolicExecutor {
                             .collect::<Vec<_>>();
                         ctx.dlookup(target, keys, results);
                     }
+                    crate::compiler::ssa::OpCode::TupleProj { .. } => {
+                        todo!("TupleProj not implemented")
+                    },
                     crate::compiler::ssa::OpCode::Todo {
                         payload,
                         results,

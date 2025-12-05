@@ -441,6 +441,7 @@ impl BoxFields {
                         | OpCode::MulConst { .. }
                         | OpCode::BumpD { .. }
                         | OpCode::DLookup { .. }
+                        | OpCode::TupleProj { .. }
                         | OpCode::Todo { .. } => new_instructions.push(instruction),
                     };
                 }

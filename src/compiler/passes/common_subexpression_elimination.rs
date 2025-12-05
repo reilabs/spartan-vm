@@ -439,6 +439,9 @@ impl CSE {
                             *r,
                         ));
                     }
+                    OpCode::TupleProj { .. } => {
+                        todo!("TupleProj not implemented")
+                    },
                 }
             }
         }

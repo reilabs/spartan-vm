@@ -572,6 +572,9 @@ impl ExplicitWitness {
                                 result_types,
                             });
                         }
+                        OpCode::TupleProj { .. } => {
+                            todo!("TupleProj not implemented")
+                        },
                     }
                 }
                 block.put_instructions(new_instructions);

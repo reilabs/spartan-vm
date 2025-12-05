@@ -186,6 +186,13 @@ pub enum Const {
     BoxedField(ark_bn254::Fr),
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum TupleIdx<V>
+{
+  Static(usize),
+  Dynamic(ValueId, Type<V>),
+}
+
 #[derive(Clone)]
 pub struct Function<V> {
     entry_block: BlockId,
@@ -1307,6 +1314,11 @@ pub enum OpCode<V> {
         offset: u64,
         result_type: Type<V>,
     },
+    TupleProj {
+        result: ValueId, 
+        tuple: ValueId, 
+        idx: TupleIdx<V>,
+    },
     Todo {
         payload: String,
         results: Vec<ValueId>,
@@ -1718,6 +1730,9 @@ impl<V: Display + Clone> OpCode<V> {
                     typ
                 )
             }
+            OpCode::TupleProj { .. } => {
+                todo!("TupleProj not implemented")
+            },
             OpCode::Todo { payload, results, result_types } => {
                 let results_str = results.iter()
                     .zip(result_types.iter())
@@ -1909,6 +1924,9 @@ impl<V> OpCode<V> {
                 offset: _,
                 result_type: _,
             } => vec![r].into_iter(),
+            Self::TupleProj { .. } => {
+                todo!("TupleProj not implemented")
+            }
             Self::Todo { results, .. } => {
                 let ret_vec: Vec<&mut ValueId> = results.iter_mut().collect();
                 ret_vec.into_iter()
@@ -2083,6 +2101,9 @@ impl<V> OpCode<V> {
                 ret_vec.extend(results);
                 ret_vec.into_iter()
             }
+            Self::TupleProj { .. } => {
+                todo!("TupleProj not implemented")
+            }
             Self::Todo { .. } => vec![].into_iter(),
         }
     }
@@ -2253,6 +2274,9 @@ impl<V> OpCode<V> {
                 ret_vec.extend(results);
                 ret_vec.into_iter()
             }
+            Self::TupleProj { .. } => {
+                todo!("TupleProj not implemented")
+            },
             Self::Todo { .. } => vec![].into_iter(),
         }
     }
@@ -2390,6 +2414,9 @@ impl<V> OpCode<V> {
                 result_type: _,
             } => vec![r].into_iter(),
             Self::Lookup { .. } | Self::DLookup { .. } => vec![].into_iter(),
+            Self::TupleProj { .. } => {
+                todo!("TupleProj not implemented")
+            },
             Self::Todo { results, .. } => {
                 let ret_vec: Vec<&ValueId> = results.iter().collect();
                 ret_vec.into_iter()

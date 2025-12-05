@@ -151,6 +151,11 @@ impl DCE {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
                         }
+                        OpCode::TupleProj { .. } => {
+                            todo!(
+                                "TupleProj: liveness analysis not implemented"
+                            )
+                        }
                         OpCode::Todo { .. } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }

@@ -325,6 +325,9 @@ impl UntaintControlFlow {
                         keys,
                         results,
                     },
+                    OpCode::TupleProj { .. } => {
+                        todo!("TupleProj not implemented")
+                    },
                     OpCode::Todo { payload, results, result_types } => OpCode::Todo {
                         payload,
                         results,

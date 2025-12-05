@@ -364,6 +364,9 @@ impl Types {
                 Ok(())
             }
             OpCode::Lookup { target: _, keys: _, results: _ } => Ok(()),
+            OpCode::TupleProj { .. } => {
+                todo!("TupleProj not implemented")
+            }
             OpCode::Todo { results, result_types, .. } => {
                 if results.len() != result_types.len() {
                     return Err(format!(
