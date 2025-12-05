@@ -187,7 +187,7 @@ pub enum Const {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-enum TupleIdx<V>
+pub enum TupleIdx<V>
 {
   Static(usize),
   Dynamic(ValueId, Type<V>),
@@ -607,6 +607,26 @@ impl<V: Clone> Function<V> {
                 result: value_id,
                 array: array,
                 index: index,
+            });
+        value_id
+    }
+
+    pub fn push_tuple_proj(
+        &mut self,
+        block_id: BlockId,
+        tuple: ValueId,
+        index: TupleIdx<V>,
+    ) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::TupleProj {
+                result: value_id,
+                tuple: tuple,
+                idx: index,
             });
         value_id
     }

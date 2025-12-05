@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::TypeConverter;
 use crate::compiler::{
     ir::r#type::{Empty, TypeExpr},
-    ssa::{BlockId, CastTarget, Endianness, Function, FunctionId, Radix, SeqType, SliceOpDir, ValueId},
+    ssa::{BlockId, CastTarget, Endianness, Function, FunctionId, Radix, SeqType, SliceOpDir, TupleIdx, ValueId},
 };
 use noirc_evaluator::ssa::ir::{
     basic_block::BasicBlockId,
@@ -527,13 +527,64 @@ impl FunctionConverter {
                         let result_id =
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
 
-                        let array_get_result = custom_function.push_array_get(
-                            custom_block_id,
-                            array_converted,
-                            index_converted,
-                        );
 
-                        self.value_mapper.insert(result_id, array_get_result);
+                        let array_type = array_value.get_type();
+                        let converted_array_type = self.type_converter.convert_type(&array_type);
+                        
+                        match converted_array_type.expr {
+                            TypeExpr::Array(array_inner_type, _size) => {
+                                match array_inner_type.expr {
+                                    TypeExpr::Tuple(_) => {
+                                         // what should the u_const size be?
+                                        let tuple_size = array_inner_type.calculate_type_size();
+                                        let stride = custom_function.push_u_const(32, tuple_size as u128);
+
+                                        let tuple_index = custom_function.push_div(
+                                            custom_block_id,
+                                            index_converted,
+                                            stride,
+                                        );
+
+                                        let tuple_id = custom_function.push_array_get(
+                                            custom_block_id,
+                                            array_converted,
+                                            tuple_index,
+                                        );
+
+                                        let tuple_starting_address = custom_function.push_mul(
+                                            custom_block_id,
+                                            stride,
+                                            tuple_index,
+                                        );
+
+                                        let tuple_element_index = custom_function.push_sub(
+                                            custom_block_id,
+                                            index_converted,
+                                            tuple_starting_address,
+                                        );
+                                        
+                                        // Faulty: Fix type?
+                                        let tuple_get_result = custom_function.push_tuple_proj(
+                                            custom_block_id,
+                                            tuple_id,
+                                            TupleIdx::Dynamic(tuple_element_index, *array_inner_type),
+                                        );
+
+                                        self.value_mapper.insert(result_id, tuple_get_result);
+                                    }
+                                    _ => {
+                                        let array_get_result = custom_function.push_array_get(
+                                            custom_block_id,
+                                            array_converted,
+                                            index_converted,
+                                        );
+                                        self.value_mapper.insert(result_id, array_get_result);
+                                    }
+                                }
+                            }
+                            _ => {todo!("ArrayGet only implemented for TypeExpr::Array for now")}
+                        }
+
                     }
                     NoirInstruction::ArraySet {
                         array,
