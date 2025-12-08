@@ -2406,7 +2406,14 @@ impl<V> OpCode<V> {
                 result: r,
                 value: _,
             }
-            | Self::NextDCoeff { result: r } => vec![r].into_iter(),
+            |  Self::NextDCoeff { 
+                result: r 
+            } 
+            | Self::TupleProj { 
+                result: r,
+                tuple: _,
+                idx: _,
+            } => vec![r].into_iter(),
             Self::WriteWitness {
                 result: r,
                 value: _,
@@ -2457,9 +2464,7 @@ impl<V> OpCode<V> {
                 result_type: _,
             } => vec![r].into_iter(),
             Self::Lookup { .. } | Self::DLookup { .. } => vec![].into_iter(),
-            Self::TupleProj { .. } => {
-                todo!("TupleProj not implemented")
-            },
+            
             Self::Todo { results, .. } => {
                 let ret_vec: Vec<&ValueId> = results.iter().collect();
                 ret_vec.into_iter()

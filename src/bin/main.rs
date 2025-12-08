@@ -58,6 +58,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     let mut driver = Driver::new(project, args.draw_graphs);
 
     driver.run_noir_compiler().unwrap();
+    driver.make_struct_access_static().unwrap();
     driver.monomorphize().unwrap();
     driver.explictize_witness().unwrap();
     let r1cs = driver.generate_r1cs().unwrap();

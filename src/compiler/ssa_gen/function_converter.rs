@@ -553,8 +553,8 @@ impl FunctionConverter {
 
                                         let tuple_starting_address = custom_function.push_mul(
                                             custom_block_id,
-                                            stride,
                                             tuple_index,
+                                            stride,
                                         );
 
                                         let tuple_element_index = custom_function.push_sub(

@@ -12,3 +12,4 @@ pub mod rc_insertion;
 pub mod specializer;
 pub mod witness_write_to_fresh;
 pub mod witness_write_to_void;
+pub mod struct_access_simplifier;

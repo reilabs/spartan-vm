@@ -14,20 +14,7 @@ use crate::{
         monomorphization::Monomorphization,
         pass_manager::PassManager,
         passes::{
-            arithmetic_simplifier::ArithmeticSimplifier,
-            box_fields::BoxFields,
-            common_subexpression_elimination::CSE,
-            condition_propagation::ConditionPropagation,
-            dead_code_elimination::{self, DCE},
-            deduplicate_phis::DeduplicatePhis,
-            explicit_witness::ExplicitWitness,
-            fix_double_jumps::FixDoubleJumps,
-            mem2reg::Mem2Reg,
-            pull_into_assert::PullIntoAssert,
-            rc_insertion::RCInsertion,
-            specializer::Specializer,
-            witness_write_to_fresh::WitnessWriteToFresh,
-            witness_write_to_void::WitnessWriteToVoid,
+            arithmetic_simplifier::ArithmeticSimplifier, box_fields::BoxFields, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, specializer::Specializer, struct_access_simplifier::MakeStructAccessStatic, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
         },
         r1cs_gen::{R1CGen, R1CS},
         ssa::{DefaultSsaAnnotator, SSA},
@@ -39,6 +26,7 @@ use crate::{
 pub struct Driver {
     project: Project,
     initial_ssa: Option<SSA<Empty>>,
+    static_struct_access_ssa: Option<SSA<Empty>>,
     monomorphized_ssa: Option<SSA<ConstantTaint>>,
     explicit_witness_ssa: Option<SSA<ConstantTaint>>,
     r1cs_ssa: Option<SSA<ConstantTaint>>,
@@ -61,6 +49,7 @@ impl Driver {
         Self {
             project,
             initial_ssa: None,
+            static_struct_access_ssa: None,
             monomorphized_ssa: None,
             explicit_witness_ssa: None,
             r1cs_ssa: None,
@@ -140,8 +129,25 @@ impl Driver {
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn monomorphize(&mut self) -> Result<(), Error> {
+    pub fn make_struct_access_static(&mut self) -> Result<(), Error> {
+        let mut pass_manager = PassManager::<Empty>::new(
+            "make_struct_access_static".to_string(),
+            self.draw_cfg,
+            vec![
+                Box::new(MakeStructAccessStatic::new())
+            ],
+        );
+
+        pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
         let mut ssa = self.initial_ssa.clone().unwrap();
+        pass_manager.run(&mut ssa);
+        self.static_struct_access_ssa = Some(ssa);
+        Ok(())
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn monomorphize(&mut self) -> Result<(), Error> {
+        let mut ssa = self.static_struct_access_ssa.clone().unwrap();
         let flow_analysis = FlowAnalysis::run(&ssa);
         // let type_info = Types::new().run(ssa, &flow_analysis);
         let call_loops = flow_analysis.get_call_graph().detect_loops();
