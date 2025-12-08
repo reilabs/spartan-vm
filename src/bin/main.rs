@@ -1,8 +1,8 @@
 use std::{fs, path::PathBuf, process::ExitCode};
 
-use clap::Parser;
-use spartan_vm::{Error, compiler::Field};
-use spartan_vm::api;
+use clap::{Parser, Subcommand};
+use spartan_vm::compiler::Field;
+use spartan_vm::api::{self, ApiError};
 use tracing::{error, info, warn};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
@@ -12,19 +12,41 @@ const DEFAULT_NOIR_PROJECT_PATH: &str = "./";
 
 #[derive(Clone, Debug, Parser)]
 pub struct ProgramOptions {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// The root of the Noir project to extract.
-    #[arg(long, value_name = "PATH", default_value = DEFAULT_NOIR_PROJECT_PATH, value_parser = parse_path)]
+    #[arg(long, value_name = "PATH", default_value = DEFAULT_NOIR_PROJECT_PATH, value_parser = parse_path, global = true)]
     pub root: PathBuf,
 
-    #[arg(long, value_name = "PUBLIC WITNESS", default_value = "", num_args = 0..)]
+    #[arg(long, value_name = "PUBLIC WITNESS", default_value = "", num_args = 0.., global = true)]
     pub public_witness: Vec<String>,
 
     /// Enable debugging mode which will generate graphs
-    #[arg(long, action = clap::ArgAction::SetTrue)]
+    #[arg(long, action = clap::ArgAction::SetTrue, global = true)]
     pub draw_graphs: bool,
 
-    #[arg(long, action = clap::ArgAction::SetTrue)]
+    #[arg(long, action = clap::ArgAction::SetTrue, global = true)]
     pub pprint_r1cs: bool,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum Command {
+    /// Compile the Noir project and save artifacts to a file
+    Compile {
+        /// Output file path for the compiled artifacts
+        #[arg(short, long, default_value = "artifacts.bin")]
+        output: PathBuf,
+    },
+    /// Execute using pre-compiled artifacts
+    Execute {
+        /// Input file path containing the compiled artifacts
+        #[arg(short, long, default_value = "artifacts.bin")]
+        artifacts: PathBuf,
+        /// Output directory for debug files
+        #[arg(short, long)]
+        output_dir: Option<PathBuf>,
+    },
 }
 
 /// The main function for the CLI utility, responsible for parsing program
@@ -38,25 +60,116 @@ fn main() -> ExitCode {
         .with(EnvFilter::from_default_env())
         .init();
 
-    run(&args).unwrap_or_else(|err| {
+    let result: Result<ExitCode, ApiError> = match &args.command {
+        Some(Command::Compile { output }) => run_compile(&args, output),
+        Some(Command::Execute { artifacts, output_dir }) => run_execute(&args, artifacts, output_dir.as_ref()),
+        None => run(&args), // Default: run the full pipeline (legacy behavior)
+    };
+
+    result.unwrap_or_else(|err| {
         eprintln!("Error Encountered: {err:?}");
         ExitCode::FAILURE
     })
 }
 
-/// The main execution of the CLI utility. Should be called directly from the
+/// Compile phase: compile the Noir project and save artifacts to a file.
+pub fn run_compile(args: &ProgramOptions, output: &PathBuf) -> Result<ExitCode, ApiError> {
+    info!(message = %"Compiling Noir project", root = ?args.root, output = ?output);
+    
+    let artifacts = api::compile_to_artifacts(args.root.clone(), args.draw_graphs)?;
+    
+    api::save_artifacts(&artifacts, output)?;
+    
+    info!(
+        message = %"Artifacts saved successfully",
+        r1cs_constraints = artifacts.r1cs.constraints.len(),
+        witgen_binary_size = artifacts.witgen_binary.len() * 8,
+        ad_binary_size = artifacts.ad_binary.len() * 8,
+    );
+    
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Execute phase: load artifacts and run witness generation and AD.
+pub fn run_execute(
+    args: &ProgramOptions,
+    artifacts_path: &PathBuf,
+    output_dir: Option<&PathBuf>,
+) -> Result<ExitCode, ApiError> {
+    info!(message = %"Loading artifacts", path = ?artifacts_path);
+    
+    let mut artifacts = api::load_artifacts(artifacts_path)?;
+    
+    let r1cs = &artifacts.r1cs;
+    
+    // Determine output directory
+    let debug_dir = output_dir
+        .cloned()
+        .unwrap_or_else(|| args.root.join("spartan_vm_debug"));
+    
+    if !debug_dir.exists() {
+        fs::create_dir_all(&debug_dir).unwrap();
+    }
+    
+    // For execute mode, we still need the prover inputs from the project
+    // We need to read the ABI from somewhere - for now, require the project root
+    let (driver, _) = api::compile_to_r1cs(args.root.clone(), false)?;
+    
+    let params = api::read_prover_inputs(&args.root, driver.abi())?;
+    
+    let witgen_result = api::run_witgen_from_binary(&mut artifacts.witgen_binary, r1cs, &params);
+    
+    let correct = api::check_witgen(r1cs, &witgen_result);
+    if !correct {
+        error!(message = %"Witgen output is incorrect");
+    } else {
+        info!(message = %"Witgen output is correct");
+    }
+    
+    let leftover_memory = witgen_result
+        .instrumenter
+        .plot(&debug_dir.join("witgen_vm_memory.png"));
+    if leftover_memory > 0 {
+        warn!(message = %"VM memory leak detected", leftover_memory);
+    } else {
+        info!(message = %"VM memory leak not detected");
+    }
+    
+    // Run AD
+    let ad_coeffs: Vec<Field> = api::random_ad_coeffs(r1cs);
+    let (ad_a, ad_b, ad_c, ad_instrumenter) = 
+        api::run_ad_from_binary(&mut artifacts.ad_binary, r1cs, &ad_coeffs);
+    
+    let leftover_memory = ad_instrumenter.plot(&debug_dir.join("ad_vm_memory.png"));
+    if leftover_memory > 0 {
+        warn!(message = %"AD VM memory leak detected", leftover_memory);
+    } else {
+        info!(message = %"AD VM memory leak not detected");
+    }
+    
+    let correct = api::check_ad(r1cs, &ad_coeffs, &ad_a, &ad_b, &ad_c);
+    if !correct {
+        error!(message = %"AD output is incorrect");
+    } else {
+        info!(message = %"AD output is correct");
+    }
+    
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The main execution of the CLI utility (full pipeline). Should be called directly from the
 /// `main` function of the application.
 ///
 /// # Errors
 ///
-/// - [`Error`] if the extraction process fails for any reason.
-pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
-    let (driver, r1cs) = api::compile_to_r1cs(args.root.clone(), args.draw_graphs).unwrap();
+/// - [`ApiError`] if the extraction process fails for any reason.
+pub fn run(args: &ProgramOptions) -> Result<ExitCode, ApiError> {
+    let (driver, r1cs) = api::compile_to_r1cs(args.root.clone(), args.draw_graphs)?;
 
-    info!(
-        "R1CS {:?}",
-        r1cs
-    );    
+    // info!(
+    //     "R1CS {:?}",
+    //     r1cs
+    // );    
     if args.pprint_r1cs {
         use std::io::Write;
         let mut r1cs_file =
@@ -66,8 +179,8 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         }
     }
 
-    let params= api::read_prover_inputs(&args.root, driver.abi()).unwrap();
-    let mut binary = api::compile_witgen(&driver).unwrap();
+    let params= api::read_prover_inputs(&args.root, driver.abi())?;
+    let mut binary = api::compile_witgen(&driver)?;
 
     let witgen_result = api::run_witgen_from_binary(&mut binary, &r1cs, &params);
 
@@ -128,7 +241,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     )
     .unwrap();
 
-    let mut ad_binary = api::compile_ad(&driver).unwrap();
+    let mut ad_binary = api::compile_ad(&driver)?;
 
     let ad_coeffs: Vec<Field> = api::random_ad_coeffs(&r1cs);
 

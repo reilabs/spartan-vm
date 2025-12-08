@@ -9,8 +9,59 @@ use crate::compiler::{
     ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, MemOp, Radix, SSA, SliceOpDir},
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
-use itertools::Itertools;
+use serde::{Deserialize, Serialize, Deserializer, Serializer};
 use tracing::{error, instrument, warn};
+
+/// Wrapper module for serializing ark_bn254::Fr field elements
+#[allow(dead_code)]
+mod field_serde {
+    use super::*;
+
+    pub fn serialize<S>(field: &ark_bn254::Fr, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let limbs = field.into_bigint().0;
+        limbs.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<ark_bn254::Fr, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let limbs: [u64; 4] = Deserialize::deserialize(deserializer)?;
+        Ok(ark_bn254::Fr::from_bigint(BigInt(limbs)).expect("Invalid field element"))
+    }
+}
+
+/// Wrapper for serializing linear combination terms (witness index, coefficient)
+mod lc_serde {
+    use super::*;
+
+    pub fn serialize<S>(lc: &Vec<(usize, ark_bn254::Fr)>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let converted: Vec<(usize, [u64; 4])> = lc
+            .iter()
+            .map(|(idx, coeff)| (*idx, coeff.into_bigint().0))
+            .collect();
+        converted.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<(usize, ark_bn254::Fr)>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let converted: Vec<(usize, [u64; 4])> = Deserialize::deserialize(deserializer)?;
+        Ok(converted
+            .into_iter()
+            .map(|(idx, limbs)| {
+                (idx, ark_bn254::Fr::from_bigint(BigInt(limbs)).expect("Invalid field element"))
+            })
+            .collect())
+    }
+}
 
 // #[derive(Clone, Debug, Copy, PartialEq, PartialOrd, Eq, Ord)]
 // pub enum WitnessIndex {
@@ -176,10 +227,13 @@ impl Value {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct R1C {
+    #[serde(with = "lc_serde")]
     pub a: LC,
+    #[serde(with = "lc_serde")]
     pub b: LC,
+    #[serde(with = "lc_serde")]
     pub c: LC,
 }
 
@@ -569,7 +623,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     }
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct WitnessLayout {
     pub algebraic_size: usize,
     pub multiplicities_size: usize,
@@ -656,7 +710,7 @@ impl WitnessLayout {
     }
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct ConstraintsLayout {
     pub algebraic_size: usize,
     pub tables_data_size: usize,
@@ -677,7 +731,7 @@ impl ConstraintsLayout {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct R1CS {
     pub witness_layout: WitnessLayout,
     pub constraints_layout: ConstraintsLayout,

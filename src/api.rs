@@ -2,6 +2,8 @@ use std::{fs, path::{Path, PathBuf}};
 
 use crate::{
     Project,
+    CompiledArtifacts,
+    compiled_artifacts::ArtifactError,
     compiler::{Field, r1cs_gen::R1CS},
     driver::{Driver, Error as DriverError},
     vm::interpreter,
@@ -20,6 +22,8 @@ pub enum ApiError {
     InputsParse(String),
 
     InputsEncode(String),
+
+    Artifact(ArtifactError),
 }
 
 impl std::fmt::Display for ApiError {
@@ -31,7 +35,14 @@ impl std::fmt::Display for ApiError {
             ApiError::UnsupportedInputExt(ext) => write!(f, "unsupported input file extension: {ext}"),
             ApiError::InputsParse(e) => write!(f, "failed to parse inputs: {e}"),
             ApiError::InputsEncode(e) => write!(f, "failed to encode inputs: {e}"),
+            ApiError::Artifact(e) => write!(f, "artifact error: {e}"),
         }
+    }
+}
+
+impl From<ArtifactError> for ApiError {
+    fn from(e: ArtifactError) -> Self {
+        ApiError::Artifact(e)
     }
 }
 
@@ -46,6 +57,28 @@ pub fn compile_to_r1cs(root: PathBuf, draw_graphs: bool) -> Result<(Driver, R1CS
     driver.explictize_witness().map_err(|e| ApiError::Driver { inner: e })?;
     let r1cs = driver.generate_r1cs().map_err(|e| ApiError::Driver { inner: e })?;
     Ok((driver, r1cs))
+}
+
+/// Compile a Noir project to serializable artifacts.
+///
+/// This function performs the full compilation pipeline and returns artifacts
+/// that can be serialized to disk for later execution.
+pub fn compile_to_artifacts(root: PathBuf, draw_graphs: bool) -> Result<CompiledArtifacts, ApiError> {
+    let (driver, r1cs) = compile_to_r1cs(root, draw_graphs)?;
+    let witgen_binary = compile_witgen(&driver)?;
+    let ad_binary = compile_ad(&driver)?;
+    Ok(CompiledArtifacts::new(r1cs, witgen_binary, ad_binary))
+}
+
+/// Save compiled artifacts to a file.
+pub fn save_artifacts<P: AsRef<Path>>(artifacts: &CompiledArtifacts, path: P) -> Result<(), ApiError> {
+    artifacts.save_to_file(path)?;
+    Ok(())
+}
+
+/// Load compiled artifacts from a file.
+pub fn load_artifacts<P: AsRef<Path>>(path: P) -> Result<CompiledArtifacts, ApiError> {
+    Ok(CompiledArtifacts::load_from_file(path)?)
 }
 
 /// Read and encode `Prover.toml` inputs using the driver's ABI.
