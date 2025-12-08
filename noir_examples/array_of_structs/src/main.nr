@@ -1,9 +1,9 @@
 pub struct IDData {
-    pub lucky_numbers: [Field; 2],
     pub age: Field,
+    pub id: Field,
 }
 
 
-fn main(x: [IDData; 1]) {
-    assert_eq(x[0].age, x[0].lucky_numbers[0] * x[0].lucky_numbers[1]);
+fn main(x: [IDData; 2], ind: u32) {
+    assert_eq(x[ind].age, 18);
 }

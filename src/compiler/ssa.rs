@@ -1750,8 +1750,31 @@ impl<V: Display + Clone> OpCode<V> {
                     typ
                 )
             }
-            OpCode::TupleProj { .. } => {
-                todo!("TupleProj not implemented")
+            OpCode::TupleProj { 
+                result,
+                tuple,
+                idx,
+            } => {
+                match idx {
+                    TupleIdx::Dynamic(idx, _tp) => {
+                        format!(
+                            "v{}{} = v{}.v{}",
+                            result.0,
+                            annotate(value_annotator, *result),
+                            tuple.0,
+                            idx.0
+                        )
+                    }
+                    TupleIdx::Static(val) => {
+                        format!(
+                            "v{}{} = v{}.{}",
+                            result.0,
+                            annotate(value_annotator, *result),
+                            tuple.0,
+                            val
+                        )
+                    }
+                }
             },
             OpCode::Todo { payload, results, result_types } => {
                 let results_str = results.iter()
