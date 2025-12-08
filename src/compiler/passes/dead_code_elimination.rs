@@ -151,11 +151,6 @@ impl DCE {
                                 worklist.push(WorkItem::LiveInstruction(*block_id, i));
                             }
                         }
-                        OpCode::TupleProj { .. } => {
-                            todo!(
-                                "TupleProj: liveness analysis not implemented"
-                            )
-                        }
                         OpCode::Todo { .. } => {
                             worklist.push(WorkItem::LiveInstruction(*block_id, i));
                         }
@@ -166,6 +161,7 @@ impl DCE {
                         | OpCode::Select { .. }
                         | OpCode::ArrayGet { .. }
                         | OpCode::ArraySet { .. }
+                        | OpCode::TupleProj { .. } // Why is it this way??
                         | OpCode::SlicePush { .. }
                         | OpCode::SliceLen { .. }
                         | OpCode::MkSeq { .. }

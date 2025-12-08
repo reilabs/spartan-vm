@@ -2317,8 +2317,16 @@ impl<V> OpCode<V> {
                 ret_vec.extend(results);
                 ret_vec.into_iter()
             }
-            Self::TupleProj { .. } => {
-                todo!("TupleProj not implemented")
+            Self::TupleProj {
+                result: _,
+                tuple,
+                idx,
+            } => {
+                if let TupleIdx::Static(_size) = idx {
+                    vec![tuple].into_iter()
+                } else {
+                    panic!("Tuple index must be static")
+                }
             },
             Self::Todo { .. } => vec![].into_iter(),
         }

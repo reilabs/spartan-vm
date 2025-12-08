@@ -134,7 +134,8 @@ impl Driver {
             "make_struct_access_static".to_string(),
             self.draw_cfg,
             vec![
-                Box::new(MakeStructAccessStatic::new())
+                Box::new(MakeStructAccessStatic::new()),
+                Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
             ],
         );
 
