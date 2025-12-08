@@ -2,7 +2,7 @@ use itertools::Itertools;
 
 use crate::compiler::flow_analysis::FlowAnalysis;
 use crate::compiler::ir::r#type::{CommutativeMonoid, Empty, Type, TypeExpr};
-use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SSA, SsaAnnotator, Terminator, ValueId};
+use crate::compiler::ssa::{BlockId, FunctionId, OpCode, SSA, SsaAnnotator, Terminator, TupleIdx, ValueId};
 use crate::compiler::union_find::UnionFind;
 use std::collections::{HashMap, HashSet};
 
@@ -174,7 +174,9 @@ impl TaintType {
             TaintType::NestedMutable(taint, inner) => {
                 format!("[*{} of {}]", taint.to_string(), inner.to_string())
             }
-            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
+            TaintType::Tuple(taint, child_taints) => {
+                format!("({} of <{}>)", taint.to_string(), child_taints.iter().map(|child_taint| child_taint.to_string()).join(", "))
+            }
         }
     }
 
@@ -269,7 +271,10 @@ impl TaintType {
                 taint.simplify_and_default(),
                 Box::new(inner.simplify_and_default()),
             ),
-            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
+            TaintType::Tuple(taint, child_taints) => TaintType::Tuple(
+                taint.simplify_and_default(),
+                child_taints.iter().map(|child_taint| child_taint.simplify_and_default()).collect()
+            )
         }
     }
 }
@@ -907,8 +912,26 @@ impl TaintAnalysis {
                     | OpCode::Todo { .. } => {
                         panic!("Should not be present at this stage {:?}", instruction);
                     }
-                    OpCode::TupleProj { .. } => {
-                        todo!("TupleProj not implemented")
+                    OpCode::TupleProj {
+                        result,
+                        tuple,
+                        idx,
+                    } => {
+                        if let TupleIdx::Static(child_index) = idx {
+                            let tuple_taint = function_taint.value_taints.get(tuple).unwrap();
+                            if let TaintType::Tuple(_, child_taints) = tuple_taint {
+                                let elem_taint = &child_taints[*child_index];
+                                let result_taint = elem_taint.with_toplevel_taint(
+                                tuple_taint.toplevel_taint()
+                                        .union(&elem_taint.toplevel_taint()),
+                                );
+                                function_taint.value_taints.insert(*result, result_taint);
+                            } else {
+                                panic!("Taint should be of tuple type")
+                            }
+                        } else {
+                            panic!("Tuple index should be static at this stage")
+                        }
                     },
                 }
             }

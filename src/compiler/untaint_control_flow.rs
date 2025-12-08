@@ -325,7 +325,11 @@ impl UntaintControlFlow {
                         keys,
                         results,
                     },
-                    OpCode::TupleProj { .. } => {
+                    OpCode::TupleProj {
+                        result,
+                        tuple,
+                        idx,
+                    } => {
                         todo!("TupleProj not implemented")
                     },
                     OpCode::Todo { payload, results, result_types } => OpCode::Todo {
@@ -755,6 +759,12 @@ impl UntaintControlFlow {
             },
             (TypeExpr::Ref(inner), TaintType::NestedMutable(top, inner_taint)) => Type {
                 expr: TypeExpr::Ref(Box::new(self.typify_taint(*inner, inner_taint.as_ref()))),
+                annotation: top.expect_constant(),
+            },
+            (TypeExpr::Tuple(child_types), TaintType::Tuple(top, child_taints)) => Type {
+                expr: TypeExpr::Tuple(
+                    child_types.iter().zip(child_taints.iter()).map(|(child_type, child_taint)| self.typify_taint(child_type.clone(), child_taint)).collect()
+                ),
                 annotation: top.expect_constant(),
             },
             (tp, taint) => panic!("Unexpected type {:?} with taint {:?}", tp, taint),
