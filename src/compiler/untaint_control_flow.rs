@@ -5,7 +5,7 @@ use tracing::{Level, instrument};
 use crate::compiler::{
     flow_analysis::FlowAnalysis,
     ir::r#type::{Empty, Type, TypeExpr},
-    ssa::{BinaryArithOpKind, Block, Function, FunctionId, OpCode, SSA, Terminator},
+    ssa::{BinaryArithOpKind, Block, Function, FunctionId, OpCode, SSA, Terminator, TupleIdx},
     taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis, TaintType},
 };
 
@@ -330,8 +330,19 @@ impl UntaintControlFlow {
                         tuple,
                         idx,
                     } => {
-                        todo!("TupleProj not implemented")
-                    },
+                        match &idx {
+                            TupleIdx::Static(sz) => {
+                                OpCode::TupleProj { 
+                                    result, 
+                                    tuple, 
+                                    idx: TupleIdx::Static(*sz),
+                                }
+                            }
+                            TupleIdx::Dynamic{..} => {
+                                panic!("Dynamic TupleProj should not appear here")
+                            }
+                        }
+                    } 
                     OpCode::Todo { payload, results, result_types } => OpCode::Todo {
                         payload,
                         results,
@@ -584,6 +595,14 @@ impl UntaintControlFlow {
                             result_types 
                         });
                     }
+                    
+                    OpCode::TupleProj {
+                        result,
+                        tuple,
+                        idx: _,
+                    } => {
+                        new_instructions.push(instruction);
+                    } 
                     _ => {
                         panic!("Unhandled instruction {:?}", instruction);
                     }
