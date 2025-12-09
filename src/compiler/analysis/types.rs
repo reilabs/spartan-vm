@@ -1,3 +1,4 @@
+use core::panic;
 use std::{collections::HashMap, fmt::Display};
 
 use tracing::{Level, instrument};
@@ -5,7 +6,7 @@ use tracing::{Level, instrument};
 use crate::compiler::{
     flow_analysis::{CFG, FlowAnalysis},
     ir::r#type::{CommutativeMonoid, Type},
-    ssa::{CastTarget, Const, Function, FunctionId, OpCode, SSA, ValueId},
+    ssa::{CastTarget, Const, Function, FunctionId, OpCode, SSA, TupleIdx, ValueId},
 };
 
 pub struct TypeInfo<V> {
@@ -364,8 +365,34 @@ impl Types {
                 Ok(())
             }
             OpCode::Lookup { target: _, keys: _, results: _ } => Ok(()),
-            OpCode::TupleProj { .. } => {
-                todo!("TupleProj not implemented")
+            OpCode::TupleProj { 
+                result,
+                tuple,
+                idx,
+            } => {
+                // let array_type = function_info.values.get(array).ok_or_else(|| {
+                //     format!("Array value {:?} not found in type assignments", array)
+                // })?;
+
+                // let element_type = array_type.get_array_element();
+                // function_info.values.insert(
+                //     *result,
+                //     element_type.combine_with_annotation(array_type.get_annotation()),
+                // );
+                // Ok(())
+                if let TupleIdx::Static(sz) = idx {
+                    let tuple_type = function_info.values.get(tuple).ok_or_else(|| {
+                        format!("Tuple value {:?} not found in type assignments", tuple)
+                    })?;
+                    let element_type = tuple_type.get_tuple_element(*sz);
+                    function_info.values.insert(
+                        *result,
+                        element_type.combine_with_annotation(tuple_type.get_annotation()), // Why combine here
+                    );
+                    Ok(())
+                } else {
+                    panic!("Dynamic TupleProj should not appear here")
+                }
             }
             OpCode::Todo { results, result_types, .. } => {
                 if results.len() != result_types.len() {

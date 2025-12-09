@@ -50,7 +50,7 @@ impl MakeStructAccessStatic {
                         OpCode::TupleProj {
                             result: item_val_id, 
                             tuple, 
-                            idx
+                            ref idx
                         } => { 
                             // tuple_field_index_val_id = flat_array_index_value_id - flat_array_tuple_starting_index_value_id
                                 // flat_array_tuple_starting_index_value_id = tuple_array_index_value_id * stride
@@ -58,9 +58,8 @@ impl MakeStructAccessStatic {
                                         // flat_array_index_value_id = tuple_array_index_value_id * stride_value_id
                                         // flat_array_index_value_id = flat_array_tuple_starting_index_value_id_og + tuple_field_index_val_id_og
                                 
-
                             if let TupleIdx::Dynamic(tuple_field_index_val_id, tp) = idx {
-                                let tuple_field_index_definition = value_definitions.get_definition(tuple_field_index_val_id);
+                                let tuple_field_index_definition = value_definitions.get_definition(*tuple_field_index_val_id);
                                 if let ValueDefinition::Instruction(_, _, OpCode::BinaryArithOp { 
                                     kind: BinaryArithOpKind::Sub,
                                     result: tuple_field_index_val_id, 
@@ -82,39 +81,51 @@ impl MakeStructAccessStatic {
                                             rhs: stride, 
                                         }) = tuple_array_index_definition {
                                             let flat_array_index_definition = value_definitions.get_definition(*flat_array_index_value_id);
-                                            if let ValueDefinition::Instruction(_, _, OpCode::BinaryArithOp { 
-                                                kind, 
-                                                result, 
-                                                lhs, 
-                                                rhs }) = flat_array_index_definition {
-                                                
-                                                match kind {
-                                                    BinaryArithOpKind::Mul => {
-                                                        new_instructions.push(
-                                                            OpCode::TupleProj {
-                                                                result: item_val_id, 
-                                                                tuple, 
-                                                                idx: TupleIdx::Static(0),
-                                                            }
-                                                        );
-                                                    }
-                                                    BinaryArithOpKind::Add => {
-                                                        let tuple_field_index_val_id_og_definition = value_definitions.get_definition(*rhs);
-                                                        if let ValueDefinition::Const(Const::U(sz, val)) = tuple_field_index_val_id_og_definition {
+                                            match flat_array_index_definition {
+                                                ValueDefinition::Instruction(_, _, OpCode::BinaryArithOp { 
+                                                    kind, 
+                                                    result, 
+                                                    lhs, 
+                                                    rhs 
+                                                }) => {
+                                                    match kind {
+                                                        BinaryArithOpKind::Mul => {
                                                             new_instructions.push(
-                                                            OpCode::TupleProj {
-                                                                result: item_val_id, 
-                                                                tuple, 
-                                                                idx: TupleIdx::Static(*val as usize),
-                                                            }
-                                                        );
+                                                                OpCode::TupleProj {
+                                                                    result: item_val_id, 
+                                                                    tuple, 
+                                                                    idx: TupleIdx::Static(0),
+                                                                }
+                                                            );
                                                         }
-                                                    } 
-                                                    _ => panic!("Expected Add or Mul operation for flat_array_index_definition")
+                                                        BinaryArithOpKind::Add => {
+                                                            let tuple_field_index_val_id_og_definition = value_definitions.get_definition(*rhs);
+                                                            if let ValueDefinition::Const(Const::U(sz, val)) = tuple_field_index_val_id_og_definition {
+                                                                new_instructions.push(
+                                                                OpCode::TupleProj {
+                                                                    result: item_val_id, 
+                                                                    tuple, 
+                                                                    idx: TupleIdx::Static(*val as usize),
+                                                                }
+                                                            );
+                                                            }
+                                                        } 
+                                                        _ => panic!("Expected Add or Mul operation for flat_array_index_definition")
+                                                    }
+                                                } 
+                                                ValueDefinition::Const(Const::U(_, val)) => {
+                                                    new_instructions.push(
+                                                        OpCode::TupleProj {
+                                                            result: item_val_id, 
+                                                            tuple, 
+                                                            idx: TupleIdx::Static(*val as usize),
+                                                        }
+                                                    );
                                                 }
-                                            } else {
-                                                panic!("Expected instruction for flat_array_index_definition")
-                                            }   
+                                                _ => {
+                                                    panic!("Unexpected flat_array_index_definition")
+                                                }
+                                            }
                                         } else {
                                             panic!("Expected div instruction for tuple_array_index_definition")
                                         }
@@ -125,11 +136,11 @@ impl MakeStructAccessStatic {
                                     panic!("Expected dynamic tuple index");
                                 }
                             } else {
-                                panic!("Expected dynamic tuple index");
+                                new_instructions.push(instruction);
                             }
                         }
                         _ => {
-                            new_instructions.push(instruction);
+                            new_instructions.push(instruction.clone());
                         }
                     }
                 }

@@ -137,7 +137,14 @@ impl<V: CommutativeMonoid + Display> Type<V> {
             TypeExpr::Field => false,
             TypeExpr::U(_) => false,
             TypeExpr::BoxedField => false,
-            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
+            TypeExpr::Tuple(elements) => {
+                for elem in elements {
+                    if elem.contains_ptrs() {
+                        return true;
+                    }
+                }
+                false
+            }
         }
     }
 }
@@ -155,6 +162,13 @@ impl<V: Clone> Type<V> {
         match &self.expr {
             TypeExpr::Ref(inner) => *inner.clone(),
             _ => panic!("Type is not a reference"),
+        }
+    }
+
+    pub fn get_tuple_element(&self, index: usize) -> Self {
+        match &self.expr {
+            TypeExpr::Tuple(elements) => elements[index].clone(),
+            _ => panic!("Type is not a tuple"),
         }
     }
 }

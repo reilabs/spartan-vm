@@ -3,7 +3,7 @@ use crate::compiler::{
     ssa_gen::SsaConverter,
 };
 use itertools::Itertools;
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, vec};
 use crate::compiler::taint_analysis::ConstantTaint;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -1967,9 +1967,11 @@ impl<V> OpCode<V> {
                 offset: _,
                 result_type: _,
             } => vec![r].into_iter(),
-            Self::TupleProj { .. } => {
-                todo!("TupleProj not implemented")
-            }
+            Self::TupleProj { 
+                result: r,
+                tuple: t,
+                idx: _,
+            } => vec![r, t].into_iter(),
             Self::Todo { results, .. } => {
                 let ret_vec: Vec<&mut ValueId> = results.iter_mut().collect();
                 ret_vec.into_iter()
@@ -2144,9 +2146,11 @@ impl<V> OpCode<V> {
                 ret_vec.extend(results);
                 ret_vec.into_iter()
             }
-            Self::TupleProj { .. } => {
-                todo!("TupleProj not implemented")
-            }
+            Self::TupleProj {
+                result: _,
+                tuple,
+                idx: _,
+            } => vec![tuple].into_iter(),
             Self::Todo { .. } => vec![].into_iter(),
         }
     }

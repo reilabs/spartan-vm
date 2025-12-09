@@ -5,6 +5,7 @@ use crate::compiler::{
     ir::r#type::{Empty, TypeExpr},
     ssa::{BlockId, CastTarget, Endianness, Function, FunctionId, Radix, SeqType, SliceOpDir, TupleIdx, ValueId},
 };
+use nargo::foreign_calls::print;
 use noirc_evaluator::ssa::ir::{
     basic_block::BasicBlockId,
     function::{Function as NoirFunction, FunctionId as NoirFunctionId},
@@ -527,7 +528,6 @@ impl FunctionConverter {
                         let result_id =
                             noir_function.dfg.instruction_results(*noir_instruction_id)[0];
 
-
                         let array_type = array_value.get_type();
                         let converted_array_type = self.type_converter.convert_type(&array_type);
                         
@@ -535,42 +535,60 @@ impl FunctionConverter {
                             TypeExpr::Array(array_inner_type, _size) => {
                                 match array_inner_type.expr {
                                     TypeExpr::Tuple(_) => {
-                                         // what should the u_const size be?
                                         let tuple_size = array_inner_type.calculate_type_size();
                                         let stride = custom_function.push_u_const(32, tuple_size as u128);
 
-                                        let tuple_index = custom_function.push_div(
-                                            custom_block_id,
-                                            index_converted,
-                                            stride,
-                                        );
+                                        if let Value::NumericConstant { constant, typ: NumericType::Unsigned { bit_size: s } } = index_value {
+                                            let tuple_index = custom_function
+                                                .push_u_const(*s as usize, constant.to_string().parse::<u128>().unwrap() / (tuple_size as u128));
 
-                                        let tuple_id = custom_function.push_array_get(
-                                            custom_block_id,
-                                            array_converted,
-                                            tuple_index,
-                                        );
+                                            let tuple_id = custom_function.push_array_get(
+                                                custom_block_id,
+                                                array_converted,
+                                                tuple_index,
+                                            );
 
-                                        let tuple_starting_address = custom_function.push_mul(
-                                            custom_block_id,
-                                            tuple_index,
-                                            stride,
-                                        );
+                                            let tuple_get_result = custom_function.push_tuple_proj(
+                                                custom_block_id,
+                                                tuple_id,
+                                                TupleIdx::Static((constant.to_string().parse::<u128>().unwrap() % (tuple_size as u128)) as usize ),
+                                            );
 
-                                        let tuple_element_index = custom_function.push_sub(
-                                            custom_block_id,
-                                            index_converted,
-                                            tuple_starting_address,
-                                        );
-                                        
-                                        // Faulty: Fix type?
-                                        let tuple_get_result = custom_function.push_tuple_proj(
-                                            custom_block_id,
-                                            tuple_id,
-                                            TupleIdx::Dynamic(tuple_element_index, *array_inner_type),
-                                        );
+                                            self.value_mapper.insert(result_id, tuple_get_result);
+                                        } else {
+                                            let tuple_index = custom_function.push_div(
+                                                custom_block_id,
+                                                index_converted,
+                                                stride,
+                                            );
 
-                                        self.value_mapper.insert(result_id, tuple_get_result);
+                                            let tuple_id = custom_function.push_array_get(
+                                                custom_block_id,
+                                                array_converted,
+                                                tuple_index,
+                                            );
+
+                                            let tuple_starting_address = custom_function.push_mul(
+                                                custom_block_id,
+                                                tuple_index,
+                                                stride,
+                                            );
+
+                                            let tuple_element_index = custom_function.push_sub(
+                                                custom_block_id,
+                                                index_converted,
+                                                tuple_starting_address,
+                                            );
+                                            
+                                            // Faulty: Fix type?
+                                            let tuple_get_result = custom_function.push_tuple_proj(
+                                                custom_block_id,
+                                                tuple_id,
+                                                TupleIdx::Dynamic(tuple_element_index, *array_inner_type),
+                                            );
+
+                                            self.value_mapper.insert(result_id, tuple_get_result);
+                                        } 
                                     }
                                     _ => {
                                         let array_get_result = custom_function.push_array_get(

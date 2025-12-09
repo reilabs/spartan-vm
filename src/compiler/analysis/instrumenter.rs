@@ -26,6 +26,7 @@ pub enum ValueSignature {
     PointerTo(Box<ValueSignature>),
     FWitness,
     UWitness(usize),
+    Tuple(Vec<ValueSignature>),
 }
 
 impl ValueSignature {
@@ -39,6 +40,9 @@ impl ValueSignature {
             ValueSignature::PointerTo(val) => Value::Pointer(Rc::new(RefCell::new(val.to_value()))),
             ValueSignature::FWitness => Value::FWitness,
             ValueSignature::UWitness(s) => Value::UWitness(*s),
+            ValueSignature::Tuple(elements) => {
+                Value::Tuple(elements.iter().map(|e| e.to_value()).collect())
+            }
         }
     }
 
@@ -57,6 +61,14 @@ impl ValueSignature {
             ValueSignature::PointerTo(p) => format!("&({})", p.as_ref().pretty_print(full)),
             ValueSignature::FWitness => "W".to_string(),
             ValueSignature::UWitness(_) => "W".to_string(),
+            ValueSignature::Tuple(elements) => {
+                if full {
+                    let elements = elements.iter().map(|e| e.pretty_print(full)).join(", ");
+                    format!("({})", elements)
+                } else {
+                    format!("(...)")
+                }       
+            }
         }
     }
 }
@@ -69,6 +81,7 @@ pub enum Value {
     Pointer(Rc<RefCell<Value>>),
     FWitness,
     UWitness(usize),
+    Tuple(Vec<Value>),
 }
 
 impl Value {
@@ -194,6 +207,23 @@ impl Value {
                 };
                 val.borrow_mut().blind_from(&item_tp);
             }
+            (Value::Tuple(_), ConstantTaint::Witness, _) => {
+                panic!("Witness tuples not supported yet")
+            }
+            (Value::Tuple(_), _, tp) => {
+                let element_tps = match tp {
+                    TypeExpr::Tuple(elements) => elements,
+                    _ => panic!("Unexpected tuple type: {:?}", tp),
+                };
+                match self {
+                    Value::Tuple(vals) => {
+                        for (val, element_tp) in vals.iter_mut().zip(element_tps.iter()) {
+                            val.blind_from(element_tp);
+                        }
+                    }
+                    _ => panic!("Unexpected tuple type: {:?}", tp),
+                }
+            }
         }
     }
 
@@ -229,6 +259,21 @@ impl Value {
             }
             (Value::Pointer(_), ConstantTaint::Witness, _) => {
                 panic!("Witness pointers not supported yet")
+            }
+            (Value::Tuple(vals), ConstantTaint::Pure, tp) => {
+                let element_tps = match tp {
+                    TypeExpr::Tuple(elements) => elements,
+                    _ => panic!("Unexpected tuple type: {:?}", tp),
+                };
+                ValueSignature::Tuple(
+                    vals.iter()
+                        .zip(element_tps.iter())
+                        .map(|(v, element_tp)| v.make_unspecialized_sig(element_tp))
+                        .collect(),
+                )
+            }
+            (Value::Tuple(_), ConstantTaint::Witness, _) => {
+                panic!("Witness tuples not supported yet")
             }
         }
     }
@@ -1295,7 +1340,9 @@ impl CostEstimator {
             TypeExpr::BoxedField => ValueSignature::FWitness,
             TypeExpr::Slice(_) => panic!("slice not possible here"),
             TypeExpr::Ref(_) => panic!("ref not possible here"),
-            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
+            TypeExpr::Tuple(elements) => {
+                ValueSignature::Tuple(elements.iter().map(|e| self.make_witness_sig(e)).collect())
+            }
         }
     }
 }

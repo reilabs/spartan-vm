@@ -4,6 +4,6 @@ pub struct IDData {
 }
 
 
-fn main(x: [IDData; 2], ind: u32) {
-    assert_eq(x[ind].age, 18);
+fn main(x: [IDData; 2]) {
+    assert_eq(x[1].age, 18);
 }

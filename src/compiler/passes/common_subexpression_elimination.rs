@@ -98,6 +98,10 @@ impl Expr {
         Self::ArrayGet(Box::new(self.clone()), Box::new(index.clone()))
     }
 
+    pub fn tuple_get(&self, index: &Self) -> Self {
+        Self::ArrayGet(Box::new(self.clone()), Box::new(index.clone()))
+    }
+
     pub fn select(&self, then: &Self, otherwise: &Self) -> Self {
         Self::Select(
             Box::new(self.clone()),
@@ -439,9 +443,12 @@ impl CSE {
                             *r,
                         ));
                     }
-                    OpCode::TupleProj { .. } => {
-                        todo!("TupleProj not implemented")
-                    },
+                    // Should this be changed?
+                    OpCode::TupleProj { 
+                        result,
+                        tuple,
+                        idx,
+                    } => {},
                 }
             }
         }

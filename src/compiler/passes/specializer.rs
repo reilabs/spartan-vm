@@ -561,6 +561,10 @@ impl Specializer {
                     call_params.push(Val(val));
                     state.const_vals.insert(val, ConstVal::U(*size, *v));
                 }
+                ValueSignature::Tuple(_) => {
+                    info!("TODO: Aborting specialization on a tuple value");
+                    return;
+                }
             }
         }
 
@@ -649,6 +653,9 @@ impl Specializer {
                     let cst = dispatcher.push_u_const(*s, *v);
                     let is_eq = dispatcher.push_eq(entry_block, *pval, cst);
                     should_call_spec = dispatcher.push_and(entry_block, should_call_spec, is_eq);
+                }
+                ValueSignature::Tuple(_) => {
+                    todo!();
                 }
             }
         }
