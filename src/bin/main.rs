@@ -12,9 +12,6 @@ const DEFAULT_NOIR_PROJECT_PATH: &str = "./";
 
 #[derive(Clone, Debug, Parser)]
 pub struct ProgramOptions {
-    #[command(subcommand)]
-    pub command: Option<Command>,
-
     /// The root of the Noir project to extract.
     #[arg(long, value_name = "PATH", default_value = DEFAULT_NOIR_PROJECT_PATH, value_parser = parse_path, global = true)]
     pub root: PathBuf,
@@ -60,13 +57,7 @@ fn main() -> ExitCode {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let result: Result<ExitCode, ApiError> = match &args.command {
-        Some(Command::Compile { output }) => run_compile(&args, output),
-        Some(Command::Execute { artifacts, output_dir }) => run_execute(&args, artifacts, output_dir.as_ref()),
-        None => run(&args), // Default: run the full pipeline (legacy behavior)
-    };
-
-    result.unwrap_or_else(|err| {
+   run(&args).unwrap_or_else(|err| {
         eprintln!("Error Encountered: {err:?}");
         ExitCode::FAILURE
     })

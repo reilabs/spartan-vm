@@ -40,7 +40,6 @@ rand = "0.8"
 
 opcode-gen = { path = "opcode-gen" }
 ssa-builder = { path = "ssa-builder" }
-
 [dev-dependencies]
 anyhow = "1.0.87"
 tempfile = "3.8.1"
