@@ -28,6 +28,7 @@ enum ConstVal {
     U(usize, u128),
     Field(Field),
     Array(Vec<ValueId>),
+    Tuple(Vec<ValueId>),
     BitsOf(Box<ValueId>, usize, Endianness),
 }
 
@@ -214,6 +215,22 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
                 Self(res)
             }
             _ => panic!("Not yet implemented {:?}", (a_const, index_const)),
+        }
+    }
+
+    fn tuple_get(
+        &self,
+        index: usize,
+        _out_type: &crate::compiler::ir::r#type::Type<ConstantTaint>,
+        ctx: &mut SpecializationState,
+    ) -> Self {
+        let a_const = ctx.const_vals.get(&self.0);
+        match a_const {
+            Some(ConstVal::Tuple(a)) => {
+                let res = a[index as usize];
+                Self(res)
+            }
+            _ => panic!("Not yet implemented {:?}", a_const),
         }
     }
 

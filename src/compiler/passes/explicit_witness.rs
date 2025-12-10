@@ -572,8 +572,23 @@ impl ExplicitWitness {
                                 result_types,
                             });
                         }
-                        OpCode::TupleProj { .. } => {
-                            todo!("TupleProj not implemented")
+                        OpCode::TupleProj {
+                            result,
+                            tuple,
+                            idx,
+                        } => {
+                            if let crate::compiler::ssa::TupleIdx::Static(index) = idx {
+                                let tuple_taint =
+                                    function_type_info.get_value_type(tuple).get_annotation();
+                                assert!(tuple_taint.is_pure());
+                                new_instructions.push(OpCode::TupleProj {
+                                    result,
+                                    tuple,
+                                    idx: crate::compiler::ssa::TupleIdx::Static(index),
+                                });
+                            } else {
+                                panic!("Dynamic tuple indexing should not appear here");
+                        }
                         },
                     }
                 }

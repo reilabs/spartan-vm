@@ -150,6 +150,13 @@ impl Value {
         }
     }
 
+    pub fn expect_tuple(&self) -> Rc<RefCell<ArrayData>> {
+        match self {
+            Value::Array(array) => array.clone(),
+            _ => panic!("expected tuple"),
+        }
+    }
+
     pub fn expect_linear_combination(&self) -> Vec<(usize, ark_bn254::Fr)> {
         match self {
             Value::Const(c) => vec![(0, *c)],
@@ -396,6 +403,11 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
 
     fn array_get(&self, index: &Self, _out_type: &Type<V>, _ctx: &mut R1CGen) -> Self {
         let index = index.expect_u32();
+        let value = self.expect_array().borrow().data[index as usize].clone();
+        value
+    }
+
+    fn tuple_get(&self, index: usize, _out_type: &Type<V>, _ctx: &mut R1CGen) -> Self {
         let value = self.expect_array().borrow().data[index as usize].clone();
         value
     }

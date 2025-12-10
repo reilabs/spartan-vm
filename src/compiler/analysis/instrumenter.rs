@@ -318,6 +318,21 @@ impl Value {
         }
     }
 
+    fn tuple_get(
+        &self,
+        index: usize,
+        tp: &Type<ConstantTaint>,
+        instrumenter: &mut dyn OpInstrumenter,
+    ) -> Value {
+        match self {
+            Value::Tuple(vals) => vals[index as usize].clone(),
+            _ => panic!(
+                "Cannot get array element from {:?} with index {:?}",
+                self, index
+            ),
+        }
+    }
+
     fn array_set(
         &self,
         index: &Value,
@@ -677,6 +692,28 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
             ),
             specialized: self.specialized.array_get(
                 &i.specialized,
+                tp,
+                instrumenter.get_specialized(),
+            ),
+        };
+        res.blind_unspecialized_from(tp);
+        res
+    }
+
+    fn tuple_get(
+        &self,
+        index: usize,
+        tp: &Type<ConstantTaint>,
+        instrumenter: &mut CostAnalysis,
+    ) -> SpecSplitValue {
+        let mut res = SpecSplitValue {
+            unspecialized: self.unspecialized.tuple_get(
+                index,
+                tp,
+                instrumenter.get_unspecialized(),
+            ),
+            specialized: self.specialized.tuple_get(
+                index,
                 tp,
                 instrumenter.get_specialized(),
             ),

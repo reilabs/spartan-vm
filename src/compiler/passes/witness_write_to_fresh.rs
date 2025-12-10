@@ -109,10 +109,9 @@ impl WitnessWriteToFresh {
                         | OpCode::Lookup { .. }
                         | OpCode::DLookup { .. }
                         | OpCode::ReadGlobal { .. }
-                        | OpCode::Todo { .. } => instruction.clone(),
-                        OpCode::TupleProj { .. } => {
-                            todo!("TupleProj not implemented")
-                        },
+                        | OpCode::Todo { .. } 
+                        | OpCode::TupleProj { .. } => instruction.clone(),
+                        
                     };
                     *instruction = new_instruction;
                 }
@@ -151,7 +150,10 @@ impl WitnessWriteToFresh {
                     seq_type: SeqType::Array(*size),
                     elem_type: *inner_type.clone(),
                 });
-            }        
+            }    
+            TypeExpr::Tuple(child_types) => {
+                todo!("Tuple type witness generation not implemented yet");
+            }    
             _ => panic!("Unsupported parameter type for witness write to fresh. We only support fields and nested arrays of fields for now"), 
         }
         r

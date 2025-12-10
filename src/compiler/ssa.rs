@@ -1091,6 +1091,7 @@ pub enum CmpKind {
 pub enum SeqType {
     Array(usize),
     Slice,
+    Tuple,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1134,6 +1135,7 @@ impl Display for SeqType {
         match self {
             SeqType::Array(len) => write!(f, "Array[{}]", len),
             SeqType::Slice => write!(f, "Slice"),
+            SeqType::Tuple => write!(f, "Tuple"),
         }
     }
 }
@@ -1143,6 +1145,7 @@ impl SeqType {
         match self {
             SeqType::Array(len) => Type::array_of(t, *len, V::empty()),
             SeqType::Slice => Type::slice_of(t, V::empty()),
+            SeqType::Tuple => panic!("Tuple type requires multiple element types"),
         }
     }
 }

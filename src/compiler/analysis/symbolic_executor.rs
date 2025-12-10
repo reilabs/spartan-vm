@@ -24,6 +24,7 @@ where
     fn assert_eq(&self, other: &Self, ctx: &mut Context);
     fn assert_r1c(a: &Self, b: &Self, c: &Self, ctx: &mut Context);
     fn array_get(&self, index: &Self, out_type: &Type<Taint>, ctx: &mut Context) -> Self;
+    fn tuple_get(&self, index: usize, out_type: &Type<Taint>, ctx: &mut Context) -> Self;
     fn array_set(
         &self,
         index: &Self,
@@ -518,8 +519,18 @@ impl SymbolicExecutor {
                             .collect::<Vec<_>>();
                         ctx.dlookup(target, keys, results);
                     }
-                    crate::compiler::ssa::OpCode::TupleProj { .. } => {
-                        todo!("TupleProj not implemented")
+                    crate::compiler::ssa::OpCode::TupleProj {
+                        result: r,
+                        tuple: a,
+                        idx: i,
+                    } => {
+                        if let crate::compiler::ssa::TupleIdx::Static(index) = i {
+                            let a = scope[a.0 as usize].as_ref().unwrap();
+                            scope[r.0 as usize] =
+                                Some(a.tuple_get(*index, &fn_type_info.get_value_type(*r), ctx));
+                        } else {
+                            panic!("Dynamic tuple indexing should not appear here");
+                        }
                     },
                     crate::compiler::ssa::OpCode::Todo {
                         payload,
