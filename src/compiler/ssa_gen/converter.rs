@@ -51,7 +51,7 @@ impl SsaConverter {
 
                     NumericType::NativeField => {
                         let field_value = constant.to_string();
-                        let field_value = ark_bn254::Fr::from_str(&field_value).unwrap();
+                        let field_value = crate::compiler::Field::from_str(&field_value).unwrap();
                         res.push(GlobalDef::Const(Const::Field(field_value)));
                         mapper.insert(noir_value_id, res.len() - 1);
                     }

@@ -15,7 +15,7 @@ enum Expr {
     Mul(Vec<Expr>),
     Div(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
-    FConst(ark_bn254::Fr),
+    FConst(crate::compiler::Field),
     UConst(usize, u128),
     Variable(u64),
     Eq(Box<Expr>, Box<Expr>),
@@ -82,7 +82,7 @@ impl Expr {
         Self::And(ands)
     }
 
-    pub fn fconst(value: ark_bn254::Fr) -> Self {
+    pub fn fconst(value: crate::compiler::Field) -> Self {
         Self::FConst(value)
     }
 

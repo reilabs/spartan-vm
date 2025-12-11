@@ -12,33 +12,11 @@ use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
 use serde::{Deserialize, Serialize, Deserializer, Serializer};
 use tracing::{error, instrument, warn};
 
-/// Wrapper module for serializing ark_bn254::Fr field elements
-#[allow(dead_code)]
-mod field_serde {
-    use super::*;
-
-    pub fn serialize<S>(field: &ark_bn254::Fr, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let limbs = field.into_bigint().0;
-        limbs.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<ark_bn254::Fr, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let limbs: [u64; 4] = Deserialize::deserialize(deserializer)?;
-        Ok(ark_bn254::Fr::from_bigint(BigInt(limbs)).expect("Invalid field element"))
-    }
-}
-
 /// Wrapper for serializing linear combination terms (witness index, coefficient)
 mod lc_serde {
     use super::*;
 
-    pub fn serialize<S>(lc: &Vec<(usize, ark_bn254::Fr)>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(lc: &Vec<(usize, crate::compiler::Field)>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -49,7 +27,7 @@ mod lc_serde {
         converted.serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<(usize, ark_bn254::Fr)>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<(usize, crate::compiler::Field)>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -57,7 +35,7 @@ mod lc_serde {
         Ok(converted
             .into_iter()
             .map(|(idx, limbs)| {
-                (idx, ark_bn254::Fr::from_bigint(BigInt(limbs)).expect("Invalid field element"))
+                (idx, crate::compiler::Field::from_bigint(BigInt(limbs)).expect("Invalid field element"))
             })
             .collect())
     }
@@ -71,7 +49,7 @@ mod lc_serde {
 //     LookupValueInverseAux(usize),
 // }
 
-type LC = Vec<(usize, ark_bn254::Fr)>;
+type LC = Vec<(usize, crate::compiler::Field)>;
 
 #[derive(Clone, Debug)]
 struct ArrayData {
@@ -81,7 +59,7 @@ struct ArrayData {
 
 #[derive(Clone, Debug)]
 pub enum Value {
-    Const(ark_bn254::Fr),
+    Const(crate::compiler::Field),
     LC(LC),
     Array(Rc<RefCell<ArrayData>>),
     Ptr(Rc<RefCell<Value>>),
@@ -101,7 +79,7 @@ impl Value {
                 while lhs_i < lhs.len() && rhs_i < rhs.len() {
                     if lhs[lhs_i].0 == rhs[rhs_i].0 {
                         let r = lhs[lhs_i].1 + rhs[rhs_i].1;
-                        if r != ark_bn254::Fr::ZERO {
+                        if r != crate::compiler::Field::ZERO {
                             result.push((lhs[lhs_i].0, r));
                         }
                         lhs_i += 1;
@@ -146,7 +124,7 @@ impl Value {
         }
     }
 
-    pub fn expect_constant(&self) -> ark_bn254::Fr {
+    pub fn expect_constant(&self) -> crate::compiler::Field {
         match self {
             Value::Const(c) => *c,
             _ => panic!("expected constant"),
@@ -164,8 +142,8 @@ impl Value {
         match (self, other) {
             (Value::Const(lhs), Value::Const(rhs)) => Value::Const(lhs * rhs),
             (Value::Const(c), Value::LC(lc)) | (Value::LC(lc), Value::Const(c)) => {
-                if *c == ark_bn254::Fr::ZERO {
-                    return Value::Const(ark_bn254::Fr::ZERO);
+                if *c == crate::compiler::Field::ZERO {
+                    return Value::Const(crate::compiler::Field::ZERO);
                 }
                 let mut result = Vec::new();
                 for (i, cl) in lc.iter() {
@@ -188,9 +166,9 @@ impl Value {
         let self_const = self.expect_constant();
         let other_const = other.expect_constant();
         if self_const < other_const {
-            Value::Const(ark_bn254::Fr::ONE)
+            Value::Const(crate::compiler::Field::ONE)
         } else {
-            Value::Const(ark_bn254::Fr::ZERO)
+            Value::Const(crate::compiler::Field::ZERO)
         }
     }
 
@@ -201,7 +179,7 @@ impl Value {
         }
     }
 
-    pub fn expect_linear_combination(&self) -> Vec<(usize, ark_bn254::Fr)> {
+    pub fn expect_linear_combination(&self) -> Vec<(usize, crate::compiler::Field)> {
         match self {
             Value::Const(c) => vec![(0, *c)],
             Value::LC(lc) => lc.clone(),
@@ -213,9 +191,9 @@ impl Value {
         let self_const = self.expect_constant();
         let other_const = other.expect_constant();
         if self_const == other_const {
-            Value::Const(ark_bn254::Fr::ONE)
+            Value::Const(crate::compiler::Field::ONE)
         } else {
-            Value::Const(ark_bn254::Fr::ZERO)
+            Value::Const(crate::compiler::Field::ZERO)
         }
     }
 
@@ -249,8 +227,8 @@ pub enum Table {
     OfElems(Vec<LC>),
 }
 
-fn field_to_string(c: ark_bn254::Fr) -> String {
-    if c.into_bigint() > ark_bn254::Fr::MODULUS_MINUS_ONE_DIV_TWO {
+fn field_to_string(c: crate::compiler::Field) -> String {
+    if c.into_bigint() > crate::compiler::Field::MODULUS_MINUS_ONE_DIV_TWO {
         format!("-{}", -c)
     } else {
         c.to_string()
@@ -405,7 +383,7 @@ impl<V: Clone> symbolic_executor::Context<Value, V> for R1CGen {
 
     fn slice_len(&mut self, slice: &Value) -> Value {
         let array = slice.expect_array();
-        Value::Const(ark_bn254::Fr::from(array.borrow().data.len() as u128))
+        Value::Const(crate::compiler::Field::from(array.borrow().data.len() as u128))
     }
 }
 
@@ -432,7 +410,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
             BinaryArithOpKind::And => {
                 let a = self.expect_u32();
                 let b = b.expect_u32();
-                Value::Const(ark_bn254::Fr::from(a & b))
+                Value::Const(crate::compiler::Field::from(a & b))
             }
         }
     }
@@ -477,7 +455,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
             .take(to)
             .cloned()
             .collect::<Vec<_>>();
-        Value::Const(ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&new_value)).unwrap())
+        Value::Const(crate::compiler::Field::from_bigint(BigInt::from_bits_le(&new_value)).unwrap())
     }
 
     fn cast(
@@ -526,9 +504,9 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
         let mut bit_values = Vec::new();
         for bit in final_bits {
             let bit_value = if bit {
-                Value::Const(ark_bn254::Fr::from(1u128))
+                Value::Const(crate::compiler::Field::from(1u128))
             } else {
-                Value::Const(ark_bn254::Fr::from(0u128))
+                Value::Const(crate::compiler::Field::from(0u128))
             };
             bit_values.push(bit_value);
         }
@@ -544,15 +522,15 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
             let bit = if i < bits.len() { bits[i] } else { false };
             negated_bits.push(!bit);
         }
-        Value::Const(ark_bn254::Fr::from_bigint(BigInt::from_bits_le(&negated_bits)).unwrap())
+        Value::Const(crate::compiler::Field::from_bigint(BigInt::from_bits_le(&negated_bits)).unwrap())
     }
 
     fn of_u(_s: usize, v: u128, _ctx: &mut R1CGen) -> Self {
-        Value::Const(ark_bn254::Fr::from(v))
+        Value::Const(crate::compiler::Field::from(v))
     }
 
     fn of_field(f: super::Field, _ctx: &mut R1CGen) -> Self {
-        Value::Const(ark_bn254::Fr::from(f))
+        Value::Const(crate::compiler::Field::from(f))
     }
 
     fn mk_array(
@@ -580,22 +558,22 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     }
 
     fn expect_constant_bool(&self, _ctx: &mut R1CGen) -> bool {
-        self.expect_constant() == ark_bn254::Fr::ONE
+        self.expect_constant() == crate::compiler::Field::ONE
     }
 
     fn select(&self, if_t: &Self, if_f: &Self, _out_type: &Type<V>, _ctx: &mut R1CGen) -> Self {
         self.mul(if_t)
-            .add(&Value::Const(ark_bn254::Fr::ONE).sub(self).mul(if_f))
+            .add(&Value::Const(crate::compiler::Field::ONE).sub(self).mul(if_f))
     }
 
     fn write_witness(&self, _tp: Option<&Type<V>>, ctx: &mut R1CGen) -> Self {
         let witness_var = ctx.next_witness();
-        Value::LC(vec![(witness_var, ark_bn254::Fr::ONE)])
+        Value::LC(vec![(witness_var, crate::compiler::Field::ONE)])
     }
 
     fn fresh_witness(ctx: &mut R1CGen) -> Self {
         let witness_var = ctx.next_witness();
-        Value::LC(vec![(witness_var, ark_bn254::Fr::ONE)])
+        Value::LC(vec![(witness_var, crate::compiler::Field::ONE)])
     }
 
     fn mem_op(&self, _kind: MemOp, _ctx: &mut R1CGen) {}
@@ -748,23 +726,23 @@ impl R1CGen {
         }
     }
 
-    pub fn verify(&self, witness: &[ark_bn254::Fr]) -> bool {
+    pub fn verify(&self, witness: &[crate::compiler::Field]) -> bool {
         for (i, r1c) in self.constraints.iter().enumerate() {
             let a = r1c
                 .a
                 .iter()
                 .map(|(i, c)| c * &witness[*i])
-                .sum::<ark_bn254::Fr>();
+                .sum::<crate::compiler::Field>();
             let b = r1c
                 .b
                 .iter()
                 .map(|(i, c)| c * &witness[*i])
-                .sum::<ark_bn254::Fr>();
+                .sum::<crate::compiler::Field>();
             let c = r1c
                 .c
                 .iter()
                 .map(|(i, c)| c * &witness[*i])
-                .sum::<ark_bn254::Fr>();
+                .sum::<crate::compiler::Field>();
             if a * b != c {
                 warn!(message = %"R1CS constraint failed to verify", index = i);
                 return false;
@@ -802,8 +780,8 @@ impl R1CGen {
 
     fn initialize_main_input<V: Clone>(&mut self, tp: &Type<V>) -> Value {
         match &tp.expr {
-            TypeExpr::U(_) => Value::LC(vec![(self.next_witness(), ark_bn254::Fr::ONE)]),
-            TypeExpr::Field => Value::LC(vec![(self.next_witness(), ark_bn254::Fr::ONE)]),
+            TypeExpr::U(_) => Value::LC(vec![(self.next_witness(), crate::compiler::Field::ONE)]),
+            TypeExpr::Field => Value::LC(vec![(self.next_witness(), crate::compiler::Field::ONE)]),
             TypeExpr::Array(tp, size) => {
                 let mut result = vec![];
                 for _ in 0..*size {
@@ -897,18 +875,18 @@ impl R1CGen {
                         let y = witness_layout.next_table_data();
                         let m = table_info.multiplicities_witness_off + i;
                         result.push(R1C {
-                            a: vec![(y, ark_bn254::Fr::ONE)],
+                            a: vec![(y, crate::compiler::Field::ONE)],
                             b: vec![
-                                (alpha, ark_bn254::Fr::ONE),
-                                (0, -ark_bn254::Fr::from(i as u64)),
+                                (alpha, crate::compiler::Field::ONE),
+                                (0, -crate::compiler::Field::from(i as u64)),
                             ],
-                            c: vec![(m, ark_bn254::Fr::ONE)],
+                            c: vec![(m, crate::compiler::Field::ONE)],
                         });
-                        sum_lhs.push((y, ark_bn254::Fr::ONE));
+                        sum_lhs.push((y, crate::compiler::Field::ONE));
                     }
                     result.push(R1C {
                         a: sum_lhs,
-                        b: vec![(0, ark_bn254::Fr::ONE)],
+                        b: vec![(0, crate::compiler::Field::ONE)],
                         c: vec![], // this is prepared for the looked up values to come into
                     });
                     table_info.sum_constraint_idx = result.len() - 1;
@@ -923,24 +901,24 @@ impl R1CGen {
                         let y = witness_layout.next_table_data();
                         let m = table_info.multiplicities_witness_off + i;
                         result.push(R1C {
-                            a: vec![(beta, ark_bn254::Fr::ONE)],
+                            a: vec![(beta, crate::compiler::Field::ONE)],
                             b: v.clone(),
-                            c: vec![(x, -ark_bn254::Fr::ONE)],
+                            c: vec![(x, -crate::compiler::Field::ONE)],
                         });
                         result.push(R1C {
-                            a: vec![(y, ark_bn254::Fr::ONE)],
+                            a: vec![(y, crate::compiler::Field::ONE)],
                             b: vec![
-                                (alpha, ark_bn254::Fr::ONE),
-                                (0, -ark_bn254::Fr::from(i as u64)),
-                                (x, -ark_bn254::Fr::ONE),
+                                (alpha, crate::compiler::Field::ONE),
+                                (0, -crate::compiler::Field::from(i as u64)),
+                                (x, -crate::compiler::Field::ONE),
                             ],
-                            c: vec![(m, ark_bn254::Fr::ONE)],
+                            c: vec![(m, crate::compiler::Field::ONE)],
                         });
-                        sum_lhs.push((y, ark_bn254::Fr::ONE));
+                        sum_lhs.push((y, crate::compiler::Field::ONE));
                     }
                     result.push(R1C {
                         a: sum_lhs,
-                        b: vec![(0, ark_bn254::Fr::ONE)],
+                        b: vec![(0, crate::compiler::Field::ONE)],
                         c: vec![], // this is prepared for the looked up values to come into
                     });
                     table_info.sum_constraint_idx = result.len() - 1;
@@ -959,14 +937,14 @@ impl R1CGen {
             let y_wit = match lookup.elements.len() {
                 1 => {
                     let y = witness_layout.next_lookups_data();
-                    let mut b = vec![(alpha, ark_bn254::Fr::ONE)];
+                    let mut b = vec![(alpha, crate::compiler::Field::ONE)];
                     for (w, coeff) in lookup.elements[0].iter() {
                         b.push((*w, -*coeff));
                     }
                     result.push(R1C {
-                        a: vec![(y, ark_bn254::Fr::ONE)],
+                        a: vec![(y, crate::compiler::Field::ONE)],
                         b,
-                        c: vec![(0, ark_bn254::Fr::ONE)],
+                        c: vec![(0, crate::compiler::Field::ONE)],
                     });
                     y
                 }
@@ -974,24 +952,24 @@ impl R1CGen {
                     let x = witness_layout.next_lookups_data();
                     let y = witness_layout.next_lookups_data();
                     result.push(R1C {
-                        a: vec![(beta, ark_bn254::Fr::ONE)],
+                        a: vec![(beta, crate::compiler::Field::ONE)],
                         b: lookup.elements[1].clone(),
-                        c: vec![(x, -ark_bn254::Fr::ONE)],
+                        c: vec![(x, -crate::compiler::Field::ONE)],
                     });
 
                     result.push(R1C {
-                        a: vec![(y, ark_bn254::Fr::ONE)],
+                        a: vec![(y, crate::compiler::Field::ONE)],
                         b: lookup.elements[0].clone(),
-                        c: vec![(x, -ark_bn254::Fr::ONE)],
+                        c: vec![(x, -crate::compiler::Field::ONE)],
                     });
-                    let mut b = vec![(alpha, ark_bn254::Fr::ONE), (x, -ark_bn254::Fr::ONE)];
+                    let mut b = vec![(alpha, crate::compiler::Field::ONE), (x, -crate::compiler::Field::ONE)];
                     for (w, coeff) in lookup.elements[0].iter() {
                         b.push((*w, -*coeff));
                     }
                     result.push(R1C {
-                        a: vec![(y, ark_bn254::Fr::ONE)],
+                        a: vec![(y, crate::compiler::Field::ONE)],
                         b,
-                        c: vec![(0, ark_bn254::Fr::ONE)],
+                        c: vec![(0, crate::compiler::Field::ONE)],
                     });
                     y
                 }
@@ -1000,7 +978,7 @@ impl R1CGen {
 
             result[table_infos[lookup.table_id].sum_constraint_idx]
                 .c
-                .push((y_wit, ark_bn254::Fr::ONE));
+                .push((y_wit, crate::compiler::Field::ONE));
         }
 
         constraints_layout.lookups_data_size =
@@ -1017,10 +995,10 @@ impl R1CGen {
 impl R1CS {
     pub fn compute_derivatives(
         &self,
-        coeffs: &[ark_bn254::Fr],
-        res_a: &mut [ark_bn254::Fr],
-        res_b: &mut [ark_bn254::Fr],
-        res_c: &mut [ark_bn254::Fr],
+        coeffs: &[crate::compiler::Field],
+        res_a: &mut [crate::compiler::Field],
+        res_b: &mut [crate::compiler::Field],
+        res_c: &mut [crate::compiler::Field],
     ) {
         for (r1c, coeff) in self.constraints.iter().zip(coeffs.iter()) {
             for (a_ix, a_coeff) in r1c.a.iter() {
@@ -1037,11 +1015,11 @@ impl R1CS {
 
     pub fn check_witgen_output(
         &self,
-        pre_comm_witness: &[ark_bn254::Fr],
-        post_comm_witness: &[ark_bn254::Fr],
-        a: &[ark_bn254::Fr],
-        b: &[ark_bn254::Fr],
-        c: &[ark_bn254::Fr],
+        pre_comm_witness: &[crate::compiler::Field],
+        post_comm_witness: &[crate::compiler::Field],
+        a: &[crate::compiler::Field],
+        b: &[crate::compiler::Field],
+        c: &[crate::compiler::Field],
     ) -> bool {
         let witness = [pre_comm_witness, post_comm_witness].concat();
         if a.len() != self.constraints_layout.size() {
@@ -1061,19 +1039,19 @@ impl R1CS {
                 .a
                 .iter()
                 .map(|(i, c)| c * &witness[*i])
-                .sum::<ark_bn254::Fr>();
+                .sum::<crate::compiler::Field>();
 
             let bv = r1c
                 .b
                 .iter()
                 .map(|(i, c)| c * &witness[*i])
-                .sum::<ark_bn254::Fr>();
+                .sum::<crate::compiler::Field>();
 
             let cv = r1c
                 .c
                 .iter()
                 .map(|(i, c)| c * &witness[*i])
-                .sum::<ark_bn254::Fr>();
+                .sum::<crate::compiler::Field>();
             let mut fail = false;
             if av * bv != cv {
                 error!(message = %"R1CS constraint failed to verify", index = i);
@@ -1100,10 +1078,10 @@ impl R1CS {
 
     pub fn check_ad_output(
         &self,
-        coeffs: &[ark_bn254::Fr],
-        a: &[ark_bn254::Fr],
-        b: &[ark_bn254::Fr],
-        c: &[ark_bn254::Fr],
+        coeffs: &[crate::compiler::Field],
+        a: &[crate::compiler::Field],
+        b: &[crate::compiler::Field],
+        c: &[crate::compiler::Field],
     ) -> bool {
         let mut a = a.to_vec();
         let mut b = b.to_vec();
@@ -1121,19 +1099,19 @@ impl R1CS {
         }
         let mut wrongs = 0;
         for i in 0..a.len() {
-            if a[i] != ark_bn254::Fr::ZERO {
+            if a[i] != crate::compiler::Field::ZERO {
                 if wrongs == 0 {
                     error!(message = %"Wrong A deriv for witness", index = i);
                 }
                 wrongs += 1;
             }
-            if b[i] != ark_bn254::Fr::ZERO {
+            if b[i] != crate::compiler::Field::ZERO {
                 if wrongs == 0 {
                     error!(message = %"Wrong B deriv for witness", index = i);
                 }
                 wrongs += 1;
             }
-            if c[i] != ark_bn254::Fr::ZERO {
+            if c[i] != crate::compiler::Field::ZERO {
                 if wrongs == 0 {
                     error!(message = %"Wrong C deriv for witness", index = i);
                 }

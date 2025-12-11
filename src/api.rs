@@ -136,7 +136,7 @@ pub fn random_ad_coeffs(r1cs: &R1CS) -> Vec<Field> {
     use ark_ff::UniformRand as _;
     let mut rng = rand::thread_rng();
     (0..r1cs.constraints.len())
-        .map(|_| ark_bn254::Fr::rand(&mut rng))
+        .map(|_| crate::compiler::Field::rand(&mut rng))
         .collect()
 }
 

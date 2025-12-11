@@ -182,8 +182,8 @@ impl<V: Display + Clone> SSA<V> {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Const {
     U(usize, u128),
-    Field(ark_bn254::Fr),
-    BoxedField(ark_bn254::Fr),
+    Field(crate::compiler::Field),
+    BoxedField(crate::compiler::Field),
 }
 
 #[derive(Clone)]
@@ -374,7 +374,7 @@ impl<V: Clone> Function<V> {
         self.push_const(Const::U(size, value))
     }
 
-    pub fn push_field_const(&mut self, value: ark_bn254::Fr) -> ValueId {
+    pub fn push_field_const(&mut self, value: crate::compiler::Field) -> ValueId {
         self.push_const(Const::Field(value))
     }
 
