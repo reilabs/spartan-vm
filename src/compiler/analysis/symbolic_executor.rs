@@ -155,7 +155,7 @@ impl SymbolicExecutor {
         self.run_fn(ssa, type_info, entry_point, params, &globals, context);
     }
 
-    #[instrument(skip_all, name="SymbolicExecutor::run_fn", level = Level::TRACE, fields(function = %ssa.get_function(fn_id).get_name()))]
+    // #[instrument(skip_all, name="SymbolicExecutor::run_fn", level = Level::TRACE, fields(function = %ssa.get_function(fn_id).get_name()))]
     fn run_fn<V, T, Ctx>(
         &self,
         ssa: &SSA<T>,
