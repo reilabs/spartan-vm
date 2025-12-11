@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf, process::ExitCode};
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use spartan_vm::compiler::Field;
 use spartan_vm::api::{self, ApiError};
 use tracing::{error, info, warn};
@@ -13,37 +13,18 @@ const DEFAULT_NOIR_PROJECT_PATH: &str = "./";
 #[derive(Clone, Debug, Parser)]
 pub struct ProgramOptions {
     /// The root of the Noir project to extract.
-    #[arg(long, value_name = "PATH", default_value = DEFAULT_NOIR_PROJECT_PATH, value_parser = parse_path, global = true)]
+    #[arg(long, value_name = "PATH", default_value = DEFAULT_NOIR_PROJECT_PATH, value_parser = parse_path)]
     pub root: PathBuf,
 
-    #[arg(long, value_name = "PUBLIC WITNESS", default_value = "", num_args = 0.., global = true)]
+    #[arg(long, value_name = "PUBLIC WITNESS", default_value = "", num_args = 0..)]
     pub public_witness: Vec<String>,
 
     /// Enable debugging mode which will generate graphs
-    #[arg(long, action = clap::ArgAction::SetTrue, global = true)]
+    #[arg(long, action = clap::ArgAction::SetTrue)]
     pub draw_graphs: bool,
 
-    #[arg(long, action = clap::ArgAction::SetTrue, global = true)]
+    #[arg(long, action = clap::ArgAction::SetTrue)]
     pub pprint_r1cs: bool,
-}
-
-#[derive(Clone, Debug, Subcommand)]
-pub enum Command {
-    /// Compile the Noir project and save artifacts to a file
-    Compile {
-        /// Output file path for the compiled artifacts
-        #[arg(short, long, default_value = "artifacts.bin")]
-        output: PathBuf,
-    },
-    /// Execute using pre-compiled artifacts
-    Execute {
-        /// Input file path containing the compiled artifacts
-        #[arg(short, long, default_value = "artifacts.bin")]
-        artifacts: PathBuf,
-        /// Output directory for debug files
-        #[arg(short, long)]
-        output_dir: Option<PathBuf>,
-    },
 }
 
 /// The main function for the CLI utility, responsible for parsing program
@@ -57,7 +38,7 @@ fn main() -> ExitCode {
         .with(EnvFilter::from_default_env())
         .init();
 
-   run(&args).unwrap_or_else(|err| {
+    run(&args).unwrap_or_else(|err| {
         eprintln!("Error Encountered: {err:?}");
         ExitCode::FAILURE
     })
