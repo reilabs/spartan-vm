@@ -394,6 +394,13 @@ impl Types {
                     panic!("Dynamic TupleProj should not appear here")
                 }
             }
+            OpCode::MkTuple { 
+                result: _,
+                elems: _,
+                element_types: _,
+            } => {
+                panic!("MkTuple only appears after freshwitness")
+            }
             OpCode::Todo { results, result_types, .. } => {
                 if results.len() != result_types.len() {
                     return Err(format!(

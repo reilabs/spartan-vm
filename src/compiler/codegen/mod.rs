@@ -591,16 +591,16 @@ impl CodeGen {
                     });
                 }
                 ssa::OpCode::SlicePush {
-                    result: r,
-                    slice: sl,
+                    result: _r,
+                    slice: _sl,
                     values: _vals,
                     dir: _,
                 } => {
                     panic!("SlicePush bytecode opcode not yet implemented");
                 }
                 ssa::OpCode::SliceLen {
-                    result: r,
-                    slice: sl,
+                    result: _r,
+                    slice: _sl,
                 } => {
                     panic!("SliceLen bytecode opcode not yet implemented");
                 }

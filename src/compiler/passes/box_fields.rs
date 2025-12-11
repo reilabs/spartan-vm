@@ -443,6 +443,13 @@ impl BoxFields {
                         | OpCode::DLookup { .. }
                         | OpCode::TupleProj { .. }
                         | OpCode::Todo { .. } => new_instructions.push(instruction),
+                        OpCode::MkTuple { 
+                            result: _,
+                            elems: _,
+                            element_types: _,
+                        } => {
+                            panic!("MkTuple only appears after freshwitness")
+                        }
                     };
                 }
                 block.put_instructions(new_instructions);

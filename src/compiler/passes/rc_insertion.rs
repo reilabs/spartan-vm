@@ -460,6 +460,13 @@ impl RCInsertion {
                     OpCode::Rangecheck { value: _, max_bits: _ } => {
                         new_instructions.push(instruction);
                     }
+                    OpCode::MkTuple { 
+                        result: _, 
+                        elems: _, 
+                        element_types: _, 
+                    } => {
+                        panic!("MkTuple only appears after freshwitness")
+                    }
                 }
             }
             for param in block.get_parameter_values() {

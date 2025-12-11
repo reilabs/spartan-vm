@@ -64,7 +64,7 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
                     ctx.const_vals.insert(res, ConstVal::U(1, res_u));
                     Self(res)
                 }
-                _ => todo!("{:?}", cmp_kind),
+                // _ => todo!("{:?}", cmp_kind),
             },
             (None, _) | (_, None) => {
                 let res = ctx

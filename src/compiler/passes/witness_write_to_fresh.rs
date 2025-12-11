@@ -111,7 +111,13 @@ impl WitnessWriteToFresh {
                         | OpCode::ReadGlobal { .. }
                         | OpCode::Todo { .. } 
                         | OpCode::TupleProj { .. } => instruction.clone(),
-                        
+                        OpCode::MkTuple { 
+                            result: _, 
+                            elems: _, 
+                            element_types: _ 
+                        } => {
+                            panic!("MkTuple only appears after freshwitness")
+                        }
                     };
                     *instruction = new_instruction;
                 }
@@ -151,7 +157,7 @@ impl WitnessWriteToFresh {
                     elem_type: *inner_type.clone(),
                 });
             }    
-            TypeExpr::Tuple(child_types) => {
+            TypeExpr::Tuple(_child_types) => {
                 todo!("Tuple type witness generation not implemented yet");
             }    
             _ => panic!("Unsupported parameter type for witness write to fresh. We only support fields and nested arrays of fields for now"), 

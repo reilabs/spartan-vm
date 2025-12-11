@@ -5,7 +5,6 @@ use crate::compiler::{
     ir::r#type::{Empty, TypeExpr},
     ssa::{BlockId, CastTarget, Endianness, Function, FunctionId, Radix, SeqType, SliceOpDir, TupleIdx, ValueId},
 };
-use nargo::foreign_calls::print;
 use noirc_evaluator::ssa::ir::{
     basic_block::BasicBlockId,
     function::{Function as NoirFunction, FunctionId as NoirFunctionId},

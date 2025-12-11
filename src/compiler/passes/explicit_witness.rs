@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use ark_ff::{AdditiveGroup, Field as _};
-use ssa_builder::{ssa_append, ssa_snippet};
+use ssa_builder::{ssa_append};
 
 use crate::compiler::{
     Field,
@@ -131,18 +131,18 @@ impl ExplicitWitness {
                                         } -> adjusted_diff_wit);
                                         self.gen_witness_rangecheck(function, &mut new_instructions, r.adjusted_diff_wit, s);
                                     }
-                                    _ => {
-                                        new_instructions.push(OpCode::Todo {
-                                            payload: format!(
-                                                "witness cmp {} {} {:?}",
-                                                l_taint, r_taint, kind
-                                            ),
-                                            results: vec![result],
-                                            result_types: vec![
-                                                function_type_info.get_value_type(rhs).clone(),
-                                            ],
-                                        });
-                                    }
+                                    // _ => {
+                                    //     new_instructions.push(OpCode::Todo {
+                                    //         payload: format!(
+                                    //             "witness cmp {} {} {:?}",
+                                    //             l_taint, r_taint, kind
+                                    //         ),
+                                    //         results: vec![result],
+                                    //         result_types: vec![
+                                    //             function_type_info.get_value_type(rhs).clone(),
+                                    //         ],
+                                    //     });
+                                    // }
                                 }
                             } else {
                                 new_instructions.push(instruction);
@@ -588,8 +588,15 @@ impl ExplicitWitness {
                                 });
                             } else {
                                 panic!("Dynamic tuple indexing should not appear here");
-                        }
+                            }
                         },
+                        OpCode::MkTuple { 
+                            result: _,
+                            elems: _,
+                            element_types: _,
+                        } => {
+                            panic!("MkTuple only appears after freshwitness")
+                        }
                     }
                 }
                 block.put_instructions(new_instructions);

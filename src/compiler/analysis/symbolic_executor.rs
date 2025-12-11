@@ -96,11 +96,11 @@ pub trait Context<V, Taint> {
         panic!("Todo opcode encountered: {}", payload);
     }
 
-    fn slice_push(&mut self, slice: &V, values: &[V], dir: SliceOpDir) -> V {
+    fn slice_push(&mut self, _slice: &V, _values: &[V], _dir: SliceOpDir) -> V {
         panic!("ICE: backend does not implement slice_push");
     }
 
-    fn slice_len(&mut self, slice: &V) -> V {
+    fn slice_len(&mut self, _slice: &V) -> V {
         panic!("ICE: backend does not implement slice_len");
     }
 }

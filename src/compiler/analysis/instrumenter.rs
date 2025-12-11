@@ -321,8 +321,8 @@ impl Value {
     fn tuple_get(
         &self,
         index: usize,
-        tp: &Type<ConstantTaint>,
-        instrumenter: &mut dyn OpInstrumenter,
+        _tp: &Type<ConstantTaint>,
+        _instrumenter: &mut dyn OpInstrumenter,
     ) -> Value {
         match self {
             Value::Tuple(vals) => vals[index as usize].clone(),

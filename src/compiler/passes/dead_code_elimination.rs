@@ -186,7 +186,14 @@ impl DCE {
                             result: _,
                             offset: _,
                             result_type: _,
-                        } => {}
+                        } => {},
+                        OpCode::MkTuple { 
+                            result: _,
+                            elems: _,
+                            element_types: _,
+                        } => {
+                            panic!("MkTuple only appears after freshwitness")
+                        }
                     }
                 }
 

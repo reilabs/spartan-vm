@@ -1342,6 +1342,11 @@ pub enum OpCode<V> {
         tuple: ValueId, 
         idx: TupleIdx<V>,
     },
+    MkTuple {
+        result: ValueId,
+        elems: Vec<ValueId>,
+        element_types: Vec<Type<V>>,
+    },
     Todo {
         payload: String,
         results: Vec<ValueId>,
@@ -1779,6 +1784,13 @@ impl<V: Display + Clone> OpCode<V> {
                     }
                 }
             },
+            OpCode::MkTuple { 
+                result: _, 
+                elems: _, 
+                element_types: _ 
+            } => {
+                panic!("MkTuple only appears after freshwitness")
+            }
             OpCode::Todo { payload, results, result_types } => {
                 let results_str = results.iter()
                     .zip(result_types.iter())

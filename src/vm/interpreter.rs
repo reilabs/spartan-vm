@@ -5,8 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use ark_ff::{AdditiveGroup, BigInt, Field as _, Fp, PrimeField as _, fields};
-use noirc_abi::input_parser::InputValue;
+use ark_ff::{AdditiveGroup, BigInt, Field as _, Fp, PrimeField as _};
 use tracing::instrument;
 
 use crate::{

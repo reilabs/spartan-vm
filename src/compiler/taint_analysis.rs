@@ -748,7 +748,7 @@ impl TaintAnalysis {
                         result: r,
                         slice: sl,
                     } => {
-                        let slice_taint = function_taint.value_taints.get(sl).unwrap();
+                        let _slice_taint = function_taint.value_taints.get(sl).unwrap();
                         // Slice must always be Pure taint
                         // assert_eq!(
                         //     slice_taint.toplevel_taint(),
@@ -933,6 +933,13 @@ impl TaintAnalysis {
                             panic!("Tuple index should be static at this stage")
                         }
                     },
+                    OpCode::MkTuple { 
+                        result: _, 
+                        elems: _, 
+                        element_types: _,
+                    } => {
+                        panic!("MkTuple only appears after freshwitness")
+                    }
                 }
             }
 

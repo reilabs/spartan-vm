@@ -343,6 +343,13 @@ impl UntaintControlFlow {
                             }
                         }
                     } 
+                    OpCode::MkTuple { 
+                        result: _,
+                        elems: _,
+                        element_types: _,
+                    } => {
+                        panic!("MkTuple only appears after freshwitness")
+                    }
                     OpCode::Todo { payload, results, result_types } => OpCode::Todo {
                         payload,
                         results,
@@ -597,8 +604,8 @@ impl UntaintControlFlow {
                     }
                     
                     OpCode::TupleProj {
-                        result,
-                        tuple,
+                        result: _,
+                        tuple: _,
                         idx: _,
                     } => {
                         new_instructions.push(instruction);

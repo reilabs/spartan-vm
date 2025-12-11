@@ -445,10 +445,17 @@ impl CSE {
                     }
                     // Should this be changed?
                     OpCode::TupleProj { 
-                        result,
-                        tuple,
-                        idx,
+                        result: _,
+                        tuple: _,
+                        idx: _,
                     } => {},
+                    OpCode::MkTuple { 
+                        result: _,
+                        elems: _,
+                        element_types: _,
+                    } => {
+                        panic!("MkTuple only appears after freshwitness")
+                    }
                 }
             }
         }
