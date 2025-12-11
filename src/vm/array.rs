@@ -259,6 +259,14 @@ impl BoxedValue {
         unsafe { self.data().offset(idx as isize * stride as isize) }
     }
 
+    pub fn tuple_idx(&self, idx: usize, child_sizes: &[usize]) -> *mut u64 {
+        let mut offset = 0;
+        for i in 0..idx {
+            offset += child_sizes[i];
+        }
+        unsafe { self.data().offset(offset as isize) }
+    }
+
     pub fn inc_rc(&self, by: u64) {
         let rc = self.rc();
         // println!(

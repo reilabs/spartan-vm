@@ -110,14 +110,9 @@ impl WitnessWriteToFresh {
                         | OpCode::DLookup { .. }
                         | OpCode::ReadGlobal { .. }
                         | OpCode::Todo { .. } 
-                        | OpCode::TupleProj { .. } => instruction.clone(),
-                        OpCode::MkTuple { 
-                            result: _, 
-                            elems: _, 
-                            element_types: _ 
-                        } => {
-                            panic!("MkTuple only appears after freshwitness")
-                        }
+                        | OpCode::TupleProj { .. } 
+                        | OpCode::MkTuple { .. } 
+                        => instruction.clone(),
                     };
                     *instruction = new_instruction;
                 }
@@ -158,7 +153,21 @@ impl WitnessWriteToFresh {
                 });
             }    
             TypeExpr::Tuple(_child_types) => {
-                todo!("Tuple type witness generation not implemented yet");
+                let mut value_ids = vec![];
+                for child_type in _child_types.iter() {
+                    let new_value_id = Self::generate_fresh_witness_for_parameter(
+                        None,
+                        child_type.clone(),
+                        main_function,
+                        instruction_collector,
+                    );
+                    value_ids.push(new_value_id);
+                }
+                instruction_collector.push(OpCode::MkTuple {
+                    result: r,
+                    elems: value_ids,
+                    element_types: _child_types.clone(),
+                });
             }    
             _ => panic!("Unsupported parameter type for witness write to fresh. We only support fields and nested arrays of fields for now"), 
         }

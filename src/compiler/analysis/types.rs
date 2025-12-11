@@ -395,11 +395,12 @@ impl Types {
                 }
             }
             OpCode::MkTuple { 
-                result: _,
+                result,
                 elems: _,
-                element_types: _,
+                element_types,
             } => {
-                panic!("MkTuple only appears after freshwitness")
+                function_info.values.insert(*result, Type::tuple_of(element_types.clone(), V::empty()));
+                Ok(())
             }
             OpCode::Todo { results, result_types, .. } => {
                 if results.len() != result_types.len() {

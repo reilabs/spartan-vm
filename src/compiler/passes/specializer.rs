@@ -349,6 +349,21 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
         Self(val)
     }
 
+    fn mk_tuple(
+        elems: Vec<Self>,
+        ctx: &mut SpecializationState,
+        elem_types: &[Type<ConstantTaint>],
+    ) -> Self {
+        let a = elems.into_iter().map(|v| v.0).collect::<Vec<_>>();
+        let val = ctx.function.push_mk_tuple(
+            ctx.function.get_entry_id(),
+            a.clone(),
+            elem_types.to_vec(),
+        );
+        ctx.const_vals.insert(val, ConstVal::Tuple(a));
+        Self(val)
+    }
+
     fn alloc(_ctx: &mut SpecializationState) -> Self {
         todo!()
     }

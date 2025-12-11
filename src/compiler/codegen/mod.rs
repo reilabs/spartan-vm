@@ -6,8 +6,7 @@ use crate::{
         flow_analysis::{CFG, FlowAnalysis},
         ir::r#type::{Type, TypeExpr},
         ssa::{
-            self, BinaryArithOpKind, Block, BlockId, CmpKind, Const, DMatrix, Endianness, Function,
-            FunctionId, LookupTarget, MemOp, Radix, SSA, Terminator, ValueId,
+            self, BinaryArithOpKind, Block, BlockId, CmpKind, Const, DMatrix, Endianness, Function, FunctionId, LookupTarget, MemOp, Radix, SSA, Terminator, TupleIdx, ValueId
         },
         taint_analysis::ConstantTaint,
     },
@@ -71,6 +70,7 @@ impl FrameLayouter {
             TypeExpr::Array(_, _) => 1, // Ptr
             TypeExpr::Slice(_) => 1,    // Ptr
             TypeExpr::BoxedField => 1,  // Ptr
+            TypeExpr::Tuple(_) => 1, // Ptr
             _ => todo!(),
         }
     }
@@ -573,6 +573,25 @@ impl CodeGen {
                         stride: layouter
                             .type_size(&type_info.get_value_type(*arr).get_array_element()),
                     });
+                }
+                ssa::OpCode::TupleProj {
+                    result: r,
+                    tuple: t,
+                    idx,
+                } => {
+                    if let TupleIdx::Static(i) = idx {
+                        let res = layouter.alloc_value(*r, &type_info.get_value_type(*r));
+                        emitter.push_op(bytecode::OpCode::TupleProj {
+                            res,
+                            tuple: layouter.get_value(*t),
+                            index: *i as u64,
+                            child_sizes: type_info.get_value_type(*t).get_tuple_elements().iter().map(
+                                |elem_type| layouter.type_size(elem_type)    
+                            ).collect(),
+                        });
+                    } else {
+                        panic!("Dynamic tuple indexing should not appear here");
+                    }
                 }
                 ssa::OpCode::ArraySet {
                     result: r,

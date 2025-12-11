@@ -59,6 +59,11 @@ where
         seq_type: SeqType,
         elem_type: &Type<Taint>,
     ) -> Self;
+    fn mk_tuple(
+        elems: Vec<Self>,
+        ctx: &mut Context,
+        elem_types: &[Type<Taint>],
+    ) -> Self;
     fn alloc(ctx: &mut Context) -> Self;
     fn ptr_write(&self, val: &Self, ctx: &mut Context);
     fn ptr_read(&self, out_type: &Type<Taint>, ctx: &mut Context) -> Self;
@@ -532,6 +537,17 @@ impl SymbolicExecutor {
                             panic!("Dynamic tuple indexing should not appear here");
                         }
                     },
+                    crate::compiler::ssa::OpCode::MkTuple { 
+                        result, 
+                        elems, 
+                        element_types,
+                    } => {
+                        let elems = elems
+                            .iter()
+                            .map(|id| scope[id.0 as usize].as_ref().unwrap().clone())
+                            .collect::<Vec<_>>();
+                        scope[result.0 as usize] = Some(V::mk_tuple(elems, ctx, element_types));
+                    }
                     crate::compiler::ssa::OpCode::Todo {
                         payload,
                         results,

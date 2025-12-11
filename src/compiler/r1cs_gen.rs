@@ -521,6 +521,14 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
         Value::mk_array(a)
     }
 
+    fn mk_tuple(
+        elems: Vec<Self>,
+        _ctx: &mut R1CGen,
+        _elem_types: &[Type<V>],
+    ) -> Self {
+        Value::mk_array(elems)
+    }
+
     fn alloc(_ctx: &mut R1CGen) -> Self {
         Value::Ptr(Rc::new(RefCell::new(Value::Invalid)))
     }

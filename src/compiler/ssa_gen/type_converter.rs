@@ -32,7 +32,7 @@ impl TypeConverter {
                     let converted_types: Vec<Type<Empty>> = element_types.iter()
                         .map(|t| self.convert_type(t))
                         .collect();
-                    Type::array_of(Type::tuple(converted_types, Empty), (*size).try_into().unwrap(), Empty)
+                    Type::array_of(Type::tuple_of(converted_types, Empty), (*size).try_into().unwrap(), Empty)
                 };
                 tp
             }

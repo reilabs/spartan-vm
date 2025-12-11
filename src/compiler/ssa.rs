@@ -715,6 +715,26 @@ impl<V: Clone> Function<V> {
         value_id
     }
 
+    pub fn push_mk_tuple(
+        &mut self,
+        block_id: BlockId,
+        elements: Vec<ValueId>,
+        types: Vec<Type<V>>,
+    ) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::MkTuple {
+                result: value_id,
+                elems: elements,
+                element_types: types,
+            });
+        value_id
+    }
+
     pub fn push_cast(&mut self, block_id: BlockId, value: ValueId, target: CastTarget) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
@@ -1785,11 +1805,17 @@ impl<V: Display + Clone> OpCode<V> {
                 }
             },
             OpCode::MkTuple { 
-                result: _, 
-                elems: _, 
-                element_types: _ 
+                result, 
+                elems, 
+                element_types: _, 
             } => {
-                panic!("MkTuple only appears after freshwitness")
+                let elems_str = elems.iter().map(|v| format!("v{}", v.0)).join(", ");
+                format!(
+                    "v{}{} = ({})",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    elems_str
+                )
             }
             OpCode::Todo { payload, results, result_types } => {
                 let results_str = results.iter()
@@ -1987,6 +2013,15 @@ impl<V> OpCode<V> {
                 tuple: t,
                 idx: _,
             } => vec![r, t].into_iter(),
+            OpCode::MkTuple { 
+                result: r, 
+                elems: e, 
+                element_types: _,
+            } => {
+                let mut ret_vec = vec![r];
+                ret_vec.extend(e);
+                ret_vec.into_iter()
+            }
             Self::Todo { results, .. } => {
                 let ret_vec: Vec<&mut ValueId> = results.iter_mut().collect();
                 ret_vec.into_iter()
@@ -2166,6 +2201,13 @@ impl<V> OpCode<V> {
                 tuple,
                 idx: _,
             } => vec![tuple].into_iter(),
+            OpCode::MkTuple { 
+                result: _, 
+                elems: _, 
+                element_types: _,
+            } => {
+                panic!("MkTuple only appears after freshwitness")
+            }
             Self::Todo { .. } => vec![].into_iter(),
         }
     }
@@ -2347,6 +2389,11 @@ impl<V> OpCode<V> {
                     panic!("Tuple index must be static")
                 }
             },
+            OpCode::MkTuple { 
+                result: _, 
+                elems: e, 
+                element_types: _,
+            } => e.iter().collect::<Vec<_>>().into_iter(),
             Self::Todo { .. } => vec![].into_iter(),
         }
     }
@@ -2440,6 +2487,11 @@ impl<V> OpCode<V> {
                 result: r,
                 tuple: _,
                 idx: _,
+            }
+            | Self::MkTuple { 
+                result: r, 
+                elems: _, 
+                element_types: _,
             } => vec![r].into_iter(),
             Self::WriteWitness {
                 result: r,
@@ -2491,7 +2543,6 @@ impl<V> OpCode<V> {
                 result_type: _,
             } => vec![r].into_iter(),
             Self::Lookup { .. } | Self::DLookup { .. } => vec![].into_iter(),
-            
             Self::Todo { results, .. } => {
                 let ret_vec: Vec<&ValueId> = results.iter().collect();
                 ret_vec.into_iter()

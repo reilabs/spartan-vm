@@ -658,6 +658,21 @@ impl symbolic_executor::Value<CostAnalysis, ConstantTaint> for SpecSplitValue {
         }
     }
 
+    fn mk_tuple (
+        values: Vec<SpecSplitValue>,
+        _ctx: &mut CostAnalysis,
+        _elem_types: &[Type<ConstantTaint>],
+    ) -> SpecSplitValue {
+        let (uns, spec) = values
+            .into_iter()
+            .map(|v| (v.unspecialized, v.specialized))
+            .unzip();
+        SpecSplitValue {
+            unspecialized: Value::Tuple(uns),
+            specialized: Value::Tuple(spec),
+        }
+    }
+
     fn assert_r1c(
         a: &SpecSplitValue,
         b: &SpecSplitValue,

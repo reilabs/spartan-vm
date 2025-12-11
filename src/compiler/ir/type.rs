@@ -171,6 +171,13 @@ impl<V: Clone> Type<V> {
             _ => panic!("Type is not a tuple"),
         }
     }
+
+    pub fn get_tuple_elements(&self) -> &Vec<Self> {
+        match &self.expr {
+            TypeExpr::Tuple(elements) => elements,
+            _ => panic!("Type is not a tuple"),
+        }
+    }
 }
 
 impl<V> Type<V> {
@@ -231,7 +238,7 @@ impl<V> Type<V> {
         }
     }
     
-    pub fn tuple(types: Vec<Self>, annotation: V) -> Self {
+    pub fn tuple_of(types: Vec<Self>, annotation: V) -> Self {
         Type {
             expr: TypeExpr::Tuple(types),
             annotation,

@@ -161,8 +161,39 @@ impl RCInsertion {
                         }
                         new_instructions.push(instruction.clone());
                     }
-                    OpCode::TupleProj { .. } => {
-                        todo!("TupleProj not implemented")
+                    OpCode::TupleProj { 
+                        result, tuple, idx: _,
+                    } => {
+                        if !currently_live.contains(tuple) {
+                            // The tuple dies here, so we drop it _after_ the read.
+                            new_instructions.push(OpCode::MemOp {
+                                kind: MemOp::Drop,
+                                value: *tuple
+                            });
+                        }
+                        if self.needs_rc(type_info, result) {
+                            if currently_live.contains(result) {
+                                // The result gets a bump to the RC counter, because
+                                // it's now both accessed here and in the array.
+                                new_instructions.push(OpCode::MemOp {
+                                    kind: MemOp::Bump(1),
+                                    value: *result
+                                });
+                            } else {
+                                panic!(
+                                    "ICE: Result of TupleProj (V{} in block {}) is not live. This is a bug.",
+                                    result.0, block_id.0
+                                )
+                            }
+                        } else {
+                            trace!(
+                                "ArrayGet: result={} of type {:?} does not need RC",
+                                result.0,
+                                type_info.get_value_type(*result)
+                            );
+                        }
+                        new_instructions.push(instruction.clone());
+                        currently_live.insert(*tuple);
                     }
                     // These need to mark their inputs as live, but do not need to bump RCs
                     OpCode::AssertEq { lhs: _, rhs: _ }
@@ -560,7 +591,10 @@ impl RCInsertion {
             TypeExpr::Field => false,
             TypeExpr::U(_) => false,
             TypeExpr::BoxedField => true,
-            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
+            TypeExpr::Tuple(elements) => {
+                // Tuple needs RC if ANY of its elements need RC
+                elements.iter().any(|elem| self.type_needs_rc(elem))
+            }
         }
     }
 }

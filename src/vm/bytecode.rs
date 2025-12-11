@@ -670,6 +670,24 @@ mod def {
     }
 
     #[opcode]
+    fn tuple_proj(
+        #[out] res: *mut u64,
+        #[frame] tuple: BoxedValue,
+        index: u64,
+        child_sizes: &[usize],
+        vm: &mut VM,
+    ) {
+        // println!(
+        //     "array_get: array={:?} index={} stride={}",
+        //     array.0, index, stride
+        // );
+        let src = tuple.tuple_idx(index as usize, child_sizes);
+        unsafe {
+            ptr::copy_nonoverlapping(src, res, child_sizes[index as usize]);
+        }
+    }
+
+    #[opcode]
     #[inline(never)]
     fn array_set(
         #[out] res: *mut BoxedValue,
