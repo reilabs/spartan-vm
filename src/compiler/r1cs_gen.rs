@@ -756,20 +756,25 @@ impl R1CGen {
         for value_type in params {
             main_params.push(self.initialize_main_input(&value_type));
         }
+
         let executor = SymbolicExecutor::new();
         executor.run(ssa, type_info, entry_point, main_params, self);
     }
+
     pub fn get_r1cs(self) -> Vec<R1C> {
         self.constraints
     }
+
     pub fn get_witness_size(&self) -> usize {
         self.next_witness
     }
+
     fn next_witness(&mut self) -> usize {
         let result = self.next_witness;
         self.next_witness += 1;
         result
     }
+
     fn initialize_main_input<V: Clone>(&mut self, tp: &Type<V>) -> Value {
         match &tp.expr {
             TypeExpr::U(_) => Value::LC(vec![(self.next_witness(), ark_bn254::Fr::ONE)]),
@@ -784,6 +789,7 @@ impl R1CGen {
             _ => panic!("unexpected main params"),
         }
     }
+
     pub fn seal(self) -> R1CS {
         // Algebraic section
         let mut witness_layout = WitnessLayout {
@@ -799,6 +805,7 @@ impl R1CGen {
             lookups_data_size: 0,
         };
         let mut result = self.constraints;
+
         // multiplicities init + compute the needed challenges
         struct TableInfo {
             multiplicities_witness_off: usize,
@@ -833,6 +840,7 @@ impl R1CGen {
                 }
             }
         }
+
         if table_infos.is_empty() {
             return R1CS {
                 witness_layout,
@@ -840,6 +848,7 @@ impl R1CGen {
                 constraints: result,
             };
         }
+
         // challenges init
         let alpha = witness_layout.challenges_end();
         witness_layout.challenges_size += 1;
@@ -850,6 +859,7 @@ impl R1CGen {
         } else {
             usize::MAX // hoping this crashes soon if used
         };
+
         // tables contents init
         for table_info in table_infos.iter_mut() {
             match &table_info.table {
@@ -912,12 +922,15 @@ impl R1CGen {
                 }
             }
         }
+
         constraints_layout.tables_data_size = result.len() - constraints_layout.algebraic_size;
+
         // lookups init
         for lookup in self.lookups.into_iter() {
             // if lookup.elements.len() >= 2 {
             //     todo!("wide tables");
             // }
+
             let y_wit = match lookup.elements.len() {
                 1 => {
                     let y = witness_layout.next_lookups_data();
@@ -959,12 +972,15 @@ impl R1CGen {
                 }
                 _ => panic!("unsupported lookup width {}", lookup.elements.len()),
             };
+
             result[table_infos[lookup.table_id].sum_constraint_idx]
                 .c
                 .push((y_wit, ark_bn254::Fr::ONE));
         }
+
         constraints_layout.lookups_data_size =
             result.len() - constraints_layout.algebraic_size - constraints_layout.tables_data_size;
+
         return R1CS {
             witness_layout,
             constraints_layout,
@@ -972,6 +988,7 @@ impl R1CGen {
         };
     }
 }
+
 impl R1CS {
     pub fn compute_derivatives(
         &self,
@@ -1020,11 +1037,13 @@ impl R1CS {
                 .iter()
                 .map(|(i, c)| c * &witness[*i])
                 .sum::<ark_bn254::Fr>();
+
             let bv = r1c
                 .b
                 .iter()
                 .map(|(i, c)| c * &witness[*i])
                 .sum::<ark_bn254::Fr>();
+
             let cv = r1c
                 .c
                 .iter()
