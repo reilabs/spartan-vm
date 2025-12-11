@@ -1,4 +1,4 @@
-use std::{fs, str::FromStr,path::{Path, PathBuf}};
+use std::{fs, path::{Path, PathBuf}};
 
 use crate::{
     Project,
@@ -12,17 +12,11 @@ use crate::{
 #[derive(Debug)]
 pub enum ApiError {
     Project(crate::Error),
-
     Driver { inner: DriverError },
-
     Io(std::io::Error),
-
     UnsupportedInputExt(String),
-
     InputsParse(String),
-
     InputsEncode(String),
-
     Artifact(ArtifactError),
 }
 
@@ -48,7 +42,6 @@ impl From<ArtifactError> for ApiError {
 
 impl std::error::Error for ApiError {}
 
-/// Build a `Driver` and compile the Noir project all the way to R1CS.
 pub fn compile_to_r1cs(root: PathBuf, draw_graphs: bool) -> Result<(Driver, R1CS), ApiError> {
     let project = Project::new(root).map_err(ApiError::Project)?;
     let mut driver = Driver::new(project, draw_graphs);
@@ -59,10 +52,7 @@ pub fn compile_to_r1cs(root: PathBuf, draw_graphs: bool) -> Result<(Driver, R1CS
     Ok((driver, r1cs))
 }
 
-/// Compile a Noir project to serializable artifacts.
-///
-/// This function performs the full compilation pipeline and returns artifacts
-/// that can be serialized to disk for later execution.
+
 pub fn compile_to_artifacts(root: PathBuf, draw_graphs: bool) -> Result<CompiledArtifacts, ApiError> {
     let (driver, r1cs) = compile_to_r1cs(root, draw_graphs)?;
     let witgen_binary = compile_witgen(&driver)?;
@@ -70,18 +60,15 @@ pub fn compile_to_artifacts(root: PathBuf, draw_graphs: bool) -> Result<Compiled
     Ok(CompiledArtifacts::new(r1cs, witgen_binary, ad_binary))
 }
 
-/// Save compiled artifacts to a file.
 pub fn save_artifacts<P: AsRef<Path>>(artifacts: &CompiledArtifacts, path: P) -> Result<(), ApiError> {
     artifacts.save_to_file(path)?;
     Ok(())
 }
 
-/// Load compiled artifacts from a file.
 pub fn load_artifacts<P: AsRef<Path>>(path: P) -> Result<CompiledArtifacts, ApiError> {
     Ok(CompiledArtifacts::load_from_file(path)?)
 }
 
-/// Read and encode `Prover.toml` inputs using the driver's ABI.
 pub fn read_prover_inputs(root: &Path, abi: &noirc_abi::Abi) -> Result<Vec<Field>, ApiError> {
     use noirc_abi::input_parser::Format;
 
@@ -103,7 +90,6 @@ pub fn read_prover_inputs(root: &Path, abi: &noirc_abi::Abi) -> Result<Vec<Field
     Ok(params)
 }
 
-/// Execute witness generation given a compiled witgen binary.
 pub fn run_witgen_from_binary(
     binary: &mut [u64],
     r1cs: &R1CS,
@@ -112,17 +98,14 @@ pub fn run_witgen_from_binary(
     interpreter::run(binary, r1cs.witness_layout, r1cs.constraints_layout, params)
 }
 
-/// Compile the witgen VM from the current driver state.
 pub fn compile_witgen(driver: &Driver) -> Result<Vec<u64>, ApiError> {
     Ok(driver.compile_witgen().map_err(|e| ApiError::Driver { inner: e })?)
 }
 
-/// Compile the AD VM from the current driver state.
 pub fn compile_ad(driver: &Driver) -> Result<Vec<u64>, ApiError> {
     Ok(driver.compile_ad().map_err(|e| ApiError::Driver { inner: e })?)
 }
 
-/// Execute the AD run given a compiled AD binary and coeffs.
 pub fn run_ad_from_binary(
     binary: &mut [u64],
     r1cs: &R1CS,
@@ -131,16 +114,14 @@ pub fn run_ad_from_binary(
     interpreter::run_ad(binary, coeffs, r1cs.witness_layout, r1cs.constraints_layout)
 }
 
-/// Convenience: generate random AD coeffs sized to constraints.
 pub fn random_ad_coeffs(r1cs: &R1CS) -> Vec<Field> {
     use ark_ff::UniformRand as _;
     let mut rng = rand::thread_rng();
     (0..r1cs.constraints.len())
-        .map(|_| crate::compiler::Field::rand(&mut rng))
+        .map(|_| ark_bn254::Fr::rand(&mut rng))
         .collect()
 }
 
-/// Convenience: check witgen output against R1CS.
 pub fn check_witgen(r1cs: &R1CS, res: &interpreter::WitgenResult) -> bool {
     r1cs.check_witgen_output(
         &res.out_wit_pre_comm,
@@ -151,12 +132,10 @@ pub fn check_witgen(r1cs: &R1CS, res: &interpreter::WitgenResult) -> bool {
     )
 }
 
-/// Convenience: check AD output against R1CS and coeffs.
 pub fn check_ad(r1cs: &R1CS, coeffs: &[Field], a: &[Field], b: &[Field], c: &[Field]) -> bool {
     r1cs.check_ad_output(coeffs, a, b, c)
 }
 
-/// Where all debug files are written.
 pub fn debug_output_dir(driver: &Driver) -> PathBuf {
     driver.get_debug_output_dir()
 }

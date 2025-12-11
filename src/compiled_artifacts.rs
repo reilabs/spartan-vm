@@ -37,7 +37,6 @@ impl From<io::Error> for ArtifactError {
 }
 
 impl CompiledArtifacts {
-    /// Create new compiled artifacts from the compilation outputs.
     pub fn new(r1cs: R1CS, witgen_binary: Vec<u64>, ad_binary: Vec<u64>) -> Self {
         Self {
             r1cs,
