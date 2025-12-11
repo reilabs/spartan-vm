@@ -3239,7 +3239,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bceb57dc07c92cdae60f5b27b3fa92ecaaa42fe36c55e22dbfb0b44893e0b1f7"
 
 [[package]]
-name = "spartan_vm"
+name = "spartan-vm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
