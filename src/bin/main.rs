@@ -74,7 +74,6 @@ pub fn run_execute(
     
     let r1cs = &artifacts.r1cs;
     
-    // Determine output directory
     let debug_dir = output_dir
         .cloned()
         .unwrap_or_else(|| args.root.join("spartan_vm_debug"));

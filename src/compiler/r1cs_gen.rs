@@ -48,7 +48,7 @@ mod lc_serde {
 //     LookupValueInverseAux(usize),
 // }
 
-type LC = Vec<(usize, ark_bn254::Fr)>;
+type LC = Vec<(usize, crate::compiler::Field)>;
 
 #[derive(Clone, Debug)]
 struct ArrayData {
@@ -724,6 +724,7 @@ impl R1CGen {
             lookups: vec![],
         }
     }
+
     pub fn verify(&self, witness: &[ark_bn254::Fr]) -> bool {
         for (i, r1c) in self.constraints.iter().enumerate() {
             let a = r1c
@@ -748,6 +749,7 @@ impl R1CGen {
         }
         return true;
     }
+
     #[instrument(skip_all, name = "R1CGen::run")]
     pub fn run<V: Clone + CommutativeMonoid>(&mut self, ssa: &SSA<V>, type_info: &TypeInfo<V>) {
         let entry_point = ssa.get_main_id();
