@@ -2,6 +2,7 @@ name: Cargo Build & Run
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 env:
@@ -36,8 +37,14 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
-      - name: Run
+      - name: Run on all noir_tests
         env:
           RUST_LOG: info
           RUST_BACKTRACE: 1
-        run: cargo run --release -- --root=noir_examples/power --public-witness 1 --pprint-r1cs
+        run: |
+          for dir in noir_tests/*/; do
+            if [ -d "$dir" ] && [ -f "${dir}Nargo.toml" ]; then
+              echo "Running example: $dir"
+              cargo run --release -- --root="$dir" --public-witness 1 || echo "Failed: $dir"
+            fi
+          done

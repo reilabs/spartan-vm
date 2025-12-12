@@ -6,6 +6,7 @@ use std::{
 };
 
 use ark_ff::{AdditiveGroup, BigInt, Field as _, Fp, PrimeField as _};
+use noirc_abi::input_parser::InputValue;
 use tracing::instrument;
 
 use crate::{
@@ -14,7 +15,7 @@ use crate::{
         r1cs_gen::{ConstraintsLayout, WitnessLayout},
     },
     vm::{
-        array::BoxedValue,
+        array::{BoxedLayout, BoxedValue},
         bytecode::{self, AllocationInstrumenter, AllocationType, OpCode, VM},
     },
 };
@@ -178,15 +179,16 @@ pub fn run(
     program: &[u64],
     witness_layout: WitnessLayout,
     constraints_layout: ConstraintsLayout,
-    inputs: &[Field],
+    ordered_inputs: &[InputValue],
 ) -> WitgenResult {
     let mut out_a = vec![Field::ZERO; constraints_layout.size()];
     let mut out_b = vec![Field::ZERO; constraints_layout.size()];
     let mut out_c = vec![Field::ZERO; constraints_layout.size()];
     let mut out_wit_pre_comm = vec![Field::ZERO; witness_layout.pre_commitment_size()];
     out_wit_pre_comm[0] = Field::ONE;
-    for i in 0..inputs.len() {
-        out_wit_pre_comm[1 + i] = inputs[i];
+    let flat_inputs = flatten_param_vec(ordered_inputs);
+    for i in 0..flat_inputs.len() {
+        out_wit_pre_comm[1 + i] = flat_inputs[i];
     }
     let mut out_wit_post_comm = vec![Field::ZERO; witness_layout.post_commitment_size()];
     let mut vm = VM::new_witgen(
@@ -196,7 +198,7 @@ pub fn run(
         unsafe {
             out_wit_pre_comm
                 .as_mut_ptr()
-                .offset(1 + inputs.len() as isize)
+                .offset(1 + flat_inputs.len() as isize)
         },
         unsafe {
             out_wit_pre_comm
@@ -224,8 +226,12 @@ pub fn run(
         },
         &mut vm,
     );
-    for (i, el) in inputs.iter().enumerate() {
-        frame.write_field(2 + (i as isize) * 4, *el);
+
+    let mut current_offset = 2 as isize;
+    for (_, el) in ordered_inputs.iter().enumerate() {
+        unsafe {
+            current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)
+        };
     }
 
     let mut program = program.to_vec();
@@ -377,4 +383,81 @@ pub fn run_ad(
     dispatch(pc, frame, &mut vm);
 
     (out_da, out_db, out_dc, vm.allocation_instrumenter)
+}
+
+fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
+    match el {
+        InputValue::Field(field_element) => {
+            unsafe {
+                *(ptr as *mut Field) = field_element.into_repr();
+            }
+            return 4;
+        }
+        InputValue::Vec(vec) => {
+            if vec.len() == 0 {
+                let layout = BoxedLayout::array(0, false);
+                let array = BoxedValue::alloc(layout, vm);
+                unsafe {
+                    *(ptr as *mut BoxedValue) = array;
+                }
+            } else {
+                match &vec[0] {
+                    InputValue::Field(_) => {
+                        let layout = BoxedLayout::array(vec.len() * 4, false);
+                        let array = BoxedValue::alloc(layout, vm);
+
+                        for (elem_ind, input) in vec.iter().enumerate() {
+                            let ptr = array.array_idx(elem_ind, 4);
+                            write_input_value(ptr, input, vm);
+                        }
+                        unsafe {
+                            *(ptr as *mut BoxedValue) = array;
+                        }
+                    }
+                    InputValue::Vec(_) => {
+                        let layout = BoxedLayout::array(vec.len(), true);
+                        let array = BoxedValue::alloc(layout, vm);
+
+                        for (elem_ind, input) in vec.iter().enumerate() {
+                            let ptr = array.array_idx(elem_ind, 1);
+                            write_input_value(ptr, input, vm);
+                        }
+                        unsafe {
+                            *(ptr as *mut BoxedValue) = array;
+                        }
+                    }
+                    _ => panic!("Only field elements are supported in arrays for now"),
+                }
+            }
+            return 1;
+        }
+        _ => panic!(
+            "Unsupported input value type. We only support Field and nested Vecs of Fields for now."
+        ),
+    }
+}
+
+fn flatten_param_vec(vec: &[InputValue]) -> Vec<Field> {
+    let mut encoded_value = Vec::new();
+    for elem in vec {
+        encoded_value.extend(flatten_params(elem));
+    }
+    encoded_value
+}
+
+fn flatten_params(value: &InputValue) -> Vec<Field> {
+    let mut encoded_value = Vec::new();
+    match value {
+        InputValue::Field(elem) => encoded_value.push(elem.into_repr()),
+
+        InputValue::Vec(vec_elements) => {
+            for elem in vec_elements {
+                encoded_value.extend(flatten_params(elem));
+            }
+        }
+        _ => panic!(
+            "Unsupported input value type. We only support Field and nested Vecs of Fields for now."
+        ),
+    }
+    encoded_value
 }

@@ -10,6 +10,7 @@ use crate::{
     driver::{Driver, Error as DriverError},
     vm::interpreter,
 };
+use noirc_abi::input_parser::{Format, InputValue};
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -86,9 +87,7 @@ pub fn load_artifacts<P: AsRef<Path>>(path: P) -> Result<CompiledArtifacts, ApiE
     Ok(CompiledArtifacts::load_from_file(path)?)
 }
 
-pub fn read_prover_inputs(root: &Path, abi: &noirc_abi::Abi) -> Result<Vec<Field>, ApiError> {
-    use noirc_abi::input_parser::Format;
-
+pub fn read_prover_inputs(root: &Path, abi: &noirc_abi::Abi) -> Result<Vec<InputValue>, ApiError> {
     let file_path = root.join("Prover.toml");
     let ext = file_path
         .extension()
@@ -100,23 +99,16 @@ pub fn read_prover_inputs(root: &Path, abi: &noirc_abi::Abi) -> Result<Vec<Field
     };
 
     let inputs_src = fs::read_to_string(&file_path).map_err(ApiError::Io)?;
-    let parsed = format
-        .parse(&inputs_src, abi)
-        .map_err(|e| ApiError::InputsParse(e.to_string()))?;
-    let params: Vec<Field> = abi
-        .encode(&parsed, None)
-        .map_err(|e| ApiError::InputsEncode(e.to_string()))?
-        .into_iter()
-        .map(|(_, v)| v.into_repr())
-        .collect();
+    let inputs = format.parse(&inputs_src, abi).unwrap();
+    let ordered_params = ordered_params(abi, &inputs);
 
-    Ok(params)
+    Ok(ordered_params)
 }
 
 pub fn run_witgen_from_binary(
     binary: &mut [u64],
     r1cs: &R1CS,
-    params: &[Field],
+    params: &[InputValue],
 ) -> interpreter::WitgenResult {
     interpreter::run(binary, r1cs.witness_layout, r1cs.constraints_layout, params)
 }
@@ -170,4 +162,18 @@ pub fn check_ad(r1cs: &R1CS, coeffs: &[Field], a: &[Field], b: &[Field], c: &[Fi
 
 pub fn debug_output_dir(driver: &Driver) -> PathBuf {
     driver.get_debug_output_dir()
+}
+
+fn ordered_params(
+    abi: &noirc_abi::Abi,
+    unordered_params: &std::collections::BTreeMap<String, InputValue>,
+) -> Vec<InputValue> {
+    let mut ordered_params = Vec::new();
+    for param_mame in abi.parameter_names() {
+        let param = unordered_params
+            .get(param_mame)
+            .expect("Parameter not found in unordered params");
+        ordered_params.push(param.clone());
+    }
+    ordered_params
 }

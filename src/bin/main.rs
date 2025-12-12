@@ -85,7 +85,6 @@ pub fn run_execute(
     // For execute mode, we still need the prover inputs from the project
     // We need to read the ABI from somewhere - for now, require the project root
     let (driver, _) = api::compile_to_r1cs(args.root.clone(), false)?;
-
     let params = api::read_prover_inputs(&args.root, driver.abi())?;
 
     let witgen_result = api::run_witgen_from_binary(&mut artifacts.witgen_binary, r1cs, &params);
