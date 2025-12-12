@@ -484,6 +484,7 @@ mod def {
 
     #[opcode]
     fn mov_const(#[out] res: *mut u64, val: u64) {
+        println!("moving const");
         unsafe {
             *res = val;
         }
@@ -663,6 +664,7 @@ mod def {
         //     "array_get: array={:?} index={} stride={}",
         //     array.0, index, stride
         // );
+        println!("getting array");
         let src = array.array_idx(index as usize, stride);
         unsafe {
             ptr::copy_nonoverlapping(src, res, stride);
@@ -676,11 +678,13 @@ mod def {
         index: u64,
         child_sizes: &[usize],
         vm: &mut VM,
+        dummy: u64,
     ) {
         // println!(
         //     "array_get: array={:?} index={} stride={}",
         //     array.0, index, stride
         // );
+        println!("{:?} {}", tuple.0, index);
         let src = tuple.tuple_idx(index as usize, child_sizes);
         unsafe {
             ptr::copy_nonoverlapping(src, res, child_sizes[index as usize]);
@@ -733,6 +737,7 @@ mod def {
     #[inline(never)]
     fn dec_rc(#[frame] array: BoxedValue, vm: &mut VM) {
         // println!("dec_array_rc_intro");
+        println!("decreasing array rc");
         array.dec_rc(vm);
         // println!("dec_array_rc_outro");
     }

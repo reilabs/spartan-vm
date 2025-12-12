@@ -423,6 +423,16 @@ fn write_input_value(ptr: *mut u64, el: &InputValueOrdered, vm: &mut VM) -> isiz
                         }
                         unsafe{*(ptr as *mut BoxedValue) = array;}
                     }
+                    InputValueOrdered::Struct(_) => {
+                        let layout = BoxedLayout::array(vec.len(), true);
+                        let array = BoxedValue::alloc(layout, vm);
+                        
+                        for (elem_ind, input) in vec.iter().enumerate() {
+                            let ptr = array.array_idx(elem_ind, 1);
+                            write_input_value(ptr, input, vm);
+                        }
+                        unsafe{*(ptr as *mut BoxedValue) = array;}
+                    }
                     _ => panic!("Only field elements are supported in arrays for now"),
                 }
             }

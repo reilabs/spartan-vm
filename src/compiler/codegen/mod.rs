@@ -588,6 +588,7 @@ impl CodeGen {
                             child_sizes: type_info.get_value_type(*t).get_tuple_elements().iter().map(
                                 |elem_type| layouter.type_size(elem_type)    
                             ).collect(),
+                            dummy: 1,
                         });
                     } else {
                         panic!("Dynamic tuple indexing should not appear here");

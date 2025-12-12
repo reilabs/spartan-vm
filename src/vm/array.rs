@@ -288,6 +288,7 @@ impl BoxedValue {
             vm.allocation_instrumenter
                 .free(AllocationType::Heap, arr_size);
         }
+        println!("Freed");
     }
 
     // #[inline(always)]
@@ -295,29 +296,41 @@ impl BoxedValue {
         let mut queue = VecDeque::<BoxedValue>::new();
         queue.push_back(*self);
         while let Some(item) = queue.pop_front() {
+            println!("Starting");
             let rc = item.rc();
-            // println!("dec_rc: val={:?} rc={} ({:?})", item.0, unsafe { *rc }, item.layout().data_type());
-            // println!("dec_rc: array={:?} rc={}", item.0, unsafe { *rc });
+            println!("dec_rc: val={:?} rc={} ({:?})", item.0, unsafe { *rc }, item.layout().data_type());
+            println!("dec_rc: array={:?} rc={}", item.0, unsafe { *rc });
             let rc_val = unsafe { *rc };
             if rc_val == 1 {
+                println!("Here");
                 let layout = item.layout();
                 match layout.data_type() {
-                    DataType::PrimArray => item.free(vm),
+                    DataType::PrimArray => {
+                        println!("freeing prim array");
+                        item.free(vm);
+                    }
                     DataType::BoxedArray => {
-                        // println!("freeing boxed array");
+                        println!("freeing boxed array");
                         for i in 0..layout.array_size() {
+                            println!("I: {:?}", i);
                             let elem = unsafe { *(item.array_idx(i, 1) as *mut BoxedValue) };
                             queue.push_back(elem);
                         }
+                        println!("Here 3");
                         item.free(vm);
+                        println!("Here 4");
+
                     }
                     DataType::ADConst => {
+                        println!("freeing ad const");
                         item.free(vm);
                     }
                     DataType::ADWitness => {
+                        println!("freeing ad witness");
                         item.free(vm);
                     }
                     DataType::ADSum => {
+                        println!("freeing ad sum");
                         let ad_sum = unsafe { *item.as_ad_sum() };
                         ad_sum.a.bump_da(ad_sum.da, vm);
                         ad_sum.a.bump_db(ad_sum.db, vm);
@@ -330,6 +343,7 @@ impl BoxedValue {
                         item.free(vm);
                     }
                     DataType::ADMulConst => {
+                        println!("freeing ad mul const");
                         let ad_mul_const = unsafe { *item.as_mul_const() };
                         ad_mul_const
                             .value
@@ -344,13 +358,17 @@ impl BoxedValue {
                         item.free(vm);
                     }
                 }
+                println!("Here6");
             } else {
+                println!("Here3");
                 unsafe {
                     *rc -= 1;
                 }
             }
+            println!("Here7");
         }
-
+        
+        println!("Here2");
         // let rc = self.rc();
         // let rc_val = unsafe { *rc };
         // // println!("dec_array_rc from {} at {:?}", unsafe { *rc }, self.0);
