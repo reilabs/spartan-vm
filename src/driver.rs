@@ -101,7 +101,12 @@ impl Driver {
             noirc_frontend::monomorphization::monomorphize(main, &mut context.def_interner, false)
                 .unwrap();
 
-        self.abi = Some(noirc_driver::gen_abi(&context, &main, program.return_visibility(), BTreeMap::default()));
+        self.abi = Some(noirc_driver::gen_abi(
+            &context,
+            &main,
+            program.return_visibility(),
+            BTreeMap::default(),
+        ));
 
         let ssa = noirc_evaluator::ssa::SsaBuilder::from_program(
             program,

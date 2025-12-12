@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
-    analysis::value_definitions::ValueDefinition, ir::r#type::TypeExpr, pass_manager::{DataPoint, Pass}, ssa::{CastTarget, CmpKind, OpCode}, taint_analysis::ConstantTaint
+    analysis::value_definitions::ValueDefinition,
+    ir::r#type::TypeExpr,
+    pass_manager::{DataPoint, Pass},
+    ssa::{CastTarget, CmpKind, OpCode},
+    taint_analysis::ConstantTaint,
 };
 
 pub struct ArithmeticSimplifier {}
@@ -12,7 +16,11 @@ impl Pass<ConstantTaint> for ArithmeticSimplifier {
         ssa: &mut crate::compiler::ssa::SSA<ConstantTaint>,
         pass_manager: &crate::compiler::pass_manager::PassManager<ConstantTaint>,
     ) {
-        self.do_run(ssa, pass_manager.get_type_info(), pass_manager.get_value_definitions());
+        self.do_run(
+            ssa,
+            pass_manager.get_type_info(),
+            pass_manager.get_value_definitions(),
+        );
     }
 
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
@@ -48,10 +56,21 @@ impl ArithmeticSimplifier {
                 let mut new_instructions = Vec::new();
                 for instruction in block.take_instructions().into_iter() {
                     match instruction {
-                        OpCode::Rangecheck { value: v, max_bits: bits } => {
+                        OpCode::Rangecheck {
+                            value: v,
+                            max_bits: bits,
+                        } => {
                             let v_definition = value_definitions.get_definition(v);
                             match v_definition {
-                                ValueDefinition::Instruction(_, _, OpCode::Cast { result: _, value: v, target: CastTarget::Field }) => {
+                                ValueDefinition::Instruction(
+                                    _,
+                                    _,
+                                    OpCode::Cast {
+                                        result: _,
+                                        value: v,
+                                        target: CastTarget::Field,
+                                    },
+                                ) => {
                                     let v_type = type_info.get_value_type(*v);
                                     if !matches!(v_type.annotation, ConstantTaint::Pure) {
                                         panic!("Rangecheck on impure value");
@@ -60,22 +79,21 @@ impl ArithmeticSimplifier {
                                         TypeExpr::U(s) => {
                                             let cst = function.push_u_const(*s, 1 << bits);
                                             let r = function.fresh_value();
-                                            let t = function.push_u_const(1,1);
+                                            let t = function.push_u_const(1, 1);
                                             new_instructions.push(OpCode::Cmp {
                                                 kind: CmpKind::Lt,
                                                 result: r,
                                                 lhs: *v,
-                                                rhs: cst
+                                                rhs: cst,
                                             });
-                                            new_instructions.push(OpCode::AssertEq {
-                                                lhs: r,
-                                                rhs: t
-                                            });
+                                            new_instructions
+                                                .push(OpCode::AssertEq { lhs: r, rhs: t });
                                         }
-                                        _ => panic!("Rangecheck on a cast of a non-u value {}", v_type),
+                                        _ => panic!(
+                                            "Rangecheck on a cast of a non-u value {}",
+                                            v_type
+                                        ),
                                     }
-
-
                                 }
                                 _ => new_instructions.push(instruction),
                             }

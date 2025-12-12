@@ -1,4 +1,4 @@
-use noirc_evaluator::ssa::ir::types::{Type as NoirType, NumericType};
+use noirc_evaluator::ssa::ir::types::{NumericType, Type as NoirType};
 
 use crate::compiler::ir::r#type::{Empty, Type};
 
@@ -14,7 +14,9 @@ impl TypeConverter {
             NoirType::Numeric(numeric) => match numeric {
                 NumericType::NativeField => Type::field(Empty),
                 NumericType::Unsigned { bit_size: 1 } => Type::u(1, Empty),
-                NumericType::Unsigned { bit_size } => Type::u((*bit_size).try_into().unwrap(), Empty),
+                NumericType::Unsigned { bit_size } => {
+                    Type::u((*bit_size).try_into().unwrap(), Empty)
+                }
                 NumericType::Signed { bit_size } => {
                     panic!("Signed integers not supported: {} bits", bit_size)
                 }
@@ -25,7 +27,10 @@ impl TypeConverter {
             }
             NoirType::Array(element_types, size) => {
                 if element_types.len() != 1 {
-                    panic!("Only single-type arrays are supported, got element_types = {:?}", element_types)
+                    panic!(
+                        "Only single-type arrays are supported, got element_types = {:?}",
+                        element_types
+                    )
                 }
                 let element_type = &element_types[0];
                 let converted_element = self.convert_type(element_type);
@@ -33,7 +38,10 @@ impl TypeConverter {
             }
             NoirType::Slice(element_types) => {
                 if element_types.len() != 1 {
-                    panic!("Only single-type slices are supported, got element_types = {:?}", element_types)
+                    panic!(
+                        "Only single-type slices are supported, got element_types = {:?}",
+                        element_types
+                    )
                 }
                 let element_type = &element_types[0];
                 let converted_element = self.convert_type(element_type);
@@ -44,4 +52,4 @@ impl TypeConverter {
             }
         }
     }
-} 
+}

@@ -167,7 +167,8 @@ impl symbolic_executor::Value<SpecializationState, ConstantTaint> for Val {
                 assert_eq!(l_val, r_val);
             }
             (None, _) | (_, None) => {
-                ctx.function.push_assert_eq(ctx.function.get_entry_id(), self.0, other.0);
+                ctx.function
+                    .push_assert_eq(ctx.function.get_entry_id(), self.0, other.0);
             }
             _ => panic!("Not yet implemented {:?}", (l_const, r_const)),
         }

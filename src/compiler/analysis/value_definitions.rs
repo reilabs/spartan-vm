@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::compiler::{ir::r#type::Type, ssa::{BlockId, Const, Function, FunctionId, OpCode, ValueId, SSA}};
+use crate::compiler::{
+    ir::r#type::Type,
+    ssa::{BlockId, Const, Function, FunctionId, OpCode, SSA, ValueId},
+};
 
 pub enum ValueDefinition<V> {
     Const(Const),
@@ -33,7 +36,7 @@ impl<V: Clone> FunctionValueDefinitions<V> {
         for (value_id, definition) in ssa.iter_consts() {
             definitions.insert(*value_id, ValueDefinition::Const(definition.clone()));
         }
-        
+
         for (block_id, block) in ssa.get_blocks() {
             for (i, (val, typ)) in block.get_parameters().enumerate() {
                 definitions.insert(*val, ValueDefinition::Param(*block_id, i, typ.clone()));
@@ -41,7 +44,10 @@ impl<V: Clone> FunctionValueDefinitions<V> {
 
             for (i, instruction) in block.get_instructions().enumerate() {
                 for val in instruction.get_results() {
-                    definitions.insert(*val, ValueDefinition::Instruction(*block_id, i, instruction.clone()));
+                    definitions.insert(
+                        *val,
+                        ValueDefinition::Instruction(*block_id, i, instruction.clone()),
+                    );
                 }
             }
         }
@@ -65,7 +71,9 @@ impl<V: Clone> ValueDefinitions<V> {
         let mut definitions = Self::new();
 
         for (function_id, function) in ssa.iter_functions() {
-            definitions.functions.insert(*function_id, FunctionValueDefinitions::from_ssa(function));
+            definitions
+                .functions
+                .insert(*function_id, FunctionValueDefinitions::from_ssa(function));
         }
 
         definitions
@@ -75,6 +83,3 @@ impl<V: Clone> ValueDefinitions<V> {
         self.functions.get(&function_id).unwrap()
     }
 }
-
-
-

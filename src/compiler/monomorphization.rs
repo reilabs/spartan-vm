@@ -1,6 +1,11 @@
 use std::collections::{HashMap, VecDeque};
 
-use crate::compiler::{constraint_solver::ConstraintSolver, ir::r#type::Empty, ssa::{FunctionId, OpCode, SSA}, taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis, TaintType}};
+use crate::compiler::{
+    constraint_solver::ConstraintSolver,
+    ir::r#type::Empty,
+    ssa::{FunctionId, OpCode, SSA},
+    taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis, TaintType},
+};
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
 struct Signature {
@@ -29,7 +34,11 @@ impl Monomorphization {
         }
     }
 
-    pub fn run(&mut self, ssa: &mut SSA<Empty>, taint_analysis: &mut TaintAnalysis) -> Result<(), String> {
+    pub fn run(
+        &mut self,
+        ssa: &mut SSA<Empty>,
+        taint_analysis: &mut TaintAnalysis,
+    ) -> Result<(), String> {
         let unspecialized_fns = ssa.get_function_ids().collect::<Vec<_>>();
         let entry_point = ssa.get_main_id();
         let entry_point_taint = taint_analysis.get_function_taint(entry_point);
@@ -71,7 +80,8 @@ impl Monomorphization {
             }
 
             constraint_solver.solve();
-            let target_function_taint = function_taint.update_from_unification(&constraint_solver.unification);
+            let target_function_taint =
+                function_taint.update_from_unification(&constraint_solver.unification);
             taint_analysis.set_function_taint(target_function_id, target_function_taint);
             let fn_taint = taint_analysis.get_function_taint(target_function_id);
 
@@ -80,17 +90,28 @@ impl Monomorphization {
             for (block_id, block) in func.get_blocks_mut() {
                 for instruction in block.get_instructions_mut() {
                     match instruction {
-                        OpCode::Call { results: returns, function: func_id, args } => {
+                        OpCode::Call {
+                            results: returns,
+                            function: func_id,
+                            args,
+                        } => {
                             let cfg_taint = fn_taint.block_cfg_taints.get(block_id).unwrap();
-                            let args_taints = args.iter().map(|arg| fn_taint.value_taints.get(arg).unwrap().clone()).collect();
-                            let ret_taints = returns.iter().map(|arg| fn_taint.value_taints.get(arg).unwrap().clone()).collect();
+                            let args_taints = args
+                                .iter()
+                                .map(|arg| fn_taint.value_taints.get(arg).unwrap().clone())
+                                .collect();
+                            let ret_taints = returns
+                                .iter()
+                                .map(|arg| fn_taint.value_taints.get(arg).unwrap().clone())
+                                .collect();
                             let signature = Signature {
                                 cfg_taint: cfg_taint.clone(),
                                 param_taints: args_taints,
                                 return_taints: ret_taints,
                             };
-                            
-                            let specialized_func_id = self.request_specialization(ssa, *func_id, signature);
+
+                            let specialized_func_id =
+                                self.request_specialization(ssa, *func_id, signature);
                             *func_id = specialized_func_id;
                         }
                         _ => {}

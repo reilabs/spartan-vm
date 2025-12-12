@@ -121,7 +121,10 @@ impl UnionFind {
 
     pub fn get_taint(&self, representative: TypeVariable) -> Option<Taint> {
         let mapping = self.taint_mapping.borrow();
-        mapping.get(&representative).cloned().map(|t| Taint::Constant(t))
+        mapping
+            .get(&representative)
+            .cloned()
+            .map(|t| Taint::Constant(t))
     }
 
     pub fn get_taint_for_variable(&self, variable: TypeVariable) -> Option<Taint> {

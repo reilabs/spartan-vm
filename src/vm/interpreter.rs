@@ -290,7 +290,8 @@ pub fn run(
 
     while current_lookup_off < constraints_layout.lookups_data_size {
         let cnst_off = constraints_layout.lookups_data_start() + current_lookup_off;
-        let wit_off = witness_layout.lookups_data_start() - witness_layout.challenges_start() + current_lookup_off;
+        let wit_off = witness_layout.lookups_data_start() - witness_layout.challenges_start()
+            + current_lookup_off;
 
         let table_ix = out_a[cnst_off].0.0[0];
         let table = &vm.tables[table_ix as usize];
@@ -298,8 +299,10 @@ pub fn run(
             todo!("wide tables");
         }
         let ix_in_table = out_b[cnst_off].0.0[0];
-        out_a[cnst_off] = out_a[table.elem_inverses_constraint_section_offset + ix_in_table as usize];
-        out_b[cnst_off] = out_b[table.elem_inverses_constraint_section_offset + ix_in_table as usize];
+        out_a[cnst_off] =
+            out_a[table.elem_inverses_constraint_section_offset + ix_in_table as usize];
+        out_b[cnst_off] =
+            out_b[table.elem_inverses_constraint_section_offset + ix_in_table as usize];
         out_c[cnst_off] = Field::ONE;
         out_wit_post_comm[wit_off] = out_a[cnst_off];
         out_c[table.elem_inverses_constraint_section_offset + table.length] += out_a[cnst_off];
@@ -321,10 +324,7 @@ pub fn run(
             }
         }
         out_b[tbl.elem_inverses_constraint_section_offset + tbl.length] = Field::ONE;
-
     }
-
-
 
     let result = WitgenResult {
         out_wit_pre_comm,

@@ -9,7 +9,7 @@ use crate::compiler::{
     ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, MemOp, Radix, SSA, SliceOpDir},
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
-use serde::{Deserialize, Serialize, Deserializer, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tracing::{error, instrument, warn};
 
 mod lc_serde {
@@ -34,7 +34,10 @@ mod lc_serde {
         Ok(converted
             .into_iter()
             .map(|(idx, limbs)| {
-                (idx, ark_bn254::Fr::from_bigint(BigInt(limbs)).expect("Invalid field element"))
+                (
+                    idx,
+                    ark_bn254::Fr::from_bigint(BigInt(limbs)).expect("Invalid field element"),
+                )
             })
             .collect())
     }
@@ -961,7 +964,10 @@ impl R1CGen {
                         b: lookup.elements[0].clone(),
                         c: vec![(x, -crate::compiler::Field::ONE)],
                     });
-                    let mut b = vec![(alpha, ark_bn254::Fr::ONE), (x, -crate::compiler::Field::ONE)];
+                    let mut b = vec![
+                        (alpha, ark_bn254::Fr::ONE),
+                        (x, -crate::compiler::Field::ONE),
+                    ];
                     for (w, coeff) in lookup.elements[0].iter() {
                         b.push((*w, -*coeff));
                     }

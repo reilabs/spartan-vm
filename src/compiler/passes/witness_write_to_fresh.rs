@@ -26,7 +26,6 @@ impl Pass<ConstantTaint> for WitnessWriteToFresh {
     fn invalidates_cfg(&self) -> bool {
         false
     }
-
 }
 
 impl WitnessWriteToFresh {
@@ -50,7 +49,7 @@ impl WitnessWriteToFresh {
                 assert!(matches!(tp.expr, TypeExpr::Field));
                 OpCode::FreshWitness {
                     result: r,
-                    result_type: Type::field(ConstantTaint::Witness)
+                    result_type: Type::field(ConstantTaint::Witness),
                 }
             })
             .chain(old_instructions.into_iter())
@@ -61,7 +60,11 @@ impl WitnessWriteToFresh {
             for (_, block) in function.get_blocks_mut() {
                 for instruction in block.get_instructions_mut() {
                     let new_instruction = match instruction {
-                        OpCode::WriteWitness { result: r, value: _, witness_annotation: _ } => {
+                        OpCode::WriteWitness {
+                            result: r,
+                            value: _,
+                            witness_annotation: _,
+                        } => {
                             let tp = type_info
                                 .get_function(*function_id)
                                 .get_value_type(r.unwrap());

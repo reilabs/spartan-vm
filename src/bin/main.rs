@@ -1,8 +1,8 @@
 use std::{fs, path::PathBuf, process::ExitCode};
 
 use clap::Parser;
-use spartan_vm::compiler::Field;
 use spartan_vm::api::{self, ApiError};
+use spartan_vm::compiler::Field;
 use tracing::{error, info, warn};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
@@ -47,18 +47,18 @@ fn main() -> ExitCode {
 /// Compile phase: compile the Noir project and save artifacts to a file.
 pub fn run_compile(args: &ProgramOptions, output: &PathBuf) -> Result<ExitCode, ApiError> {
     info!(message = %"Compiling Noir project", root = ?args.root, output = ?output);
-    
+
     let artifacts = api::compile_to_artifacts(args.root.clone(), args.draw_graphs)?;
-    
+
     api::save_artifacts(&artifacts, output)?;
-    
+
     info!(
         message = %"Artifacts saved successfully",
         r1cs_constraints = artifacts.r1cs.constraints.len(),
         witgen_binary_size = artifacts.witgen_binary.len() * 8,
         ad_binary_size = artifacts.ad_binary.len() * 8,
     );
-    
+
     Ok(ExitCode::SUCCESS)
 }
 
@@ -69,34 +69,34 @@ pub fn run_execute(
     output_dir: Option<&PathBuf>,
 ) -> Result<ExitCode, ApiError> {
     info!(message = %"Loading artifacts", path = ?artifacts_path);
-    
+
     let mut artifacts = api::load_artifacts(artifacts_path)?;
-    
+
     let r1cs = &artifacts.r1cs;
-    
+
     let debug_dir = output_dir
         .cloned()
         .unwrap_or_else(|| args.root.join("spartan_vm_debug"));
-    
+
     if !debug_dir.exists() {
         fs::create_dir_all(&debug_dir).unwrap();
     }
-    
+
     // For execute mode, we still need the prover inputs from the project
     // We need to read the ABI from somewhere - for now, require the project root
     let (driver, _) = api::compile_to_r1cs(args.root.clone(), false)?;
-    
+
     let params = api::read_prover_inputs(&args.root, driver.abi())?;
-    
+
     let witgen_result = api::run_witgen_from_binary(&mut artifacts.witgen_binary, r1cs, &params);
-    
+
     let correct = api::check_witgen(r1cs, &witgen_result);
     if !correct {
         error!(message = %"Witgen output is incorrect");
     } else {
         info!(message = %"Witgen output is correct");
     }
-    
+
     let leftover_memory = witgen_result
         .instrumenter
         .plot(&debug_dir.join("witgen_vm_memory.png"));
@@ -105,26 +105,26 @@ pub fn run_execute(
     } else {
         info!(message = %"VM memory leak not detected");
     }
-    
+
     // Run AD
     let ad_coeffs: Vec<Field> = api::random_ad_coeffs(r1cs);
-    let (ad_a, ad_b, ad_c, ad_instrumenter) = 
+    let (ad_a, ad_b, ad_c, ad_instrumenter) =
         api::run_ad_from_binary(&mut artifacts.ad_binary, r1cs, &ad_coeffs);
-    
+
     let leftover_memory = ad_instrumenter.plot(&debug_dir.join("ad_vm_memory.png"));
     if leftover_memory > 0 {
         warn!(message = %"AD VM memory leak detected", leftover_memory);
     } else {
         info!(message = %"AD VM memory leak not detected");
     }
-    
+
     let correct = api::check_ad(r1cs, &ad_coeffs, &ad_a, &ad_b, &ad_c);
     if !correct {
         error!(message = %"AD output is incorrect");
     } else {
         info!(message = %"AD output is correct");
     }
-    
+
     Ok(ExitCode::SUCCESS)
 }
 
@@ -140,7 +140,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, ApiError> {
     // info!(
     //     "R1CS {:?}",
     //     r1cs
-    // );    
+    // );
     if args.pprint_r1cs {
         use std::io::Write;
         let mut r1cs_file =
@@ -150,7 +150,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, ApiError> {
         }
     }
 
-    let params= api::read_prover_inputs(&args.root, driver.abi())?;
+    let params = api::read_prover_inputs(&args.root, driver.abi())?;
     let mut binary = api::compile_witgen(&driver)?;
 
     let witgen_result = api::run_witgen_from_binary(&mut binary, &r1cs, &params);
@@ -216,7 +216,8 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, ApiError> {
 
     let ad_coeffs: Vec<Field> = api::random_ad_coeffs(&r1cs);
 
-    let (ad_a, ad_b, ad_c, ad_instrumenter) = api::run_ad_from_binary(&mut ad_binary, &r1cs, &ad_coeffs);
+    let (ad_a, ad_b, ad_c, ad_instrumenter) =
+        api::run_ad_from_binary(&mut ad_binary, &r1cs, &ad_coeffs);
 
     let leftover_memory =
         ad_instrumenter.plot(&api::debug_output_dir(&driver).join("ad_vm_memory.png"));

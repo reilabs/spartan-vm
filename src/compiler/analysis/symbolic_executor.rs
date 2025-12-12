@@ -5,7 +5,8 @@ use crate::compiler::{
     analysis::types::TypeInfo,
     ir::r#type::{CommutativeMonoid, Type},
     ssa::{
-        BinaryArithOpKind, BlockId, CastTarget, CmpKind, Const, Endianness, FunctionId, GlobalDef, LookupTarget, MemOp, Radix, SSA, SeqType, SliceOpDir, Terminator
+        BinaryArithOpKind, BlockId, CastTarget, CmpKind, Const, Endianness, FunctionId, GlobalDef,
+        LookupTarget, MemOp, Radix, SSA, SeqType, SliceOpDir, Terminator,
     },
 };
 
@@ -332,9 +333,10 @@ impl SymbolicExecutor {
                         slice,
                         values,
                         dir,
-                    } => {                      
+                    } => {
                         let sl = scope[slice.0 as usize].as_ref().unwrap();
-                        let vals: Vec<_> = values.iter()
+                        let vals: Vec<_> = values
+                            .iter()
                             .map(|v| scope[v.0 as usize].as_ref().unwrap().clone())
                             .collect();
                         scope[result.0 as usize] = Some(ctx.slice_push(sl, &vals, *dir));

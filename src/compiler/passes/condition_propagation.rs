@@ -1,10 +1,13 @@
 use crate::compiler::{
-    flow_analysis::FlowAnalysis, pass_manager::Pass, passes::fix_double_jumps::ValueReplacements, ssa::{BlockId, Terminator, ValueId, SSA}
+    flow_analysis::FlowAnalysis,
+    pass_manager::Pass,
+    passes::fix_double_jumps::ValueReplacements,
+    ssa::{BlockId, SSA, Terminator, ValueId},
 };
 
 pub struct ConditionPropagation {}
 
-impl <V: Clone> Pass<V> for ConditionPropagation {
+impl<V: Clone> Pass<V> for ConditionPropagation {
     fn run(&self, ssa: &mut SSA<V>, pass_manager: &crate::compiler::pass_manager::PassManager<V>) {
         self.do_run(ssa, pass_manager.get_cfg());
     }
@@ -15,7 +18,7 @@ impl <V: Clone> Pass<V> for ConditionPropagation {
             needs: vec![crate::compiler::pass_manager::DataPoint::CFG],
         }
     }
-    
+
     fn invalidates_cfg(&self) -> bool {
         false
     }
