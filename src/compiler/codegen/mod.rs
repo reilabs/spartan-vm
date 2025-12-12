@@ -555,7 +555,6 @@ impl CodeGen {
                     value: v,
                     witness_annotation: _,
                 } => {
-                    
                     emitter.push_op(bytecode::OpCode::WriteWitness {
                         val: layouter.get_value(*v),
                     });

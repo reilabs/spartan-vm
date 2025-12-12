@@ -9,7 +9,8 @@ use crate::compiler::{
     ir::r#type::{Type, TypeExpr},
     pass_manager::{DataPoint, Pass},
     ssa::{
-        BinaryArithOpKind, Block, BlockId, CastTarget, CmpKind, Endianness, Function, LookupTarget, OpCode, Radix, SSA, SeqType, ValueId
+        BinaryArithOpKind, Block, BlockId, CastTarget, CmpKind, Endianness, Function, LookupTarget,
+        OpCode, Radix, SSA, SeqType, ValueId,
     },
     taint_analysis::ConstantTaint,
 };
@@ -108,7 +109,9 @@ impl ExplicitWitness {
                                         } ->);
                                     }
                                     CmpKind::Lt => {
-                                        let TypeExpr::U(s) = function_type_info.get_value_type(rhs).expr else {
+                                        let TypeExpr::U(s) =
+                                            function_type_info.get_value_type(rhs).expr
+                                        else {
                                             panic!("ICE: rhs is not a U type");
                                         };
                                         let u1 = CastTarget::U(1);
@@ -124,12 +127,17 @@ impl ExplicitWitness {
 
                                             two_res := mul(result, ! Field::from(2) : Field);
                                             adjustment := sub(! Field::ONE : Field, two_res);
-                                            
+
                                             adjusted_diff := mul(lr_diff, adjustment);
                                             adjusted_diff_wit := write_witness(adjusted_diff);
                                             constrain(lr_diff, adjustment, adjusted_diff_wit);
                                         } -> adjusted_diff_wit);
-                                        self.gen_witness_rangecheck(function, &mut new_instructions, r.adjusted_diff_wit, s);
+                                        self.gen_witness_rangecheck(
+                                            function,
+                                            &mut new_instructions,
+                                            r.adjusted_diff_wit,
+                                            s,
+                                        );
                                     }
                                     _ => {
                                         new_instructions.push(OpCode::Todo {
@@ -322,7 +330,8 @@ impl ExplicitWitness {
                             slice: sl,
                             values: _,
                         } => {
-                            let slice_taint = function_type_info.get_value_type(sl).get_annotation();
+                            let slice_taint =
+                                function_type_info.get_value_type(sl).get_annotation();
                             assert!(slice_taint.is_pure());
                             new_instructions.push(instruction);
                         }
@@ -330,7 +339,8 @@ impl ExplicitWitness {
                             result: _,
                             slice: sl,
                         } => {
-                            let slice_taint = function_type_info.get_value_type(sl).get_annotation();
+                            let slice_taint =
+                                function_type_info.get_value_type(sl).get_annotation();
                             assert!(slice_taint.is_pure());
                             new_instructions.push(instruction);
                         }

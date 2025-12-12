@@ -3,7 +3,7 @@ use crate::compiler::taint_analysis::{
 };
 use crate::compiler::union_find::UnionFind;
 use petgraph::algo::tarjan_scc;
-use petgraph::graph::{DiGraph};
+use petgraph::graph::DiGraph;
 use std::collections::HashMap;
 
 /// Constraint solver for taint analysis
@@ -401,7 +401,10 @@ impl ConstraintSolver {
                 self.judgements.push(Judgement::Eq(l.clone(), r.clone()));
                 self.push_deep_eq(inner_l, inner_r);
             }
-            _ => panic!("Cannot unify different taint types {:?} and {:?}", left_type, right_type),
+            _ => panic!(
+                "Cannot unify different taint types {:?} and {:?}",
+                left_type, right_type
+            ),
         }
     }
 

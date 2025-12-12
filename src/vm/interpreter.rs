@@ -227,9 +227,11 @@ pub fn run(
         &mut vm,
     );
 
-    let mut current_offset = 2 as isize ;
+    let mut current_offset = 2 as isize;
     for (_, el) in ordered_inputs.iter().enumerate() {
-        unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
+        unsafe {
+            current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)
+        };
     }
 
     let mut program = program.to_vec();
@@ -294,7 +296,8 @@ pub fn run(
 
     while current_lookup_off < constraints_layout.lookups_data_size {
         let cnst_off = constraints_layout.lookups_data_start() + current_lookup_off;
-        let wit_off = witness_layout.lookups_data_start() - witness_layout.challenges_start() + current_lookup_off;
+        let wit_off = witness_layout.lookups_data_start() - witness_layout.challenges_start()
+            + current_lookup_off;
 
         let table_ix = out_a[cnst_off].0.0[0];
         let table = &vm.tables[table_ix as usize];
@@ -302,8 +305,10 @@ pub fn run(
             todo!("wide tables");
         }
         let ix_in_table = out_b[cnst_off].0.0[0];
-        out_a[cnst_off] = out_a[table.elem_inverses_constraint_section_offset + ix_in_table as usize];
-        out_b[cnst_off] = out_b[table.elem_inverses_constraint_section_offset + ix_in_table as usize];
+        out_a[cnst_off] =
+            out_a[table.elem_inverses_constraint_section_offset + ix_in_table as usize];
+        out_b[cnst_off] =
+            out_b[table.elem_inverses_constraint_section_offset + ix_in_table as usize];
         out_c[cnst_off] = Field::ONE;
         out_wit_post_comm[wit_off] = out_a[cnst_off];
         out_c[table.elem_inverses_constraint_section_offset + table.length] += out_a[cnst_off];
@@ -325,10 +330,7 @@ pub fn run(
             }
         }
         out_b[tbl.elem_inverses_constraint_section_offset + tbl.length] = Field::ONE;
-
     }
-
-
 
     let result = WitgenResult {
         out_wit_pre_comm,
@@ -383,46 +385,55 @@ pub fn run_ad(
     (out_da, out_db, out_dc, vm.allocation_instrumenter)
 }
 
-
 fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
     match el {
         InputValue::Field(field_element) => {
-            unsafe{*(ptr as *mut Field) = field_element.into_repr();}
+            unsafe {
+                *(ptr as *mut Field) = field_element.into_repr();
+            }
             return 4;
         }
         InputValue::Vec(vec) => {
             if vec.len() == 0 {
                 let layout = BoxedLayout::array(0, false);
                 let array = BoxedValue::alloc(layout, vm);
-                unsafe{*(ptr as *mut BoxedValue) = array;}
+                unsafe {
+                    *(ptr as *mut BoxedValue) = array;
+                }
             } else {
                 match &vec[0] {
                     InputValue::Field(_) => {
                         let layout = BoxedLayout::array(vec.len() * 4, false);
                         let array = BoxedValue::alloc(layout, vm);
-                        
+
                         for (elem_ind, input) in vec.iter().enumerate() {
                             let ptr = array.array_idx(elem_ind, 4);
                             write_input_value(ptr, input, vm);
                         }
-                        unsafe{*(ptr as *mut BoxedValue) = array;}
+                        unsafe {
+                            *(ptr as *mut BoxedValue) = array;
+                        }
                     }
                     InputValue::Vec(_) => {
                         let layout = BoxedLayout::array(vec.len(), true);
                         let array = BoxedValue::alloc(layout, vm);
-                        
+
                         for (elem_ind, input) in vec.iter().enumerate() {
                             let ptr = array.array_idx(elem_ind, 1);
                             write_input_value(ptr, input, vm);
                         }
-                        unsafe{*(ptr as *mut BoxedValue) = array;}
+                        unsafe {
+                            *(ptr as *mut BoxedValue) = array;
+                        }
                     }
                     _ => panic!("Only field elements are supported in arrays for now"),
                 }
             }
             return 1;
         }
-        _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
+        _ => panic!(
+            "Unsupported input value type. We only support Field and nested Vecs of Fields for now."
+        ),
     }
 }
 
@@ -444,7 +455,9 @@ fn flatten_params(value: &InputValue) -> Vec<Field> {
                 encoded_value.extend(flatten_params(elem));
             }
         }
-        _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
+        _ => panic!(
+            "Unsupported input value type. We only support Field and nested Vecs of Fields for now."
+        ),
     }
     encoded_value
 }

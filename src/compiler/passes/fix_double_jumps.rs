@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
-    flow_analysis::FlowAnalysis, pass_manager::{DataPoint, Pass, PassInfo, PassManager}, ssa::{BlockId, OpCode, Terminator, ValueId, SSA}
+    flow_analysis::FlowAnalysis,
+    pass_manager::{DataPoint, Pass, PassInfo, PassManager},
+    ssa::{BlockId, OpCode, SSA, Terminator, ValueId},
 };
 
 pub struct ValueReplacements {
@@ -59,7 +61,7 @@ impl ValueReplacements {
 
 pub struct FixDoubleJumps {}
 
-impl <V: Clone> Pass<V> for FixDoubleJumps {
+impl<V: Clone> Pass<V> for FixDoubleJumps {
     fn run(&self, ssa: &mut SSA<V>, pass_manager: &PassManager<V>) {
         let flow_analysis = pass_manager.get_cfg();
         self.do_run(ssa, flow_analysis);

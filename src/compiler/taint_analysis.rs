@@ -742,7 +742,8 @@ impl TaintAnalysis {
                         //     Taint::Constant(ConstantTaint::Pure)
                         // );
                         // Result is always Pure u32
-                        let result_taint = TaintType::Primitive(Taint::Constant(ConstantTaint::Pure));
+                        let result_taint =
+                            TaintType::Primitive(Taint::Constant(ConstantTaint::Pure));
                         function_taint.value_taints.insert(*r, result_taint);
                     }
                     OpCode::Call {
@@ -776,7 +777,6 @@ impl TaintAnalysis {
                         {
                             self.deep_le(input, param, &mut function_taint.judgements);
                             self.deep_le(param, input, &mut function_taint.judgements);
-
                         }
                         function_taint.judgements.extend(func_taint.judgements);
                         function_taint.judgements.push(Judgement::Le(

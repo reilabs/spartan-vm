@@ -9,8 +9,39 @@ use crate::compiler::{
     ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, MemOp, Radix, SSA, SliceOpDir},
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
-use itertools::Itertools;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tracing::{error, instrument, warn};
+
+mod lc_serde {
+    use super::*;
+
+    pub fn serialize<S>(lc: &Vec<(usize, ark_bn254::Fr)>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let converted: Vec<(usize, [u64; 4])> = lc
+            .iter()
+            .map(|(idx, coeff)| (*idx, coeff.into_bigint().0))
+            .collect();
+        converted.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<(usize, ark_bn254::Fr)>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let converted: Vec<(usize, [u64; 4])> = Deserialize::deserialize(deserializer)?;
+        Ok(converted
+            .into_iter()
+            .map(|(idx, limbs)| {
+                (
+                    idx,
+                    ark_bn254::Fr::from_bigint(BigInt(limbs)).expect("Invalid field element"),
+                )
+            })
+            .collect())
+    }
+}
 
 // #[derive(Clone, Debug, Copy, PartialEq, PartialOrd, Eq, Ord)]
 // pub enum WitnessIndex {
@@ -176,10 +207,13 @@ impl Value {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct R1C {
+    #[serde(with = "lc_serde")]
     pub a: LC,
+    #[serde(with = "lc_serde")]
     pub b: LC,
+    #[serde(with = "lc_serde")]
     pub c: LC,
 }
 
@@ -569,7 +603,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     }
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct WitnessLayout {
     pub algebraic_size: usize,
     pub multiplicities_size: usize,
@@ -656,7 +690,7 @@ impl WitnessLayout {
     }
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct ConstraintsLayout {
     pub algebraic_size: usize,
     pub tables_data_size: usize,
@@ -677,7 +711,7 @@ impl ConstraintsLayout {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct R1CS {
     pub witness_layout: WitnessLayout,
     pub constraints_layout: ConstraintsLayout,
@@ -722,7 +756,10 @@ impl R1CGen {
     #[instrument(skip_all, name = "R1CGen::run")]
     pub fn run<V: Clone + CommutativeMonoid>(&mut self, ssa: &SSA<V>, type_info: &TypeInfo<V>) {
         let entry_point = ssa.get_main_id();
-        assert!(ssa.get_function(entry_point).get_param_types().len() == 0, "Main should not have parameters as WitnessWriteToFresh pass should remove them");
+        assert!(
+            ssa.get_function(entry_point).get_param_types().len() == 0,
+            "Main should not have parameters as WitnessWriteToFresh pass should remove them"
+        );
         let main_params = vec![];
         let executor = SymbolicExecutor::new();
         executor.run(ssa, type_info, entry_point, main_params, self);
@@ -911,7 +948,10 @@ impl R1CGen {
                         b: lookup.elements[0].clone(),
                         c: vec![(x, -crate::compiler::Field::ONE)],
                     });
-                    let mut b = vec![(alpha, ark_bn254::Fr::ONE), (x, -crate::compiler::Field::ONE)];
+                    let mut b = vec![
+                        (alpha, ark_bn254::Fr::ONE),
+                        (x, -crate::compiler::Field::ONE),
+                    ];
                     for (w, coeff) in lookup.elements[0].iter() {
                         b.push((*w, -*coeff));
                     }

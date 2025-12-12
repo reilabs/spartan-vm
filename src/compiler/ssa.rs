@@ -1,10 +1,10 @@
+use crate::compiler::taint_analysis::ConstantTaint;
 use crate::compiler::{
     ir::r#type::{CommutativeMonoid, Empty, Type},
     ssa_gen::SsaConverter,
 };
 use itertools::Itertools;
 use std::{collections::HashMap, fmt::Display};
-use crate::compiler::taint_analysis::ConstantTaint;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ValueId(pub u64);
@@ -378,15 +378,25 @@ impl<V: Clone> Function<V> {
         self.push_const(Const::Field(value))
     }
 
-
-    pub fn push_cmp(&mut self, block_id: BlockId, lhs: ValueId, rhs: ValueId, kind: CmpKind) -> ValueId {
+    pub fn push_cmp(
+        &mut self,
+        block_id: BlockId,
+        lhs: ValueId,
+        rhs: ValueId,
+        kind: CmpKind,
+    ) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
         self.blocks
             .get_mut(&block_id)
             .unwrap()
             .instructions
-            .push(OpCode::Cmp { kind, result: value_id, lhs, rhs });
+            .push(OpCode::Cmp {
+                kind,
+                result: value_id,
+                lhs,
+                rhs,
+            });
         value_id
     }
 
@@ -648,11 +658,7 @@ impl<V: Clone> Function<V> {
         value_id
     }
 
-    pub fn push_slice_len(
-        &mut self,
-        block_id: BlockId,
-        slice: ValueId,
-    ) -> ValueId {
+    pub fn push_slice_len(&mut self, block_id: BlockId, slice: ValueId) -> ValueId {
         let value_id = ValueId(self.next_value);
         self.next_value += 1;
         self.blocks
@@ -821,12 +827,22 @@ impl<V: Clone> Function<V> {
         value
     }
 
-    pub fn push_todo(&mut self, block_id: BlockId, payload: String, results: Vec<ValueId>, result_types: Vec<Type<V>>) {
+    pub fn push_todo(
+        &mut self,
+        block_id: BlockId,
+        payload: String,
+        results: Vec<ValueId>,
+        result_types: Vec<Type<V>>,
+    ) {
         self.blocks
             .get_mut(&block_id)
             .unwrap()
             .instructions
-            .push(OpCode::Todo { payload, results, result_types });
+            .push(OpCode::Todo {
+                payload,
+                results,
+                result_types,
+            });
     }
 
     // pub fn push_constrain(&mut self, block_id: BlockId, a: ValueId, b: ValueId, c: ValueId) {
@@ -1465,10 +1481,7 @@ impl<V: Display + Clone> OpCode<V> {
                     values_str
                 )
             }
-            OpCode::SliceLen {
-                result,
-                slice,
-            } => {
+            OpCode::SliceLen { result, slice } => {
                 format!(
                     "v{}{} = slice_len(v{})",
                     result.0,
@@ -1718,8 +1731,13 @@ impl<V: Display + Clone> OpCode<V> {
                     typ
                 )
             }
-            OpCode::Todo { payload, results, result_types } => {
-                let results_str = results.iter()
+            OpCode::Todo {
+                payload,
+                results,
+                result_types,
+            } => {
+                let results_str = results
+                    .iter()
                     .zip(result_types.iter())
                     .map(|(r, tp)| format!("v{}: {}", r.0, tp))
                     .join(", ");
@@ -1912,7 +1930,7 @@ impl<V> OpCode<V> {
             Self::Todo { results, .. } => {
                 let ret_vec: Vec<&mut ValueId> = results.iter_mut().collect();
                 ret_vec.into_iter()
-            },
+            }
         }
     }
 
@@ -2393,7 +2411,7 @@ impl<V> OpCode<V> {
             Self::Todo { results, .. } => {
                 let ret_vec: Vec<&ValueId> = results.iter().collect();
                 ret_vec.into_iter()
-            },
+            }
         }
     }
 }
@@ -2458,8 +2476,10 @@ impl OpCode<ConstantTaint> {
         }
     }
 
-
-    pub fn mk_lookup_rngchk(target: LookupTarget<ValueId>, value: ValueId) -> OpCode<ConstantTaint> {
+    pub fn mk_lookup_rngchk(
+        target: LookupTarget<ValueId>,
+        value: ValueId,
+    ) -> OpCode<ConstantTaint> {
         OpCode::Lookup {
             target,
             keys: vec![value],
@@ -2493,7 +2513,11 @@ impl OpCode<ConstantTaint> {
         }
     }
 
-    pub fn mk_cast_to(result: ValueId, target: CastTarget, value: ValueId) -> OpCode<ConstantTaint> {
+    pub fn mk_cast_to(
+        result: ValueId,
+        target: CastTarget,
+        value: ValueId,
+    ) -> OpCode<ConstantTaint> {
         OpCode::Cast {
             result,
             value,
@@ -2502,11 +2526,7 @@ impl OpCode<ConstantTaint> {
     }
 
     pub fn mk_constrain(a: ValueId, b: ValueId, c: ValueId) -> OpCode<ConstantTaint> {
-        OpCode::Constrain {
-            a,
-            b,
-            c,
-        }
+        OpCode::Constrain { a, b, c }
     }
 
     pub fn mk_sub(result: ValueId, lhs: ValueId, rhs: ValueId) -> OpCode<ConstantTaint> {

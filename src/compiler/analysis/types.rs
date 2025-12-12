@@ -19,7 +19,7 @@ impl<V> TypeInfo<V> {
 }
 
 pub struct FunctionTypeInfo<V> {
-    values: HashMap<ValueId, Type<V>>, 
+    values: HashMap<ValueId, Type<V>>,
 }
 
 impl<V> FunctionTypeInfo<V> {
@@ -105,7 +105,12 @@ impl Types {
         function_types: &HashMap<FunctionId, (Vec<Type<V>>, &[Type<V>])>,
     ) -> Result<(), String> {
         match opcode {
-            OpCode::Cmp { kind: _kind, result, lhs, rhs } => {
+            OpCode::Cmp {
+                kind: _kind,
+                result,
+                lhs,
+                rhs,
+            } => {
                 let lhs_type = function_info.values.get(lhs).ok_or_else(|| {
                     format!(
                         "Left-hand side value {:?} not found in type assignments",
@@ -124,7 +129,12 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::BinaryArithOp { kind: _kind, result, lhs, rhs } => {
+            OpCode::BinaryArithOp {
+                kind: _kind,
+                result,
+                lhs,
+                rhs,
+            } => {
                 let lhs_type = function_info.values.get(lhs).ok_or_else(|| {
                     format!(
                         "Left-hand side value {:?} not found in type assignments",
@@ -142,7 +152,11 @@ impl Types {
                     .insert(*result, lhs_type.get_arithmetic_result_type(rhs_type));
                 Ok(())
             }
-            OpCode::Alloc { result, elem_type: typ, result_annotation: annotation } => {
+            OpCode::Alloc {
+                result,
+                elem_type: typ,
+                result_annotation: annotation,
+            } => {
                 function_info
                     .values
                     .insert(*result, Type::ref_of(typ.clone(), annotation.clone()));
@@ -171,7 +185,11 @@ impl Types {
             OpCode::MemOp { kind: _, value: _ } => Ok(()),
             OpCode::AssertEq { lhs: _, rhs: _ } => Ok(()),
             OpCode::AssertR1C { a: _, b: _, c: _ } => Ok(()),
-            OpCode::Call { results: result, function: fn_id, args } => {
+            OpCode::Call {
+                results: result,
+                function: fn_id,
+                args,
+            } => {
                 let (param_types, return_types) = function_types
                     .get(fn_id)
                     .ok_or_else(|| format!("Function {:?} not found", fn_id))?;
@@ -199,7 +217,11 @@ impl Types {
                 }
                 Ok(())
             }
-            OpCode::ArrayGet { result, array, index: _ } => {
+            OpCode::ArrayGet {
+                result,
+                array,
+                index: _,
+            } => {
                 let array_type = function_info.values.get(array).ok_or_else(|| {
                     format!("Array value {:?} not found in type assignments", array)
                 })?;
@@ -211,7 +233,12 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::ArraySet { result, array, index: _, value: _ } => {
+            OpCode::ArraySet {
+                result,
+                array,
+                index: _,
+                value: _,
+            } => {
                 let array_type = function_info.values.get(array).ok_or_else(|| {
                     format!("Array value {:?} not found in type assignments", array)
                 })?;
@@ -219,7 +246,12 @@ impl Types {
                 function_info.values.insert(*result, array_type.clone());
                 Ok(())
             }
-            OpCode::SlicePush { result, slice, values: _, dir: _ } => {
+            OpCode::SlicePush {
+                result,
+                slice,
+                values: _,
+                dir: _,
+            } => {
                 let slice_type = function_info.values.get(slice).ok_or_else(|| {
                     format!("Slice value {:?} not found in type assignments", slice)
                 })?;
@@ -229,13 +261,17 @@ impl Types {
             }
             OpCode::SliceLen { result, slice: _ } => {
                 // Result is always u32
-                function_info.values.insert(
-                    *result,
-                    Type::u(32, V::empty()),
-                );
+                function_info
+                    .values
+                    .insert(*result, Type::u(32, V::empty()));
                 Ok(())
             }
-            OpCode::Select { result, cond: _cond, if_t: then, if_f: otherwise } => {
+            OpCode::Select {
+                result,
+                cond: _cond,
+                if_t: then,
+                if_f: otherwise,
+            } => {
                 let then_type = function_info.values.get(then).ok_or_else(|| {
                     format!("Then value {:?} not found in type assignments", then)
                 })?;
@@ -251,7 +287,11 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::WriteWitness { result, value, witness_annotation: annotation } => {
+            OpCode::WriteWitness {
+                result,
+                value,
+                witness_annotation: annotation,
+            } => {
                 let Some(result) = result else {
                     return Ok(());
                 };
@@ -264,7 +304,10 @@ impl Types {
                 );
                 Ok(())
             }
-            OpCode::FreshWitness { result: r, result_type: tp } => {
+            OpCode::FreshWitness {
+                result: r,
+                result_type: tp,
+            } => {
                 function_info.values.insert(*r, tp.clone());
                 Ok(())
             }
@@ -273,12 +316,25 @@ impl Types {
                 function_info.values.insert(*v, Type::field(V::empty()));
                 Ok(())
             }
-            OpCode::BumpD { matrix: _, variable: _, sensitivity: _ } => Ok(()),
-            OpCode::MkSeq { result: r, elems: _, seq_type: top_tp, elem_type: t } => {
+            OpCode::BumpD {
+                matrix: _,
+                variable: _,
+                sensitivity: _,
+            } => Ok(()),
+            OpCode::MkSeq {
+                result: r,
+                elems: _,
+                seq_type: top_tp,
+                elem_type: t,
+            } => {
                 function_info.values.insert(*r, top_tp.of(t.clone()));
                 Ok(())
             }
-            OpCode::Cast { result, value, target } => {
+            OpCode::Cast {
+                result,
+                value,
+                target,
+            } => {
                 let value_type = function_info
                     .values
                     .get(value)
@@ -292,7 +348,12 @@ impl Types {
                 function_info.values.insert(*result, result_type);
                 Ok(())
             }
-            OpCode::Truncate { result, value, to_bits: _, from_bits: _ } => {
+            OpCode::Truncate {
+                result,
+                value,
+                to_bits: _,
+                from_bits: _,
+            } => {
                 let value_type = function_info
                     .values
                     .get(value)
@@ -309,7 +370,12 @@ impl Types {
                 function_info.values.insert(*result, value_type.clone());
                 Ok(())
             }
-            OpCode::ToBits { result, value, endianness: _, count: output_size } => {
+            OpCode::ToBits {
+                result,
+                value,
+                endianness: _,
+                count: output_size,
+            } => {
                 let value_type = function_info
                     .values
                     .get(value)
@@ -320,7 +386,13 @@ impl Types {
                 function_info.values.insert(*result, result_type);
                 Ok(())
             }
-            OpCode::ToRadix { result, value, radix: _, endianness: _, count: output_size } => {
+            OpCode::ToRadix {
+                result,
+                value,
+                radix: _,
+                endianness: _,
+                count: output_size,
+            } => {
                 let value_type = function_info
                     .values
                     .get(value)
@@ -331,8 +403,16 @@ impl Types {
                 function_info.values.insert(*result, result_type);
                 Ok(())
             }
-            OpCode::DLookup { target: _, keys: _, results: _ } => Ok(()),
-            OpCode::BoxField { result, value: _, result_annotation: annotation } => {
+            OpCode::DLookup {
+                target: _,
+                keys: _,
+                results: _,
+            } => Ok(()),
+            OpCode::BoxField {
+                result,
+                value: _,
+                result_annotation: annotation,
+            } => {
                 function_info
                     .values
                     .insert(*result, Type::boxed_field(annotation.clone()));
@@ -344,12 +424,19 @@ impl Types {
                     .insert(*result, Type::field(V::empty()));
                 Ok(())
             }
-            OpCode::MulConst { result, const_val: _, var } => {
+            OpCode::MulConst {
+                result,
+                const_val: _,
+                var,
+            } => {
                 let var_type = function_info.values.get(var).unwrap();
                 function_info.values.insert(*result, var_type.clone());
                 Ok(())
             }
-            OpCode::Rangecheck { value: v, max_bits: _ } => {
+            OpCode::Rangecheck {
+                value: v,
+                max_bits: _,
+            } => {
                 let v_type = function_info.values.get(v).unwrap();
                 if !v_type.is_field() {
                     return Err(format!(
@@ -359,12 +446,24 @@ impl Types {
                 }
                 Ok(())
             }
-            OpCode::ReadGlobal { result: r, offset: _, result_type: tp } => {
+            OpCode::ReadGlobal {
+                result: r,
+                offset: _,
+                result_type: tp,
+            } => {
                 function_info.values.insert(*r, tp.clone());
                 Ok(())
             }
-            OpCode::Lookup { target: _, keys: _, results: _ } => Ok(()),
-            OpCode::Todo { results, result_types, .. } => {
+            OpCode::Lookup {
+                target: _,
+                keys: _,
+                results: _,
+            } => Ok(()),
+            OpCode::Todo {
+                results,
+                result_types,
+                ..
+            } => {
                 if results.len() != result_types.len() {
                     return Err(format!(
                         "Todo opcode has {} results but {} result types",

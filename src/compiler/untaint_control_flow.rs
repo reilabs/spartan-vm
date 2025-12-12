@@ -325,10 +325,17 @@ impl UntaintControlFlow {
                         keys,
                         results,
                     },
-                    OpCode::Todo { payload, results, result_types } => OpCode::Todo {
+                    OpCode::Todo {
                         payload,
                         results,
-                        result_types: result_types.iter().map(|tp| self.pure_taint_for_type(tp.clone())).collect(),
+                        result_types,
+                    } => OpCode::Todo {
+                        payload,
+                        results,
+                        result_types: result_types
+                            .iter()
+                            .map(|tp| self.pure_taint_for_type(tp.clone()))
+                            .collect(),
                     },
                 };
                 new_instructions.push(new);
@@ -427,24 +434,22 @@ impl UntaintControlFlow {
                     } => {
                         new_instructions.push(instruction);
                     }
-                    OpCode::AssertEq { lhs, rhs } => {
-                        match block_taint {
-                            Some(taint) => {
-                                let new_rhs = function.fresh_value();
-                                new_instructions.push(OpCode::Select {
-                                    result: new_rhs,
-                                    cond: taint,
-                                    if_t: rhs,
-                                    if_f: lhs,
-                                });
-                                new_instructions.push(OpCode::AssertEq {
-                                    lhs: lhs,
-                                    rhs: new_rhs,
-                                })
-                            }
-                            None => new_instructions.push(instruction),
+                    OpCode::AssertEq { lhs, rhs } => match block_taint {
+                        Some(taint) => {
+                            let new_rhs = function.fresh_value();
+                            new_instructions.push(OpCode::Select {
+                                result: new_rhs,
+                                cond: taint,
+                                if_t: rhs,
+                                if_f: lhs,
+                            });
+                            new_instructions.push(OpCode::AssertEq {
+                                lhs: lhs,
+                                rhs: new_rhs,
+                            })
                         }
-                    }
+                        None => new_instructions.push(instruction),
+                    },
                     OpCode::Store { ptr, value: v } => {
                         let ptr_taint = function_taint
                             .get_value_taint(ptr)
@@ -570,11 +575,15 @@ impl UntaintControlFlow {
                         });
                     }
 
-                    OpCode::Todo { payload, results, result_types } => {
-                        new_instructions.push(OpCode::Todo { 
-                            payload, 
-                            results, 
-                            result_types 
+                    OpCode::Todo {
+                        payload,
+                        results,
+                        result_types,
+                    } => {
+                        new_instructions.push(OpCode::Todo {
+                            payload,
+                            results,
+                            result_types,
                         });
                     }
                     _ => {

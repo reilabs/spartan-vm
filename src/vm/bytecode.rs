@@ -963,13 +963,16 @@ mod def {
         let table_idx = *vm.rgchk_8.as_ref().unwrap();
         let table_info = &vm.tables[table_idx];
 
-
         let inv_coeff = unsafe {
-            let r = *vm.data.as_ad.ad_coeffs.offset(vm.data.as_ad.current_cnst_lookups_off as isize);
+            let r = *vm
+                .data
+                .as_ad
+                .ad_coeffs
+                .offset(vm.data.as_ad.current_cnst_lookups_off as isize);
             vm.data.as_ad.current_cnst_lookups_off += 1;
             r
         };
-        
+
         let inv_sum_coeff = unsafe {
             *vm.data
                 .as_ad
@@ -990,13 +993,14 @@ mod def {
             // bumps for the inversion assert
             *vm.data.as_ad.out_da.offset(current_inv_wit_offset as isize) += inv_coeff;
 
-            *vm.data.as_ad.out_db.offset(vm.data.as_ad.logup_wit_challenge_off as isize) += inv_coeff;
+            *vm.data
+                .as_ad
+                .out_db
+                .offset(vm.data.as_ad.logup_wit_challenge_off as isize) += inv_coeff;
             val.bump_db(-inv_coeff, vm);
 
             *vm.data.as_ad.out_dc += inv_coeff;
         }
-
-
 
         // unsafe {}
         // panic!("TODO: implement drngchk_8_field");

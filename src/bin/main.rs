@@ -1,12 +1,11 @@
 use std::{fs, path::PathBuf, process::ExitCode};
 
-use ark_ff::UniformRand as _;
 use clap::Parser;
-use spartan_vm::{Error, Project, compiler::Field, driver::Driver, vm::interpreter};
+use spartan_vm::api::{self, ApiError};
+use spartan_vm::compiler::Field;
 use tracing::{error, info, warn};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
-use noirc_abi::input_parser::{Format, InputValue};
 
 /// The default Noir project path for the CLI to extract from.
 const DEFAULT_NOIR_PROJECT_PATH: &str = "./";
@@ -45,54 +44,52 @@ fn main() -> ExitCode {
     })
 }
 
-/// The main execution of the CLI utility. Should be called directly from the
-/// `main` function of the application.
-///
-/// # Errors
-///
-/// - [`Error`] if the extraction process fails for any reason.
-pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
-    let project = Project::new(args.root.clone())?;
+/// Compile phase: compile the Noir project and save artifacts to a file.
+pub fn run_compile(args: &ProgramOptions, output: &PathBuf) -> Result<ExitCode, ApiError> {
+    info!(message = %"Compiling Noir project", root = ?args.root, output = ?output);
 
-    let mut driver = Driver::new(project, args.draw_graphs);
+    let artifacts = api::compile_to_artifacts(args.root.clone(), args.draw_graphs)?;
 
-    driver.run_noir_compiler().unwrap();
-    driver.monomorphize().unwrap();
-    driver.explictize_witness().unwrap();
-    let r1cs = driver.generate_r1cs().unwrap();
+    api::save_artifacts(&artifacts, output)?;
 
-    if args.pprint_r1cs {
-        use std::io::Write;
-        let mut r1cs_file =
-            fs::File::create(driver.get_debug_output_dir().join("r1cs.txt")).unwrap();
-        for r1c in r1cs.constraints.iter() {
-            writeln!(r1cs_file, "{}", r1c).unwrap();
-        }
+    info!(
+        message = %"Artifacts saved successfully",
+        r1cs_constraints = artifacts.r1cs.constraints.len(),
+        witgen_binary_size = artifacts.witgen_binary.len() * 8,
+        ad_binary_size = artifacts.ad_binary.len() * 8,
+    );
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Execute phase: load artifacts and run witness generation and AD.
+pub fn run_execute(
+    args: &ProgramOptions,
+    artifacts_path: &PathBuf,
+    output_dir: Option<&PathBuf>,
+) -> Result<ExitCode, ApiError> {
+    info!(message = %"Loading artifacts", path = ?artifacts_path);
+
+    let mut artifacts = api::load_artifacts(artifacts_path)?;
+
+    let r1cs = &artifacts.r1cs;
+
+    let debug_dir = output_dir
+        .cloned()
+        .unwrap_or_else(|| args.root.join("spartan_vm_debug"));
+
+    if !debug_dir.exists() {
+        fs::create_dir_all(&debug_dir).unwrap();
     }
 
-    let file_path = args.root.join("Prover.toml");
-    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap();
-    let format = Format::from_ext(ext).unwrap();
-    let inputs = std::fs::read_to_string(file_path).unwrap();
-    let inputs = format.parse(&inputs, driver.abi()).unwrap();
-    let ordered_params = ordered_params(driver.abi(), &inputs);
+    // For execute mode, we still need the prover inputs from the project
+    // We need to read the ABI from somewhere - for now, require the project root
+    let (driver, _) = api::compile_to_r1cs(args.root.clone(), false)?;
+    let params = api::read_prover_inputs(&args.root, driver.abi())?;
 
-    let mut binary = driver.compile_witgen().unwrap();
+    let witgen_result = api::run_witgen_from_binary(&mut artifacts.witgen_binary, r1cs, &params);
 
-    let witgen_result = interpreter::run(
-        &mut binary,
-        r1cs.witness_layout,
-        r1cs.constraints_layout,
-        &ordered_params,
-    );
-
-    let correct = r1cs.check_witgen_output(
-        &witgen_result.out_wit_pre_comm,
-        &witgen_result.out_wit_post_comm,
-        &witgen_result.out_a,
-        &witgen_result.out_b,
-        &witgen_result.out_c,
-    );
+    let correct = api::check_witgen(r1cs, &witgen_result);
     if !correct {
         error!(message = %"Witgen output is incorrect");
     } else {
@@ -101,7 +98,72 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
 
     let leftover_memory = witgen_result
         .instrumenter
-        .plot(&driver.get_debug_output_dir().join("witgen_vm_memory.png"));
+        .plot(&debug_dir.join("witgen_vm_memory.png"));
+    if leftover_memory > 0 {
+        warn!(message = %"VM memory leak detected", leftover_memory);
+    } else {
+        info!(message = %"VM memory leak not detected");
+    }
+
+    // Run AD
+    let ad_coeffs: Vec<Field> = api::random_ad_coeffs(r1cs);
+    let (ad_a, ad_b, ad_c, ad_instrumenter) =
+        api::run_ad_from_binary(&mut artifacts.ad_binary, r1cs, &ad_coeffs);
+
+    let leftover_memory = ad_instrumenter.plot(&debug_dir.join("ad_vm_memory.png"));
+    if leftover_memory > 0 {
+        warn!(message = %"AD VM memory leak detected", leftover_memory);
+    } else {
+        info!(message = %"AD VM memory leak not detected");
+    }
+
+    let correct = api::check_ad(r1cs, &ad_coeffs, &ad_a, &ad_b, &ad_c);
+    if !correct {
+        error!(message = %"AD output is incorrect");
+    } else {
+        info!(message = %"AD output is correct");
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The main execution of the CLI utility (full pipeline). Should be called directly from the
+/// `main` function of the application.
+///
+/// # Errors
+///
+/// - [`ApiError`] if the extraction process fails for any reason.
+pub fn run(args: &ProgramOptions) -> Result<ExitCode, ApiError> {
+    let (driver, r1cs) = api::compile_to_r1cs(args.root.clone(), args.draw_graphs)?;
+
+    // info!(
+    //     "R1CS {:?}",
+    //     r1cs
+    // );
+    if args.pprint_r1cs {
+        use std::io::Write;
+        let mut r1cs_file =
+            fs::File::create(api::debug_output_dir(&driver).join("r1cs.txt")).unwrap();
+        for r1c in r1cs.constraints.iter() {
+            writeln!(r1cs_file, "{}", r1c).unwrap();
+        }
+    }
+
+    let params = api::read_prover_inputs(&args.root, driver.abi())?;
+    let mut binary = api::compile_witgen(&driver)?;
+
+    let witgen_result = api::run_witgen_from_binary(&mut binary, &r1cs, &params);
+
+    let correct = api::check_witgen(&r1cs, &witgen_result);
+    if !correct {
+        error!(message = %"Witgen output is incorrect");
+    } else {
+        info!(message = %"Witgen output is correct");
+    }
+
+    let leftover_memory = witgen_result
+        .instrumenter
+        .plot(&api::debug_output_dir(&driver).join("witgen_vm_memory.png"));
     if leftover_memory > 0 {
         warn!(message = %"VM memory leak detected", leftover_memory);
     } else {
@@ -109,7 +171,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     }
 
     fs::write(
-        driver.get_debug_output_dir().join("witness_pre_comm.txt"),
+        api::debug_output_dir(&driver).join("witness_pre_comm.txt"),
         witgen_result
             .out_wit_pre_comm
             .iter()
@@ -119,7 +181,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     )
     .unwrap();
     fs::write(
-        driver.get_debug_output_dir().join("a.txt"),
+        api::debug_output_dir(&driver).join("a.txt"),
         witgen_result
             .out_a
             .iter()
@@ -129,7 +191,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     )
     .unwrap();
     fs::write(
-        driver.get_debug_output_dir().join("b.txt"),
+        api::debug_output_dir(&driver).join("b.txt"),
         witgen_result
             .out_b
             .iter()
@@ -139,7 +201,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     )
     .unwrap();
     fs::write(
-        driver.get_debug_output_dir().join("c.txt"),
+        api::debug_output_dir(&driver).join("c.txt"),
         witgen_result
             .out_c
             .iter()
@@ -149,29 +211,22 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     )
     .unwrap();
 
-    let mut ad_binary = driver.compile_ad().unwrap();
+    let mut ad_binary = api::compile_ad(&driver)?;
 
-    let mut ad_coeffs: Vec<Field> = vec![];
-    for _ in 0..r1cs.constraints.len() {
-        ad_coeffs.push(ark_bn254::Fr::rand(&mut rand::thread_rng()));
-    }
+    let ad_coeffs: Vec<Field> = api::random_ad_coeffs(&r1cs);
 
-    let (ad_a, ad_b, ad_c, ad_instrumenter) = interpreter::run_ad(
-        &mut ad_binary,
-        &ad_coeffs,
-        r1cs.witness_layout,
-        r1cs.constraints_layout,
-    );
+    let (ad_a, ad_b, ad_c, ad_instrumenter) =
+        api::run_ad_from_binary(&mut ad_binary, &r1cs, &ad_coeffs);
 
     let leftover_memory =
-        ad_instrumenter.plot(&driver.get_debug_output_dir().join("ad_vm_memory.png"));
+        ad_instrumenter.plot(&api::debug_output_dir(&driver).join("ad_vm_memory.png"));
     if leftover_memory > 0 {
         warn!(message = %"AD VM memory leak detected", leftover_memory);
     } else {
         info!(message = %"AD VM memory leak not detected");
     }
 
-    let correct = r1cs.check_ad_output(&ad_coeffs, &ad_a, &ad_b, &ad_c);
+    let correct = api::check_ad(&r1cs, &ad_coeffs, &ad_a, &ad_b, &ad_c);
     if !correct {
         error!(message = %"AD output is incorrect");
     } else {
@@ -179,7 +234,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     }
 
     fs::write(
-        driver.get_debug_output_dir().join("ad_a.txt"),
+        api::debug_output_dir(&driver).join("ad_a.txt"),
         ad_a.iter()
             .map(|w| w.to_string())
             .collect::<Vec<_>>()
@@ -187,7 +242,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     )
     .unwrap();
     fs::write(
-        driver.get_debug_output_dir().join("ad_b.txt"),
+        api::debug_output_dir(&driver).join("ad_b.txt"),
         ad_b.iter()
             .map(|w| w.to_string())
             .collect::<Vec<_>>()
@@ -195,7 +250,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     )
     .unwrap();
     fs::write(
-        driver.get_debug_output_dir().join("ad_c.txt"),
+        api::debug_output_dir(&driver).join("ad_c.txt"),
         ad_c.iter()
             .map(|w| w.to_string())
             .collect::<Vec<_>>()
@@ -203,7 +258,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     )
     .unwrap();
     fs::write(
-        driver.get_debug_output_dir().join("ad_coeffs.txt"),
+        api::debug_output_dir(&driver).join("ad_coeffs.txt"),
         ad_coeffs
             .iter()
             .map(|w| w.to_string())
@@ -227,18 +282,4 @@ fn parse_path(path: &str) -> Result<PathBuf, String> {
         path = std::env::current_dir().unwrap().join(path).normalize();
     }
     Ok(path)
-}
-
-fn ordered_params(
-    abi: &noirc_abi::Abi,
-    unordered_params: &std::collections::BTreeMap<String, InputValue>,
-) -> Vec<InputValue> {
-    let mut ordered_params = Vec::new();
-    for param_mame in abi.parameter_names() {
-        let param = unordered_params
-            .get(param_mame)
-            .expect("Parameter not found in unordered params");
-        ordered_params.push(param.clone());
-    }
-    ordered_params
 }
