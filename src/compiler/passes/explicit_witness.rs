@@ -99,10 +99,10 @@ impl ExplicitWitness {
                                             out_hint_witness := write_witness(out_hint_field);
                                             #result := cast_to(u1, out_hint_witness);
 
-                                            not_res := sub(! Field::ONE : Field, result);
+                                            not_res := sub(! Field::ONE : Field, out_hint_witness);
 
                                             constrain(lr_diff, div_hint_witness, not_res);
-                                            constrain(lr_diff, result, ! Field::ZERO : Field);
+                                            constrain(lr_diff, out_hint_witness, ! Field::ZERO : Field);
 
 
                                         } ->);
@@ -123,6 +123,8 @@ impl ExplicitWitness {
                                             //   2 * result * (rhs - lhs) + lhs - rhs - result >= 0
                                              
                                             res_hint := lt(lhs, rhs);
+                                            lhs_field := cast_to_field(lhs);
+                                            rhs_field := cast_to_field(rhs);
                                             res_hint_field := cast_to_field(res_hint);
                                             res_witness := write_witness(res_hint_field);
                                             res_not := sub(! Field::ONE : Field, res_witness);
@@ -131,7 +133,7 @@ impl ExplicitWitness {
                                             constrain(res_witness, res_not, ! Field::ZERO : Field);
 
                                             two_res := mul(res_witness, ! Field::from(2) : Field);
-                                            rhs_sub_lhs := sub(rhs, lhs);
+                                            rhs_sub_lhs := sub(rhs_field, lhs_field);
 
                                             lhs_sub_rhs := sub(! Field::ZERO : Field, rhs_sub_lhs);
                                             lhs_sub_rhs_sub_res := sub(lhs_sub_rhs, res_witness);
@@ -256,6 +258,32 @@ impl ExplicitWitness {
                                 continue;
                             }
                             let one = function.push_field_const(ark_ff::Fp::from(1));
+                            let l = match &function_type_info.get_value_type(l).expr {
+                                TypeExpr::U(_) =>{
+                                    let new_l = function.fresh_value();
+                                    new_instructions.push(OpCode::Cast {
+                                        result: new_l,
+                                        value: l,
+                                        target: CastTarget::Field,
+                                    });
+                                    new_l
+                                }
+                                TypeExpr::Field => l,
+                                _ => todo!("unsupported type for assert eq"),
+                            };
+                            let r = match &function_type_info.get_value_type(r).expr {
+                                TypeExpr::U(_) => {
+                                    let new_r = function.fresh_value();
+                                    new_instructions.push(OpCode::Cast {
+                                        result: new_r,
+                                        value: r,
+                                        target: CastTarget::Field,
+                                    });
+                                    new_r
+                                }
+                                TypeExpr::Field => r,
+                                _ => todo!("unsupported type for assert eq"),
+                            };
                             new_instructions.push(OpCode::Constrain { a: l, b: one, c: r });
                         }
                         OpCode::AssertR1C { a, b, c } => {
@@ -377,6 +405,12 @@ impl ExplicitWitness {
                                 value: select_witness,
                                 witness_annotation: ConstantTaint::Witness,
                             });
+                            let cond_field = function.fresh_value();
+                            new_instructions.push(OpCode::Cast {
+                                result: cond_field,
+                                value: cond,
+                                target: CastTarget::Field,
+                            });
                             // Goal is to assert 0 = cond * l + (1 - cond) * r - res
                             // This is equivalent to 0 = cond * (l - r) + r - res = cond * (l - r) - (res - r)
                             let neg_one = function.push_field_const(ark_ff::Fp::from(-1));
@@ -402,7 +436,7 @@ impl ExplicitWitness {
                                 rhs: neg_r,
                             });
                             new_instructions.push(OpCode::Constrain {
-                                a: cond,
+                                a: cond_field,
                                 b: l_sub_r,
                                 c: res_sub_r,
                             });

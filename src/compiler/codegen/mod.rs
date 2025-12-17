@@ -86,6 +86,13 @@ impl FrameLayouter {
         }
         bytecode::FramePosition(r)
     }
+
+    fn alloc_words(&mut self, size: usize, value: ValueId) -> bytecode::FramePosition {
+        self.variables.insert(value, self.next_free);
+        let r = self.next_free;
+        self.next_free += size;
+        bytecode::FramePosition(r)
+    }
 }
 
 struct EmitterState {
@@ -129,11 +136,14 @@ impl CodeGen {
         cfg: &FlowAnalysis,
         type_info: &TypeInfo<ConstantTaint>,
     ) -> bytecode::Program {
+        let (global_to_bytecode, bytecode_globals) = self.gen_globals(ssa.get_globals());
+
         let function = ssa.get_main();
         let function = self.run_function(
             function,
             cfg.get_function_cfg(ssa.get_main_id()),
             type_info.get_function(ssa.get_main_id()),
+            &global_to_bytecode,
         );
 
         let mut functions = vec![function];
@@ -151,6 +161,7 @@ impl CodeGen {
                 function,
                 cfg.get_function_cfg(*function_id),
                 type_info.get_function(*function_id),
+                &global_to_bytecode,
             );
             function_ids.insert(*function_id, cur_fn_begin);
             cur_fn_begin += function.code.len();
@@ -179,6 +190,7 @@ impl CodeGen {
 
         bytecode::Program {
             functions: functions,
+            globals: bytecode_globals,
         }
     }
 
@@ -187,7 +199,9 @@ impl CodeGen {
         function: &Function<ConstantTaint>,
         cfg: &CFG,
         type_info: &FunctionTypeInfo<ConstantTaint>,
+        global_to_bytecode: &[GlobalResult],
     ) -> bytecode::Function {
+        println!("Running function: {:?}", function.get_name());
         let mut layouter = FrameLayouter::new();
         let entry = function.get_entry();
         let mut emitter = EmitterState::new();
@@ -228,6 +242,7 @@ impl CodeGen {
             function.get_entry_id(),
             entry,
             type_info,
+            global_to_bytecode,
             &mut layouter,
             &mut emitter,
         );
@@ -245,6 +260,7 @@ impl CodeGen {
                 block_id,
                 block,
                 type_info,
+                global_to_bytecode,
                 &mut layouter,
                 &mut emitter,
             );
@@ -299,9 +315,11 @@ impl CodeGen {
         block_id: BlockId,
         block: &Block<ConstantTaint>,
         type_info: &FunctionTypeInfo<ConstantTaint>,
+        global_to_bytecode: &[GlobalResult],
         layouter: &mut FrameLayouter,
         emitter: &mut EmitterState,
     ) {
+        println!("Running block body for block: {:?}", block_id);
         emitter.enter_block(block_id);
         for instruction in block.get_instructions() {
             match instruction {
@@ -540,8 +558,8 @@ impl CodeGen {
                     let c_type = type_info.get_value_type(*c);
                     if !a_type.is_field() || !b_type.is_field() || !c_type.is_field() {
                         panic!(
-                            "Unsupported type for constrain: {:?}, {:?}, {:?}",
-                            a_type, b_type, c_type
+                            "Unsupported type for constrain: v{}:{:?}, v{}:{:?}, v{}:{:?}",
+                            a.0, a_type, b.0, b_type, c.0, c_type,
                         );
                     }
                     emitter.push_op(bytecode::OpCode::R1C {
@@ -705,13 +723,13 @@ impl CodeGen {
                     })
                 }
                 ssa::OpCode::ToRadix {
-                    result: _,
-                    value: _,
-                    radix: _,
-                    endianness: _,
-                    count: _,
+                    result,
+                    value,
+                    radix,
+                    endianness,
+                    count,
                 } => {
-                    panic!("ToRadix not yet implemented");
+                    panic!("ToRadix not yet implemented {:?}, {:?}, {:?}, {:?}, {:?}", result, value, radix, endianness, count);
                 }
                 ssa::OpCode::NextDCoeff { result: out } => {
                     let v = layouter.alloc_field(*out);
@@ -790,6 +808,21 @@ impl CodeGen {
                         val: layouter.get_value(keys[0]),
                     });
                 }
+                ssa::OpCode::Lookup {
+                    target: LookupTarget::Array(arr),
+                    keys,
+                    results,
+                } => {
+                    assert!(keys.len() == 1);
+                    assert!(results.len() == 1);
+                    assert!(type_info.get_value_type(keys[0]).is_field());
+                    assert!(type_info.get_value_type(results[0]).is_field());
+                    emitter.push_op(bytecode::OpCode::LookupArray {
+                        arr: layouter.get_value(*arr),
+                        key: layouter.get_value(keys[0]),
+                        val: layouter.get_value(results[0]),
+                    });
+                }
                 ssa::OpCode::DLookup {
                     target: LookupTarget::Rangecheck(8),
                     keys,
@@ -804,6 +837,29 @@ impl CodeGen {
                 }
                 ssa::OpCode::Todo { payload, .. } => {
                     panic!("Todo opcode encountered in Codegen: {}", payload);
+                }
+                ssa::OpCode::ReadGlobal {
+                    result: r,
+                    offset: index,
+                    result_type: _,
+                } => {
+                    match &global_to_bytecode[*index as usize] {
+                        GlobalResult::AsGlobal(off) => {
+                            emitter.push_op(bytecode::OpCode::ReadGlobal {
+                                res: layouter.alloc_ptr(*r),
+                                global: *off,
+                            });
+                        }
+                        GlobalResult::AsConst(data) => {
+                            let res = layouter.alloc_words(data.len(), *r);
+                            for (i, word) in data.iter().enumerate() {
+                                emitter.push_op(bytecode::OpCode::MovConst {
+                                    res: res.offset(i as isize),
+                                    val: *word,
+                                });
+                            }
+                        }
+                    }
                 }
                 other => panic!("Unsupported instruction: {:?}", other),
             }
@@ -835,4 +891,65 @@ impl CodeGen {
             }
         }
     }
+
+    fn gen_globals(&self, globals: &[ssa::GlobalDef]) -> (Vec<GlobalResult>, Vec<bytecode::GlobalDef>) {
+        let mut bytecode = vec![];
+        let mut global_to_bytecode = vec![];
+
+        for global in globals {
+            match global {
+                ssa::GlobalDef::Const(Const::Field(f)) =>{
+                    // skipped - the function should inline them instead
+                    global_to_bytecode.push(GlobalResult::AsConst(f.0.0.to_vec()));
+                }
+                ssa::GlobalDef::Const(Const::U(s, v)) => {
+                    assert!(*s <= 64);
+                    global_to_bytecode.push(GlobalResult::AsConst(vec![*v as u64]));
+                }
+                ssa::GlobalDef::Array(values, tp) => {
+                    match &tp.expr {
+                        TypeExpr::Array(inner, _) | TypeExpr::Slice(inner) => {
+                            match &inner.expr {
+                                TypeExpr::Field | TypeExpr::U(_) => {
+                                    let mut data = vec![];
+                                    for value in values {
+                                        match globals[*value] {
+                                            ssa::GlobalDef::Const(Const::Field(v)) => {
+                                                data.extend_from_slice(&v.0.0);
+                                            }
+                                            ssa::GlobalDef::Const(Const::U(s, v)) => {
+                                                assert!(s <= 64);
+                                                data.push(v as u64);
+                                            }
+                                            _ => panic!("ICE: Unsupported global type"),
+                                        }
+
+                                    }
+                                    bytecode.push(bytecode::GlobalDef::PrimArray {
+                                        size: data.len(),
+                                        data,
+                                    });
+                                    global_to_bytecode.push(GlobalResult::AsGlobal(bytecode.len() - 1));
+                                }
+                                TypeExpr::BoxedField | TypeExpr::Array(_, _) | TypeExpr::Ref(_) | TypeExpr::Slice(_) => {
+                                    todo!("boxed array")
+                                }
+                            }
+                        }
+                        _ => panic!("ICE: Unsupported array type: {:?}", tp.expr),
+                    }
+                }
+                ssa::GlobalDef::Const(Const::BoxedField(_)) => {
+                    todo!("boxed const")
+                }
+            }
+        }
+
+        (global_to_bytecode, bytecode)
+    }
+}
+
+enum GlobalResult {
+    AsGlobal(usize),
+    AsConst(Vec<u64>),
 }

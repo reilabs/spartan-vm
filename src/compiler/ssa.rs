@@ -160,6 +160,10 @@ where
     pub fn get_globals(&self) -> &[GlobalDef] {
         &self.globals
     }
+    
+    pub fn get_globals_mut(&mut self) -> &mut Vec<GlobalDef> {
+        &mut self.globals
+    }
 }
 
 impl SSA<Empty> {

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::compiler::{
     ir::r#type::{Type, TypeExpr},
     pass_manager::{DataPoint, Pass},
-    ssa::{BinaryArithOpKind, CastTarget, Const, DMatrix, OpCode},
+    ssa::{BinaryArithOpKind, CastTarget, Const, DMatrix, GlobalDef, OpCode},
     taint_analysis::ConstantTaint,
 };
 
@@ -40,6 +40,20 @@ impl BoxFields {
         ssa: &mut crate::compiler::ssa::SSA<ConstantTaint>,
         type_info: &crate::compiler::analysis::types::TypeInfo<ConstantTaint>,
     ) {
+
+        for global in ssa.get_globals_mut() {
+            match global {
+                GlobalDef::Const(Const::Field(value)) => {
+                    *global = GlobalDef::Const(Const::BoxedField(*value));
+                }
+                GlobalDef::Const(Const::U(_, _)) => {}
+                GlobalDef::Const(Const::BoxedField(_)) => {}
+                GlobalDef::Array(_, tp) => {
+                    *tp = self.box_fields_in_type(&tp.as_pure::<ConstantTaint>()).as_pure();
+                }
+            }
+        }
+
         for (function_id, function) in ssa.iter_functions_mut() {
             let type_info = type_info.get_function(*function_id);
             for rtp in function.iter_returns_mut() {
