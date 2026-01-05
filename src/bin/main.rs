@@ -77,10 +77,12 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     let inputs = format.parse(&inputs, driver.abi()).unwrap();
     let ordered_params = ordered_params(driver.abi(), &inputs);
 
-    let mut binary = driver.compile_witgen().unwrap();
+    let binary = driver.compile_witgen().unwrap();
 
+    // Clone binary for threaded interpreter (in case it modifies it)
+    let mut binary_threaded = binary.clone();
     let witgen_result = interpreter::run(
-        &mut binary,
+        &mut binary_threaded,
         r1cs.witness_layout,
         r1cs.constraints_layout,
         &ordered_params,
@@ -99,13 +101,43 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         info!(message = %"Witgen output is correct");
     }
 
+
     let leftover_memory = witgen_result
         .instrumenter
         .plot(&driver.get_debug_output_dir().join("witgen_vm_memory.png"));
     if leftover_memory > 0 {
-        warn!(message = %"VM memory leak detected", leftover_memory);
+        warn!(message = %"Threaded VM memory leak detected", leftover_memory);
     } else {
-        info!(message = %"VM memory leak not detected");
+        info!(message = %"Threaded VM memory leak not detected");
+    }
+
+    let witgen_result_branching = interpreter::run_branching(
+        &binary,
+        r1cs.witness_layout,
+        r1cs.constraints_layout,
+        &ordered_params,
+    );
+
+    let correct_branching = r1cs.check_witgen_output(
+        &witgen_result_branching.out_wit_pre_comm,
+        &witgen_result_branching.out_wit_post_comm,
+        &witgen_result_branching.out_a,
+        &witgen_result_branching.out_b,
+        &witgen_result_branching.out_c,
+    );
+    if !correct_branching {
+        error!(message = %"Branching witgen output is incorrect");
+    } else {
+        info!(message = %"Branching witgen output is correct");
+    }
+
+    let leftover_memory_branching = witgen_result_branching
+        .instrumenter
+        .plot(&driver.get_debug_output_dir().join("witgen_vm_memory_branching.png"));
+    if leftover_memory_branching > 0 {
+        warn!(message = %"Branching VM memory leak detected", leftover_memory_branching);
+    } else {
+        info!(message = %"Branching VM memory leak not detected");
     }
 
     fs::write(
@@ -149,27 +181,22 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     )
     .unwrap();
 
-    let mut ad_binary = driver.compile_ad().unwrap();
+    let ad_binary = driver.compile_ad().unwrap();
 
     let mut ad_coeffs: Vec<Field> = vec![];
     for _ in 0..r1cs.constraints.len() {
         ad_coeffs.push(ark_bn254::Fr::rand(&mut rand::thread_rng()));
     }
 
+    // Clone binary for threaded interpreter (in case it modifies it)
+    let mut ad_binary_threaded = ad_binary.clone();
     let (ad_a, ad_b, ad_c, ad_instrumenter) = interpreter::run_ad(
-        &mut ad_binary,
+        &mut ad_binary_threaded,
         &ad_coeffs,
         r1cs.witness_layout,
         r1cs.constraints_layout,
     );
 
-    let leftover_memory =
-        ad_instrumenter.plot(&driver.get_debug_output_dir().join("ad_vm_memory.png"));
-    if leftover_memory > 0 {
-        warn!(message = %"AD VM memory leak detected", leftover_memory);
-    } else {
-        info!(message = %"AD VM memory leak not detected");
-    }
 
     let correct = r1cs.check_ad_output(&ad_coeffs, &ad_a, &ad_b, &ad_c);
     if !correct {
@@ -178,6 +205,37 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         info!(message = %"AD output is correct");
     }
 
+    let leftover_memory =
+        ad_instrumenter.plot(&driver.get_debug_output_dir().join("ad_vm_memory.png"));
+    if leftover_memory > 0 {
+        warn!(message = %"Threaded AD VM memory leak detected", leftover_memory);
+    } else {
+        info!(message = %"Threaded AD VM memory leak not detected");
+    }
+
+
+    let (ad_a_branching, ad_b_branching, ad_c_branching, ad_instrumenter_branching) = interpreter::run_ad_branching(
+        &ad_binary,
+        &ad_coeffs,
+        r1cs.witness_layout,
+        r1cs.constraints_layout,
+    );
+
+    let correct_branching_ad = r1cs.check_ad_output(&ad_coeffs, &ad_a_branching, &ad_b_branching, &ad_c_branching);
+    if !correct_branching_ad {
+        error!(message = %"Branching AD output is incorrect");
+    } else {
+        info!(message = %"Branching AD output is correct");
+    }
+
+    let leftover_memory_branching =
+        ad_instrumenter_branching.plot(&driver.get_debug_output_dir().join("ad_vm_memory_branching.png"));
+    if leftover_memory_branching > 0 {
+        warn!(message = %"Branching AD VM memory leak detected", leftover_memory_branching);
+    } else {
+        info!(message = %"Branching AD VM memory leak not detected");
+    }
+    
     fs::write(
         driver.get_debug_output_dir().join("ad_a.txt"),
         ad_a.iter()

@@ -378,31 +378,29 @@ impl VM {
 #[interpreter]
 mod def {
     #[raw_opcode]
-    fn jmp(pc: *const u64, frame: Frame, vm: &mut VM, target: JumpTarget) {
-        let pc = unsafe { pc.offset(target.0) };
+    fn jmp(pc: &mut *const u64, frame: &mut Frame, vm: &mut VM, target: JumpTarget) {
+        *pc = unsafe { pc.offset(target.0) };
         // println!("jmp: target={:?}", pc);
-        dispatch(pc, frame, vm);
     }
 
     #[raw_opcode]
     fn jmp_if(
-        pc: *const u64,
-        frame: Frame,
+        pc: &mut *const u64,
+        frame: &mut Frame,
         vm: &mut VM,
         #[frame] cond: u64,
         if_t: JumpTarget,
         if_f: JumpTarget,
     ) {
         let target = if cond != 0 { if_t } else { if_f };
-        let pc = unsafe { pc.offset(target.0) };
-        // println!("jmp_if: cond={} target={:?}", cond, pc);
-        dispatch(pc, frame, vm);
+        *pc = unsafe { pc.offset(target.0) };
+        // println!("jmp_if: cond={} target={:?}", pc);
     }
 
     #[raw_opcode]
     fn call(
-        pc: *const u64,
-        frame: Frame,
+        pc: &mut *const u64,
+        frame: &mut Frame,
         vm: &mut VM,
         func: JumpTarget,
         args: &[(usize, FramePosition)],
@@ -410,7 +408,7 @@ mod def {
     ) {
         let func_pc = unsafe { pc.offset(func.0) };
         let func_frame_size = unsafe { *func_pc.offset(-1) };
-        let new_frame = Frame::push(func_frame_size, frame, vm);
+        let new_frame = Frame::push(func_frame_size, *frame, vm);
         let ret_data_ptr = unsafe { frame.data.offset(ret.0 as isize) };
         let ret_pc = unsafe { pc.offset(4 + 2 * args.len() as isize) };
 
@@ -428,25 +426,23 @@ mod def {
 
         // println!("call: func={:?} (size={})", func_pc, unsafe {*func_pc.offset(-1)});
 
-        dispatch(func_pc, new_frame, vm);
+        *pc = func_pc;
+        *frame = new_frame;
     }
 
     #[raw_opcode]
-    fn ret(_pc: *const u64, frame: Frame, vm: &mut VM) {
+    fn ret(pc: &mut *const u64, frame: &mut Frame, vm: &mut VM) {
         let ret_address = unsafe { *frame.data.offset(1) } as *mut u64;
         let new_frame = frame.pop(vm);
-        if new_frame.data.is_null() {
-            // println!("finish return");
-            return;
-        }
-        // println!("ret");
-        dispatch(ret_address, new_frame, vm);
+        *pc = ret_address;
+        *frame = new_frame;
+        // println!("ret: pc={:?}", ret_address);
     }
 
     #[raw_opcode]
     fn r1c(
-        pc: *const u64,
-        frame: Frame,
+        pc: &mut *const u64,
+        frame: &mut Frame,
         vm: &mut VM,
         #[frame] a: Field,
         #[frame] b: Field,
@@ -465,18 +461,16 @@ mod def {
             vm.data.as_forward.out_b = vm.data.as_forward.out_b.offset(1);
             vm.data.as_forward.out_c = vm.data.as_forward.out_c.offset(1);
         };
-        let pc = unsafe { pc.offset(4) };
-        dispatch(pc, frame, vm);
+        *pc = unsafe { pc.offset(4) };
     }
 
     #[raw_opcode]
-    fn write_witness(pc: *const u64, frame: Frame, vm: &mut VM, #[frame] val: Field) {
+    fn write_witness(pc: &mut *const u64, frame: &mut Frame, vm: &mut VM, #[frame] val: Field) {
         unsafe {
             *vm.data.as_forward.algebraic_witness = val;
             vm.data.as_forward.algebraic_witness = vm.data.as_forward.algebraic_witness.offset(1);
         };
-        let pc = unsafe { pc.offset(2) };
-        dispatch(pc, frame, vm);
+        *pc = unsafe { pc.offset(2) };
     }
 
     #[opcode]
