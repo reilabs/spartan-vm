@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    compiler::Field,
-    vm::bytecode::{AllocationType, VM},
+    Field,
+    bytecode::{AllocationType, VM},
 };
 
 #[derive(Debug, Clone, Copy)]
