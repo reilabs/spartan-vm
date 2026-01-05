@@ -1,6 +1,7 @@
 #![allow(unused_variables)]
 
 use crate::layouts::{ConstraintsLayout, WitnessLayout};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::interpreter::dispatch;
 use ark_ff::{AdditiveGroup as _, BigInteger as _};
 use opcode_gen::interpreter;
@@ -12,6 +13,7 @@ use crate::{
 };
 
 use crate::array::DataType;
+#[cfg(not(target_arch = "wasm32"))]
 use plotters::prelude::*;
 use std::fmt::Display;
 use std::path::Path;
@@ -62,6 +64,13 @@ impl AllocationInstrumenter {
         self.events.push(AlocationEvent::Free(ty, size));
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn plot(&self, _path: &Path) -> usize {
+        // Plotting not supported in WASM
+        0
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn plot(&self, path: &Path) -> usize {
         // Calculate memory usage over time
         let mut stack_usage = Vec::new();

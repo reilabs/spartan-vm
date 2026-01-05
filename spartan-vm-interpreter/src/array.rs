@@ -28,7 +28,7 @@ pub enum DataType {
 
 impl BoxedLayout {
     fn new_sized(data_type: DataType, size: usize) -> Self {
-        assert!(size < (1 << 56));
+        assert!(size < (1u64 << 56) as usize);
         Self(data_type as u64 | ((size as u64) << 8))
     }
 
@@ -37,7 +37,7 @@ impl BoxedLayout {
     }
 
     pub fn array(size: usize, ptr_elems: bool) -> Self {
-        assert!(size < (1 << 56));
+        assert!(size < (1u64 << 56) as usize);
         if ptr_elems {
             Self::new_sized(DataType::BoxedArray, size)
         } else {
@@ -126,6 +126,14 @@ impl BoxedValue {
     pub fn alloc(layout: BoxedLayout, vm: &mut VM) -> Self {
         let arr_size = layout.underlying_array_size();
         let ptr = unsafe { alloc::alloc(Layout::array::<u64>(arr_size).unwrap()) } as *mut u64;
+
+        // Check for allocation failure
+        if ptr.is_null() {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::error_1(&format!("[WASM ERROR] BoxedValue allocation failed! size={}", arr_size).into());
+            panic!("BoxedValue allocation failed - out of memory");
+        }
+
         vm.allocation_instrumenter
             .alloc(AllocationType::Heap, arr_size);
         unsafe {
@@ -291,6 +299,7 @@ impl BoxedValue {
             // println!("dec_rc: val={:?} rc={} ({:?})", item.0, unsafe { *rc }, item.layout().data_type());
             // println!("dec_rc: array={:?} rc={}", item.0, unsafe { *rc });
             let rc_val = unsafe { *rc };
+
             if rc_val == 1 {
                 let layout = item.layout();
                 match layout.data_type() {

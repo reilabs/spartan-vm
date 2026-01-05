@@ -1,0 +1,12 @@
+{
+  "name": "spartan-vm-wasm-test",
+  "version": "0.1.0",
+  "description": "Test runner for Spartan VM WASM bindings",
+  "type": "module",
+  "scripts": {
+    "build": "cd .. && wasm-pack build --target nodejs",
+    "test": "node test.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

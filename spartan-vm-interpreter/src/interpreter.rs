@@ -13,11 +13,14 @@ use crate::{
     Field,
     layouts::{ConstraintsLayout, WitnessLayout},
     array::{BoxedLayout, BoxedValue},
-    bytecode::{self, AllocationInstrumenter, AllocationType, OpCode, VM},
+    bytecode::{self, AllocationInstrumenter, AllocationType, VM},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::bytecode::OpCode;
 
 pub type Handler = fn(*const u64, Frame, &mut VM);
 
+#[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 pub fn dispatch(pc: *const u64, frame: Frame, vm: &mut VM) {
     let opcode: Handler = unsafe { mem::transmute(*pc) };
@@ -33,7 +36,20 @@ impl Frame {
     pub fn push(size: u64, parent: Frame, vm: &mut VM) -> Self {
         unsafe {
             let layout = Layout::array::<u64>(size as usize + 2).unwrap();
+            // Note: Using alloc (uninitialized) rather than alloc_zeroed
+            // This matches native behavior where uninitialized memory contains garbage
+            // There appears to be a bug where frame slots are read without being initialized
+            // On native, garbage pointers happen to work; on WASM with zeros, they fail
+            // TODO: Fix the root cause - ensure all frame slots are initialized before reading
             let data = alloc::alloc(layout) as *mut u64;
+
+            // Check for allocation failure
+            if data.is_null() {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::error_1(&format!("[WASM ERROR] Frame allocation failed! size={}", size + 2).into());
+                panic!("Frame allocation failed - out of memory");
+            }
+
             *data = size;
             *data.offset(1) = parent.data as u64;
             let data = data.offset(2);
@@ -140,6 +156,7 @@ impl Frame {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn prepare_dispatch(program: &mut [u64]) {
     let mut current_offset = 0;
     while current_offset < program.len() {
@@ -181,16 +198,31 @@ fn run_internal<F>(
 where
     F: FnOnce(*const u64, Frame, &mut VM),
 {
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&format!("[WASM] run_internal: Allocating vectors, wit={}, const={}",
+        witness_layout.pre_commitment_size(), constraints_layout.size()).into());
+
     let mut out_a = vec![Field::ZERO; constraints_layout.size()];
     let mut out_b = vec![Field::ZERO; constraints_layout.size()];
     let mut out_c = vec![Field::ZERO; constraints_layout.size()];
+
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[WASM] run_internal: Constraint vectors allocated".into());
+
     let mut out_wit_pre_comm = vec![Field::ZERO; witness_layout.pre_commitment_size()];
     out_wit_pre_comm[0] = Field::ONE;
+
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[WASM] run_internal: Witness vectors allocated".into());
     let flat_inputs = flatten_param_vec(ordered_inputs);
     for i in 0..flat_inputs.len() {
         out_wit_pre_comm[1 + i] = flat_inputs[i];
     }
     let mut out_wit_post_comm = vec![Field::ZERO; witness_layout.post_commitment_size()];
+
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[WASM] run_internal: Creating VM".into());
+
     let mut vm = VM::new_witgen(
         out_a.as_mut_ptr(),
         out_b.as_mut_ptr(),
@@ -219,6 +251,9 @@ where
         witness_layout.tables_data_start() - witness_layout.challenges_start(),
     );
 
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&format!("[WASM] run_internal: Allocating frame, size={}", program[1]).into());
+
     let frame = Frame::push(
         program[1],
         Frame {
@@ -227,15 +262,24 @@ where
         &mut vm,
     );
 
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[WASM] run_internal: Writing input values".into());
+
     let mut current_offset = 2 as isize ;
     for (_, el) in ordered_inputs.iter().enumerate() {
         unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
     }
 
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[WASM] run_internal: Starting dispatch".into());
+
     let pc = unsafe { program.as_ptr().offset(2) };
 
     // Call the provided dispatch function
     dispatch_fn(pc, frame, &mut vm);
+
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[WASM] run_internal: Dispatch completed".into());
 
     fix_multiplicities_section(&mut out_wit_pre_comm, witness_layout);
 
@@ -339,6 +383,7 @@ where
 }
 
 /// Run witness generation using threaded dispatch (fast, native only)
+#[cfg(not(target_arch = "wasm32"))]
 #[instrument(skip_all, name = "Interpreter::run")]
 pub fn run(
     program: &[u64],
@@ -363,9 +408,17 @@ pub fn run_branching(
     constraints_layout: ConstraintsLayout,
     ordered_inputs: &[InputValue],
 ) -> WitgenResult {
-    run_internal(program, witness_layout, constraints_layout, ordered_inputs, |pc, frame, vm| {
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[WASM] Entering run_branching".into());
+
+    let result = run_internal(program, witness_layout, constraints_layout, ordered_inputs, |pc, frame, vm| {
         bytecode::dispatch_branching(pc, frame, vm)
-    })
+    });
+
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[WASM] Exiting run_branching".into());
+
+    result
 }
 
 /// Internal implementation shared by both threaded and branching AD interpreters
@@ -408,6 +461,7 @@ where
 }
 
 /// Run AD using threaded dispatch (fast, native only)
+#[cfg(not(target_arch = "wasm32"))]
 #[instrument(skip_all, name = "Interpreter::run_ad")]
 pub fn run_ad(
     program: &[u64],

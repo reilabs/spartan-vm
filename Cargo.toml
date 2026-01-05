@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["opcode-gen", "ssa-builder", "spartan-vm-interpreter"]
+members = ["opcode-gen", "ssa-builder", "spartan-vm-interpreter", "spartan-vm-wasm"]
 
 [package]
 name = "spartan-vm"

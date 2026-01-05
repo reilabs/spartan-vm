@@ -732,6 +732,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
 
     let handler_name = format_ident!("{}_handler", def.name);
     quote! {
+        #[cfg(not(target_arch = "wasm32"))]
         pub fn #handler_name(
             pc: *const u64,
             frame: Frame,
@@ -914,6 +915,7 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
             }
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         pub const DISPATCH: [Handler; #dsp_size] = [ #(#dispatch_cases),* ];
     }
 }

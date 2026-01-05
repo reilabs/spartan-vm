@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 /// Layout of witness data in memory
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct WitnessLayout {
     pub algebraic_size: usize,
     pub multiplicities_size: usize,
@@ -87,7 +89,7 @@ impl WitnessLayout {
 }
 
 /// Layout of constraints data in memory
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct ConstraintsLayout {
     pub algebraic_size: usize,
     pub tables_data_size: usize,

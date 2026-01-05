@@ -1,0 +1,7 @@
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "link-arg=--initial-memory=536870912",  # 512MB initial memory
+  "-C", "link-arg=--max-memory=1073741824",     # 1GB max memory
+  "-C", "link-arg=-z",
+  "-C", "link-arg=stack-size=16777216",         # 16MB stack size (default is 1MB)
+]

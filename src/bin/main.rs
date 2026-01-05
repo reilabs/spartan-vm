@@ -3,6 +3,7 @@ use std::{fs, path::PathBuf, process::ExitCode};
 use ark_ff::UniformRand as _;
 use clap::Parser;
 use spartan_vm::{Error, Project, compiler::Field, driver::Driver, vm::interpreter};
+use spartan_vm_interpreter::{save_bytecode, save_layouts};
 use tracing::{error, info, warn};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
@@ -78,6 +79,15 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     let ordered_params = ordered_params(driver.abi(), &inputs);
 
     let binary = driver.compile_witgen().unwrap();
+
+    // Save bytecode and layouts for WASM
+    save_bytecode(&binary, driver.get_debug_output_dir().join("witgen.bin")).unwrap();
+    save_layouts(
+        &r1cs.witness_layout,
+        &r1cs.constraints_layout,
+        driver.get_debug_output_dir().join("layouts.json"),
+    )
+    .unwrap();
 
     // Clone binary for threaded interpreter (in case it modifies it)
     let mut binary_threaded = binary.clone();
@@ -182,6 +192,9 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     .unwrap();
 
     let ad_binary = driver.compile_ad().unwrap();
+
+    // Save AD bytecode for WASM
+    save_bytecode(&ad_binary, driver.get_debug_output_dir().join("ad.bin")).unwrap();
 
     let mut ad_coeffs: Vec<Field> = vec![];
     for _ in 0..r1cs.constraints.len() {
