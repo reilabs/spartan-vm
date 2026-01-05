@@ -434,6 +434,7 @@ pub fn interpreter(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     result.extend(gen_opcode_enum(&codes));
     result.extend(gen_opcode_helpers(&codes));
+    result.extend(gen_dispatch_branching(&codes));
 
     // println!("codes: {:?}", codes);
 
@@ -664,7 +665,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
     }
 
     let mut call_params = if def.is_raw {
-        vec![quote! {pc}, quote! {frame}, quote! {vm}]
+        vec![quote! {&mut pc}, quote! {&mut frame}, quote! {vm}]
     } else {
         vec![]
     };
@@ -705,13 +706,28 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
         #op_name(#(#call_params),*);
     };
 
-    let finish = if def.is_raw {
-        quote! {}
+    let (setup, finish) = if def.is_raw {
+        (
+            quote! {
+                let mut pc = pc;
+                let mut frame = frame;
+            },
+            quote! {
+                // Raw opcodes may have modified pc and frame
+                // Continue dispatching if pc is not null
+                if !pc.is_null() && !frame.data.is_null() {
+                    dispatch(pc, frame, vm)
+                }
+            }
+        )
     } else {
-        quote! {
-            let pc = unsafe { pc.offset(current_field_offset) };
-            dispatch(pc, frame, vm)
-        }
+        (
+            quote! {},
+            quote! {
+                let pc = unsafe { pc.offset(current_field_offset) };
+                dispatch(pc, frame, vm)
+            }
+        )
     };
 
     let handler_name = format_ident!("{}_handler", def.name);
@@ -724,6 +740,7 @@ fn gen_handler(def: &OpCodeDef) -> proc_macro2::TokenStream {
             // unsafe {
             //     println!("opcode: {:?}", *(pc as *mut (*mut usize)));
             // }
+            #setup
             let mut current_field_offset = 1isize;
             #getters
             #call_op
@@ -898,5 +915,143 @@ fn gen_opcode_helpers(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
         }
 
         pub const DISPATCH: [Handler; #dsp_size] = [ #(#dispatch_cases),* ];
+    }
+}
+
+fn gen_dispatch_branching(codes: &[OpCodeDef]) -> proc_macro2::TokenStream {
+    let match_arms = codes.iter().enumerate().map(|(opcode_num, code)| {
+        let opcode_num = opcode_num as u64;
+
+        // Generate getters for parameters
+        let mut getters = proc_macro2::TokenStream::new();
+        for input in &code.inputs {
+            match input {
+                Input::Struct(StructInput {
+                    name,
+                    val: StructInputType::Frame(tp),
+                }) => {
+                    let i = format_ident!("{}", name);
+                    let getter = match tp {
+                        GuestType::Field => format_ident!("read_field"),
+                        GuestType::U64 => format_ident!("read_u64"),
+                        GuestType::Ptr => format_ident!("read_ptr"),
+                        GuestType::BoxedValue => format_ident!("read_array"),
+                    };
+                    getters.extend(quote! {
+                        let #i = unsafe {
+                            frame.#getter(*pc.offset(current_field_offset) as isize)
+                        };
+                        current_field_offset += 1;
+                    });
+                }
+                Input::Struct(StructInput {
+                    name,
+                    val: StructInputType::Out(tp),
+                }) => {
+                    let i = format_ident!("{}", name);
+                    let getter = match tp {
+                        GuestType::Field => format_ident!("read_field_mut"),
+                        GuestType::U64 => format_ident!("read_u64_mut"),
+                        GuestType::Ptr => format_ident!("read_ptr_mut"),
+                        GuestType::BoxedValue => format_ident!("read_array_mut"),
+                    };
+                    getters.extend(quote! {
+                        let #i = unsafe {
+                            frame.#getter(*pc.offset(current_field_offset) as isize)
+                        };
+                        current_field_offset += 1;
+                    });
+                }
+                Input::Struct(StructInput {
+                    name,
+                    val: StructInputType::Host(htp),
+                }) => {
+                    let i = format_ident!("{}", name);
+                    let offset_id = format_ident!("current_field_offset");
+                    let pc_id = format_ident!("pc");
+                    let getter = htp.make_getter(offset_id, pc_id);
+                    getters.extend(quote! {
+                        let #i = #getter;
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Build call parameters
+        let mut call_params = if code.is_raw {
+            vec![quote! {&mut pc}, quote! {&mut frame}, quote! {vm}]
+        } else {
+            vec![]
+        };
+
+        call_params.extend(
+            code.inputs
+                .iter()
+                .map(|input| match input {
+                    Input::Struct(StructInput { name, .. }) => {
+                        let i = format_ident!("{}", name);
+                        quote! { #i }
+                    }
+                    Input::VM => quote! { vm },
+                    Input::Frame => quote! { frame },
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        let op_name = format_ident!("{}", &code.name);
+        let call_op = quote! {
+            #op_name(#(#call_params),*);
+        };
+
+        // For raw opcodes, they handle PC/frame updates themselves
+        // For regular opcodes, advance PC automatically
+        let advance_pc = if code.is_raw {
+            quote! {}
+        } else {
+            quote! {
+                pc = unsafe { pc.offset(current_field_offset) };
+            }
+        };
+
+        quote! {
+            #opcode_num => {
+                let mut current_field_offset = 1isize;
+                #getters
+                #call_op
+                #advance_pc
+            }
+        }
+    });
+
+    quote! {
+        /// Branching dispatch implementation for WASM compatibility
+        /// Uses a match statement instead of function pointers
+        #[allow(unused_assignments)]
+        pub fn dispatch_branching(mut pc: *const u64, mut frame: Frame, vm: &mut VM) {
+            loop {
+                // Check if PC is null (from ret with null return address)
+                if pc.is_null() {
+                    return;
+                }
+
+                let opcode = unsafe { *pc };
+
+                // Check for function marker (u64::MAX)
+                if opcode == u64::MAX {
+                    return;
+                }
+
+                // Check for null frame
+                if frame.data.is_null() {
+                    return;
+                }
+
+                match opcode {
+                    #(#match_arms),*
+                    _ => panic!("Unknown opcode: {}", opcode),
+                }
+            }
+        }
     }
 }

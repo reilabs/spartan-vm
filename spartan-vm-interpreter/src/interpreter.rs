@@ -170,13 +170,17 @@ fn fix_multiplicities_section(wit: &mut [Field], witness_layout: WitnessLayout) 
     }
 }
 
-#[instrument(skip_all, name = "Interpreter::run")]
-pub fn run(
+/// Internal implementation shared by both threaded and branching interpreters
+fn run_internal<F>(
     program: &[u64],
     witness_layout: WitnessLayout,
     constraints_layout: ConstraintsLayout,
     ordered_inputs: &[InputValue],
-) -> WitgenResult {
+    dispatch_fn: F,
+) -> WitgenResult
+where
+    F: FnOnce(*const u64, Frame, &mut VM),
+{
     let mut out_a = vec![Field::ZERO; constraints_layout.size()];
     let mut out_b = vec![Field::ZERO; constraints_layout.size()];
     let mut out_c = vec![Field::ZERO; constraints_layout.size()];
@@ -228,12 +232,10 @@ pub fn run(
         unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
     }
 
-    let mut program = program.to_vec();
-    prepare_dispatch(&mut program);
+    let pc = unsafe { program.as_ptr().offset(2) };
 
-    let pc = unsafe { program.as_mut_ptr().offset(2) };
-
-    dispatch(pc, frame, &mut vm);
+    // Call the provided dispatch function
+    dispatch_fn(pc, frame, &mut vm);
 
     fix_multiplicities_section(&mut out_wit_pre_comm, witness_layout);
 
@@ -326,25 +328,57 @@ pub fn run(
 
 
 
-    let result = WitgenResult {
+    WitgenResult {
         out_wit_pre_comm,
         out_wit_post_comm,
         out_a,
         out_b,
         out_c,
         instrumenter: vm.allocation_instrumenter,
-    };
-
-    result
+    }
 }
 
-#[instrument(skip_all, name = "Interpreter::run_ad")]
-pub fn run_ad(
+/// Run witness generation using threaded dispatch (fast, native only)
+#[instrument(skip_all, name = "Interpreter::run")]
+pub fn run(
+    program: &[u64],
+    witness_layout: WitnessLayout,
+    constraints_layout: ConstraintsLayout,
+    ordered_inputs: &[InputValue],
+) -> WitgenResult {
+    // Threaded dispatch requires preparing the dispatch table
+    let mut program = program.to_vec();
+    prepare_dispatch(&mut program);
+
+    run_internal(&program, witness_layout, constraints_layout, ordered_inputs, |pc, frame, vm| {
+        dispatch(pc, frame, vm)
+    })
+}
+
+/// Run witness generation using branching dispatch (WASM-compatible)
+#[instrument(skip_all, name = "Interpreter::run_branching")]
+pub fn run_branching(
+    program: &[u64],
+    witness_layout: WitnessLayout,
+    constraints_layout: ConstraintsLayout,
+    ordered_inputs: &[InputValue],
+) -> WitgenResult {
+    run_internal(program, witness_layout, constraints_layout, ordered_inputs, |pc, frame, vm| {
+        bytecode::dispatch_branching(pc, frame, vm)
+    })
+}
+
+/// Internal implementation shared by both threaded and branching AD interpreters
+fn run_ad_internal<F>(
     program: &[u64],
     coeffs: &[Field],
     witness_layout: WitnessLayout,
     constraints_layout: ConstraintsLayout,
-) -> (Vec<Field>, Vec<Field>, Vec<Field>, AllocationInstrumenter) {
+    dispatch_fn: F,
+) -> (Vec<Field>, Vec<Field>, Vec<Field>, AllocationInstrumenter)
+where
+    F: FnOnce(*const u64, Frame, &mut VM),
+{
     let mut out_da = vec![Field::ZERO; witness_layout.size()];
     let mut out_db = vec![Field::ZERO; witness_layout.size()];
     let mut out_dc = vec![Field::ZERO; witness_layout.size()];
@@ -365,18 +399,42 @@ pub fn run_ad(
         &mut vm,
     );
 
-    // for (i, el) in bytecode::DISPATCH.iter().enumerate() {
-    //     println!("{}: {:?}", i, el);
-    // }
+    let pc = unsafe { program.as_ptr().offset(2) };
 
+    // Call the provided dispatch function
+    dispatch_fn(pc, frame, &mut vm);
+
+    (out_da, out_db, out_dc, vm.allocation_instrumenter)
+}
+
+/// Run AD using threaded dispatch (fast, native only)
+#[instrument(skip_all, name = "Interpreter::run_ad")]
+pub fn run_ad(
+    program: &[u64],
+    coeffs: &[Field],
+    witness_layout: WitnessLayout,
+    constraints_layout: ConstraintsLayout,
+) -> (Vec<Field>, Vec<Field>, Vec<Field>, AllocationInstrumenter) {
+    // Threaded dispatch requires preparing the dispatch table
     let mut program = program.to_vec();
     prepare_dispatch(&mut program);
 
-    let pc = unsafe { program.as_mut_ptr().offset(2) };
+    run_ad_internal(&program, coeffs, witness_layout, constraints_layout, |pc, frame, vm| {
+        dispatch(pc, frame, vm)
+    })
+}
 
-    dispatch(pc, frame, &mut vm);
-
-    (out_da, out_db, out_dc, vm.allocation_instrumenter)
+/// Run AD using branching dispatch (WASM-compatible)
+#[instrument(skip_all, name = "Interpreter::run_ad_branching")]
+pub fn run_ad_branching(
+    program: &[u64],
+    coeffs: &[Field],
+    witness_layout: WitnessLayout,
+    constraints_layout: ConstraintsLayout,
+) -> (Vec<Field>, Vec<Field>, Vec<Field>, AllocationInstrumenter) {
+    run_ad_internal(program, coeffs, witness_layout, constraints_layout, |pc, frame, vm| {
+        bytecode::dispatch_branching(pc, frame, vm)
+    })
 }
 
 
