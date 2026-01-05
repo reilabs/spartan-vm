@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["opcode-gen", "ssa-builder"]
+members = ["opcode-gen", "ssa-builder", "spartan-vm-interpreter"]
 
 [package]
 name = "spartan-vm"
@@ -38,6 +38,7 @@ rand = "0.8"
 
 opcode-gen = { path = "opcode-gen" }
 ssa-builder = { path = "ssa-builder" }
+spartan-vm-interpreter = { path = "spartan-vm-interpreter" }
 
 [dev-dependencies]
 anyhow = "1.0.87"

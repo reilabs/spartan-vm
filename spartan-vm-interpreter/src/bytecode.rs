@@ -1,17 +1,17 @@
 #![allow(unused_variables)]
 
-use crate::compiler::r1cs_gen::{ConstraintsLayout, WitnessLayout};
-use crate::vm::interpreter::dispatch;
+use crate::layouts::{ConstraintsLayout, WitnessLayout};
+use crate::interpreter::dispatch;
 use ark_ff::{AdditiveGroup as _, BigInteger as _};
 use opcode_gen::interpreter;
 
-use crate::vm::array::{BoxedLayout, BoxedValue};
+use crate::array::{BoxedLayout, BoxedValue};
 use crate::{
-    compiler::Field,
-    vm::interpreter::{Frame, Handler},
+    Field,
+    interpreter::{Frame, Handler},
 };
 
-use crate::vm::array::DataType;
+use crate::array::DataType;
 use plotters::prelude::*;
 use std::fmt::Display;
 use std::path::Path;

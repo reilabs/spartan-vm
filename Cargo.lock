@@ -3264,6 +3264,7 @@ dependencies = [
  "plotters",
  "rand 0.8.5",
  "serde",
+ "spartan-vm-interpreter",
  "ssa-builder",
  "tempfile",
  "thiserror 2.0.12",
@@ -3272,6 +3273,18 @@ dependencies = [
  "tracing-forest",
  "tracing-subscriber",
  "walkdir",
+]
+
+[[package]]
+name = "spartan-vm-interpreter"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff",
+ "noirc_abi",
+ "opcode-gen",
+ "plotters",
+ "tracing",
 ]
 
 [[package]]

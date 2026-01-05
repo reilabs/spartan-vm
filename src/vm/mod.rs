@@ -1,3 +1,2 @@
-pub mod interpreter;
-pub mod bytecode;
-pub mod array;
+// Re-export everything from spartan-vm-interpreter
+pub use spartan_vm_interpreter::{array, bytecode, interpreter};
