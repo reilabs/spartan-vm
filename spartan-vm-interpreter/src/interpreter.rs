@@ -51,7 +51,7 @@ impl Frame {
             }
 
             *data = size;
-            *data.offset(1) = parent.data as u64;
+            *data.offset(1) = (parent.data as usize) as u64;
             let data = data.offset(2);
             vm.allocation_instrumenter
                 .alloc(AllocationType::Stack, size as usize + 2);
@@ -63,7 +63,7 @@ impl Frame {
     pub fn pop(self, vm: &mut VM) -> Frame {
         unsafe {
             let real_data = self.data.offset(-2);
-            let parent_data = *real_data.offset(1) as *mut u64;
+            let parent_data = *real_data.offset(1) as usize as *mut u64;
             let size = *real_data;
             alloc::dealloc(
                 real_data as *mut u8,

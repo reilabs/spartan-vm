@@ -412,7 +412,7 @@ mod def {
         frame: &mut Frame,
         vm: &mut VM,
         func: JumpTarget,
-        args: &[(usize, FramePosition)],
+        args: &[(u64, FramePosition)],
         ret: FramePosition,
     ) {
         let func_pc = unsafe { pc.offset(func.0) };
@@ -422,14 +422,14 @@ mod def {
         let ret_pc = unsafe { pc.offset(4 + 2 * args.len() as isize) };
 
         unsafe {
-            *new_frame.data = ret_data_ptr as u64;
-            *new_frame.data.offset(1) = ret_pc as u64;
+            *new_frame.data = (ret_data_ptr as usize) as u64;
+            *new_frame.data.offset(1) = (ret_pc as usize) as u64;
         };
 
         let mut current_child = unsafe { new_frame.data.offset(2) };
 
         for (i, (arg_size, arg_pos)) in args.iter().enumerate() {
-            frame.write_to(current_child, arg_pos.0 as isize, *arg_size);
+            frame.write_to(current_child, arg_pos.0 as isize, *arg_size as usize);
             current_child = unsafe { current_child.offset(*arg_size as isize) };
         }
 
@@ -441,7 +441,7 @@ mod def {
 
     #[raw_opcode]
     fn ret(pc: &mut *const u64, frame: &mut Frame, vm: &mut VM) {
-        let ret_address = unsafe { *frame.data.offset(1) } as *mut u64;
+        let ret_address = unsafe { *frame.data.offset(1) } as usize as *mut u64;
         let new_frame = frame.pop(vm);
         *pc = ret_address;
         *frame = new_frame;
