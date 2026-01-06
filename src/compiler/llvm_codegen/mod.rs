@@ -376,13 +376,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                     .build_int_compare(predicate, lhs_val, rhs_val, &format!("v{}", result.0))
                     .unwrap();
 
-                // Extend to i64 for consistency
-                let result_val = self
-                    .builder
-                    .build_int_z_extend(cmp_result, self.context.i64_type(), "cmp_ext")
-                    .unwrap();
-
-                self.value_map.insert(*result, result_val.into());
+                self.value_map.insert(*result, cmp_result.into());
             }
 
             OpCode::Cast { result, value, target } => {
@@ -758,21 +752,11 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
             Terminator::JmpIf(cond, true_target, false_target) => {
                 let cond_val = self.value_map[cond].into_int_value();
-                let cond_bool = self
-                    .builder
-                    .build_int_compare(
-                        IntPredicate::NE,
-                        cond_val,
-                        cond_val.get_type().const_zero(),
-                        "jmpif_cond",
-                    )
-                    .unwrap();
-
                 let true_bb = self.block_map[true_target];
                 let false_bb = self.block_map[false_target];
 
                 self.builder
-                    .build_conditional_branch(cond_bool, true_bb, false_bb)
+                    .build_conditional_branch(cond_val, true_bb, false_bb)
                     .unwrap();
             }
 
