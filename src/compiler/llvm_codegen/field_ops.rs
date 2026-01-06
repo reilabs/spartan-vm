@@ -39,6 +39,9 @@ pub struct FieldOps<'ctx> {
 
     // VM-related functions
     write_witness_fn: Option<FunctionValue<'ctx>>,
+    write_a_fn: Option<FunctionValue<'ctx>>,
+    write_b_fn: Option<FunctionValue<'ctx>>,
+    write_c_fn: Option<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> FieldOps<'ctx> {
@@ -50,6 +53,9 @@ impl<'ctx> FieldOps<'ctx> {
             field_mul_fn: None,
             field_div_fn: None,
             write_witness_fn: None,
+            write_a_fn: None,
+            write_b_fn: None,
+            write_c_fn: None,
         };
 
         // Declare field operation functions
@@ -81,21 +87,32 @@ impl<'ctx> FieldOps<'ctx> {
         self.field_mul_fn = Some(module.add_function("__field_mul", field_binop_type, None));
         self.field_div_fn = Some(module.add_function("__field_div", field_binop_type, None));
 
-        // __write_witness(vm: ptr, value: [4 x i64]) -> void
-        // Writes value to VM's witness output and advances the pointer
-        let write_witness_type = void_type.fn_type(
+        // Write functions for VM output slots
+        // __write_witness writes to slot 0, __write_a/b/c write to slots 1/2/3
+        let write_fn_type = void_type.fn_type(
             &[ptr_type.into(), field_type.into()],
             false
         );
-        let write_witness_fn = module.add_function("__write_witness", write_witness_type, None);
-        self.write_witness_fn = Some(write_witness_fn);
 
-        // Define the function body
-        self.define_write_witness(write_witness_fn);
+        let write_witness_fn = module.add_function("__write_witness", write_fn_type, None);
+        self.write_witness_fn = Some(write_witness_fn);
+        self.define_write_output(write_witness_fn, 0);
+
+        let write_a_fn = module.add_function("__write_a", write_fn_type, None);
+        self.write_a_fn = Some(write_a_fn);
+        self.define_write_output(write_a_fn, 1);
+
+        let write_b_fn = module.add_function("__write_b", write_fn_type, None);
+        self.write_b_fn = Some(write_b_fn);
+        self.define_write_output(write_b_fn, 2);
+
+        let write_c_fn = module.add_function("__write_c", write_fn_type, None);
+        self.write_c_fn = Some(write_c_fn);
+        self.define_write_output(write_c_fn, 3);
     }
 
-    /// Define the __write_witness function body
-    fn define_write_witness(&self, func: FunctionValue<'ctx>) {
+    /// Define a write output function body for a specific VM struct slot
+    fn define_write_output(&self, func: FunctionValue<'ctx>, slot_index: u32) {
         let builder = self.context.create_builder();
         let entry = self.context.append_basic_block(func, "entry");
         builder.position_at_end(entry);
@@ -112,34 +129,34 @@ impl<'ctx> FieldOps<'ctx> {
             false
         );
 
-        // Get pointer to the first field pointer in VM struct (witness output ptr)
-        let witness_ptr_ptr = builder
-            .build_struct_gep(vm_struct_type, vm_ptr, 0, "witness_ptr_ptr")
+        // Get pointer to the specified slot in VM struct
+        let output_ptr_ptr = builder
+            .build_struct_gep(vm_struct_type, vm_ptr, slot_index, "output_ptr_ptr")
             .unwrap();
 
-        // Load the current witness pointer
-        let witness_ptr = builder
-            .build_load(ptr_type, witness_ptr_ptr, "witness_ptr")
+        // Load the current output pointer
+        let output_ptr = builder
+            .build_load(ptr_type, output_ptr_ptr, "output_ptr")
             .unwrap()
             .into_pointer_value();
 
-        // Store the value at the current witness pointer
-        builder.build_store(witness_ptr, value).unwrap();
+        // Store the value at the current output pointer
+        builder.build_store(output_ptr, value).unwrap();
 
         // Advance the pointer by one field element
         let next_ptr = unsafe {
             builder
                 .build_in_bounds_gep(
                     field_type,
-                    witness_ptr,
+                    output_ptr,
                     &[self.context.i32_type().const_int(1, false)],
-                    "witness_ptr_next",
+                    "output_ptr_next",
                 )
                 .unwrap()
         };
 
         // Store the updated pointer back to VM struct
-        builder.build_store(witness_ptr_ptr, next_ptr).unwrap();
+        builder.build_store(output_ptr_ptr, next_ptr).unwrap();
 
         builder.build_return(None).unwrap();
     }
@@ -169,7 +186,7 @@ impl<'ctx> FieldOps<'ctx> {
             let result = builder
                 .build_call(add_fn, &[lhs.into(), rhs.into()], "field_add")
                 .unwrap();
-            result.try_as_basic_value().left().unwrap()
+            result.try_as_basic_value().unwrap_basic()
         } else {
             // Inline implementation as fallback
             self.add_inline(builder, lhs, rhs)
@@ -187,7 +204,7 @@ impl<'ctx> FieldOps<'ctx> {
             let result = builder
                 .build_call(sub_fn, &[lhs.into(), rhs.into()], "field_sub")
                 .unwrap();
-            result.try_as_basic_value().left().unwrap()
+            result.try_as_basic_value().unwrap_basic()
         } else {
             self.sub_inline(builder, lhs, rhs)
         }
@@ -204,7 +221,7 @@ impl<'ctx> FieldOps<'ctx> {
             let result = builder
                 .build_call(mul_fn, &[lhs.into(), rhs.into()], "field_mul")
                 .unwrap();
-            result.try_as_basic_value().left().unwrap()
+            result.try_as_basic_value().unwrap_basic()
         } else {
             self.mul_inline(builder, lhs, rhs)
         }
@@ -221,7 +238,7 @@ impl<'ctx> FieldOps<'ctx> {
             let result = builder
                 .build_call(div_fn, &[lhs.into(), rhs.into()], "field_div")
                 .unwrap();
-            result.try_as_basic_value().left().unwrap()
+            result.try_as_basic_value().unwrap_basic()
         } else {
             // Division is complex - we rely on runtime for now
             panic!("Inline field division not implemented - requires runtime support")
@@ -342,13 +359,13 @@ impl<'ctx> FieldOps<'ctx> {
             let result = builder
                 .build_call(mul_fn, &[lhs.into(), rhs.into()], "field_mul")
                 .unwrap();
-            result.try_as_basic_value().left().unwrap()
+            result.try_as_basic_value().unwrap_basic()
         } else {
             panic!("Field multiplication requires runtime support")
         }
     }
 
-    /// Write a witness value to the VM's output buffer and advance the pointer
+    /// Write a witness value to the VM's output buffer (slot 0) and advance the pointer
     pub fn write_witness(
         &self,
         builder: &Builder<'ctx>,
@@ -356,6 +373,45 @@ impl<'ctx> FieldOps<'ctx> {
         value: BasicValueEnum<'ctx>,
     ) {
         let write_fn = self.write_witness_fn.expect("__write_witness not declared");
+        builder
+            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
+            .unwrap();
+    }
+
+    /// Write constraint 'a' value to VM's output buffer (slot 1) and advance the pointer
+    pub fn write_a(
+        &self,
+        builder: &Builder<'ctx>,
+        vm_ptr: inkwell::values::PointerValue<'ctx>,
+        value: BasicValueEnum<'ctx>,
+    ) {
+        let write_fn = self.write_a_fn.expect("__write_a not declared");
+        builder
+            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
+            .unwrap();
+    }
+
+    /// Write constraint 'b' value to VM's output buffer (slot 2) and advance the pointer
+    pub fn write_b(
+        &self,
+        builder: &Builder<'ctx>,
+        vm_ptr: inkwell::values::PointerValue<'ctx>,
+        value: BasicValueEnum<'ctx>,
+    ) {
+        let write_fn = self.write_b_fn.expect("__write_b not declared");
+        builder
+            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
+            .unwrap();
+    }
+
+    /// Write constraint 'c' value to VM's output buffer (slot 3) and advance the pointer
+    pub fn write_c(
+        &self,
+        builder: &Builder<'ctx>,
+        vm_ptr: inkwell::values::PointerValue<'ctx>,
+        value: BasicValueEnum<'ctx>,
+    ) {
+        let write_fn = self.write_c_fn.expect("__write_c not declared");
         builder
             .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
             .unwrap();

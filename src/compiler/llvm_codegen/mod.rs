@@ -457,12 +457,12 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                     .unwrap();
 
                 if results.len() == 1 {
-                    if let Some(ret_val) = call_result.try_as_basic_value().left() {
+                    if let Some(ret_val) = call_result.try_as_basic_value().basic() {
                         self.value_map.insert(results[0], ret_val);
                     }
                 } else if results.len() > 1 {
                     // Multiple returns - extract from struct
-                    if let Some(ret_val) = call_result.try_as_basic_value().left() {
+                    if let Some(ret_val) = call_result.try_as_basic_value().basic() {
                         for (i, result_id) in results.iter().enumerate() {
                             let extracted = self
                                 .builder
@@ -558,15 +558,15 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
             OpCode::Constrain { a, b, c } => {
                 // R1CS constraint: a * b = c
-                // In witness generation mode, this is a check
-                // For now, we'll generate a runtime assertion
+                // Write the three constraint values to VM output slots 1, 2, 3
                 let a_val = self.value_map[a];
                 let b_val = self.value_map[b];
                 let c_val = self.value_map[c];
+                let vm_ptr = self.vm_ptr.unwrap();
 
-                // Call field_mul and assert equality
-                let product = self.field_ops.mul(&self.builder, a_val, b_val);
-                self.field_ops.assert_eq(&self.builder, product, c_val);
+                self.field_ops.write_a(&self.builder, vm_ptr, a_val);
+                self.field_ops.write_b(&self.builder, vm_ptr, b_val);
+                self.field_ops.write_c(&self.builder, vm_ptr, c_val);
             }
 
             OpCode::WriteWitness { result, value, .. } => {
