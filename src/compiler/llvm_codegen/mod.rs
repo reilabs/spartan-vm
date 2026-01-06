@@ -35,6 +35,59 @@ use crate::compiler::taint_analysis::ConstantTaint;
 use self::field_ops::FieldOps;
 use self::types::TypeConverter;
 
+/// VM struct containing output pointers
+/// struct VM { field_ptr[4] }
+pub struct VMType<'ctx> {
+    /// The LLVM struct type for VM
+    pub struct_type: inkwell::types::StructType<'ctx>,
+    /// Pointer type to VM
+    pub ptr_type: inkwell::types::PointerType<'ctx>,
+}
+
+impl<'ctx> VMType<'ctx> {
+    /// Number of output field pointers in the VM struct
+    pub const NUM_OUTPUT_PTRS: usize = 4;
+
+    pub fn new(context: &'ctx Context, field_type: inkwell::types::ArrayType<'ctx>) -> Self {
+        // VM struct contains 4 pointers to field elements
+        // Each field element is [4 x i64], so pointer to that
+        let field_ptr_type = context.ptr_type(AddressSpace::default());
+
+        // Create struct with 4 field pointers
+        let field_types: Vec<inkwell::types::BasicTypeEnum> = (0..Self::NUM_OUTPUT_PTRS)
+            .map(|_| field_ptr_type.into())
+            .collect();
+
+        let struct_type = context.struct_type(&field_types, false);
+        let ptr_type = context.ptr_type(AddressSpace::default());
+
+        Self { struct_type, ptr_type }
+    }
+
+    /// Get a pointer to the nth output field from a VM pointer
+    pub fn get_output_ptr(
+        &self,
+        builder: &Builder<'ctx>,
+        vm_ptr: PointerValue<'ctx>,
+        index: u32,
+        name: &str,
+    ) -> PointerValue<'ctx> {
+        assert!((index as usize) < Self::NUM_OUTPUT_PTRS);
+
+        // Get pointer to the field within the VM struct
+        let field_ptr_ptr = builder
+            .build_struct_gep(self.struct_type, vm_ptr, index, &format!("{}_ptr_ptr", name))
+            .unwrap();
+
+        // Load the pointer value
+        let ptr_type = builder.get_insert_block().unwrap().get_context().ptr_type(AddressSpace::default());
+        builder
+            .build_load(ptr_type, field_ptr_ptr, &format!("{}_ptr", name))
+            .unwrap()
+            .into_pointer_value()
+    }
+}
+
 /// LLVM Code Generator for Spartan VM SSA
 pub struct LLVMCodeGen<'ctx> {
     context: &'ctx Context,
@@ -42,6 +95,7 @@ pub struct LLVMCodeGen<'ctx> {
     builder: Builder<'ctx>,
     type_converter: TypeConverter<'ctx>,
     field_ops: FieldOps<'ctx>,
+    vm_type: VMType<'ctx>,
 
     /// Maps SSA ValueIds to LLVM values within the current function
     value_map: HashMap<ValueId, BasicValueEnum<'ctx>>,
@@ -51,6 +105,9 @@ pub struct LLVMCodeGen<'ctx> {
 
     /// Maps SSA FunctionIds to LLVM functions
     function_map: HashMap<FunctionId, FunctionValue<'ctx>>,
+
+    /// The VM pointer for the current function
+    vm_ptr: Option<PointerValue<'ctx>>,
 }
 
 impl<'ctx> LLVMCodeGen<'ctx> {
@@ -61,15 +118,21 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         let type_converter = TypeConverter::new(context);
         let field_ops = FieldOps::new(context, &module);
 
+        // Create VM type with field array type
+        let field_type = context.i64_type().array_type(types::FIELD_LIMBS);
+        let vm_type = VMType::new(context, field_type);
+
         Self {
             context,
             module,
             builder,
             type_converter,
             field_ops,
+            vm_type,
             value_map: HashMap::new(),
             block_map: HashMap::new(),
             function_map: HashMap::new(),
+            vm_ptr: None,
         }
     }
 
@@ -103,11 +166,14 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         let fn_type_info = type_info.get_function(fn_id);
         let entry = function.get_entry();
 
-        // Build parameter types
-        let param_types: Vec<BasicMetadataTypeEnum> = entry
-            .get_parameters()
-            .map(|(_, tp)| self.type_converter.convert_type(tp).into())
-            .collect();
+        // Build parameter types - first parameter is always VM*
+        let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
+        param_types.push(self.vm_type.ptr_type.into()); // VM* as first param
+
+        // Add the regular function parameters
+        for (_, tp) in entry.get_parameters() {
+            param_types.push(self.type_converter.convert_type(tp).into());
+        }
 
         // Build return type - for now, we'll return a struct if multiple values
         let return_types: Vec<BasicTypeEnum> = function
@@ -163,8 +229,12 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         let entry_bb = self.block_map[&function.get_entry_id()];
         self.builder.position_at_end(entry_bb);
 
+        // First parameter is always VM*
+        self.vm_ptr = Some(fn_value.get_nth_param(0).unwrap().into_pointer_value());
+
+        // Map SSA parameters to LLVM function arguments (starting from index 1)
         for (i, (param_id, _)) in entry.get_parameters().enumerate() {
-            let param_value = fn_value.get_nth_param(i as u32).unwrap();
+            let param_value = fn_value.get_nth_param((i + 1) as u32).unwrap();
             self.value_map.insert(*param_id, param_value);
         }
 
@@ -373,10 +443,13 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
             OpCode::Call { results, function, args } => {
                 let fn_value = self.function_map[function];
-                let arg_values: Vec<BasicMetadataValueEnum> = args
-                    .iter()
-                    .map(|arg| self.value_map[arg].into())
-                    .collect();
+
+                // Build argument list - VM* first, then regular args
+                let mut arg_values: Vec<BasicMetadataValueEnum> = Vec::new();
+                arg_values.push(self.vm_ptr.unwrap().into()); // Pass VM* to callee
+                for arg in args {
+                    arg_values.push(self.value_map[arg].into());
+                }
 
                 let call_result = self
                     .builder
@@ -497,10 +570,14 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             }
 
             OpCode::WriteWitness { result, value, .. } => {
-                // In LLVM mode, WriteWitness is a no-op for now
-                // The value is already computed
+                let val = self.value_map[value];
+                let vm_ptr = self.vm_ptr.unwrap();
+
+                // Call __write_witness(vm, value) to write and advance pointer
+                self.field_ops.write_witness(&self.builder, vm_ptr, val);
+
+                // Map result if present
                 if let Some(result_id) = result {
-                    let val = self.value_map[value];
                     self.value_map.insert(*result_id, val);
                 }
             }
@@ -588,7 +665,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
             _ => {
                 // For unhandled opcodes, we'll need to implement them as needed
-                // panic!("Unhandled opcode: {:?}", instruction);
+                panic!("Unhandled opcode in LLVM: {:?}", instruction);
             }
         }
     }

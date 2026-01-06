@@ -36,6 +36,9 @@ pub struct FieldOps<'ctx> {
     field_sub_fn: Option<FunctionValue<'ctx>>,
     field_mul_fn: Option<FunctionValue<'ctx>>,
     field_div_fn: Option<FunctionValue<'ctx>>,
+
+    // VM-related functions
+    write_witness_fn: Option<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> FieldOps<'ctx> {
@@ -46,6 +49,7 @@ impl<'ctx> FieldOps<'ctx> {
             field_sub_fn: None,
             field_mul_fn: None,
             field_div_fn: None,
+            write_witness_fn: None,
         };
 
         // Declare field operation functions
@@ -62,7 +66,8 @@ impl<'ctx> FieldOps<'ctx> {
     /// Declare all field operation functions in the module
     fn declare_field_functions(&mut self, module: &Module<'ctx>) {
         let field_type = self.field_type();
-        let i64_type = self.context.i64_type();
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let void_type = self.context.void_type();
 
         // All field operations take two [4 x i64] and return [4 x i64]
         let field_binop_type = field_type.fn_type(
@@ -75,6 +80,68 @@ impl<'ctx> FieldOps<'ctx> {
         self.field_sub_fn = Some(module.add_function("__field_sub", field_binop_type, None));
         self.field_mul_fn = Some(module.add_function("__field_mul", field_binop_type, None));
         self.field_div_fn = Some(module.add_function("__field_div", field_binop_type, None));
+
+        // __write_witness(vm: ptr, value: [4 x i64]) -> void
+        // Writes value to VM's witness output and advances the pointer
+        let write_witness_type = void_type.fn_type(
+            &[ptr_type.into(), field_type.into()],
+            false
+        );
+        let write_witness_fn = module.add_function("__write_witness", write_witness_type, None);
+        self.write_witness_fn = Some(write_witness_fn);
+
+        // Define the function body
+        self.define_write_witness(write_witness_fn);
+    }
+
+    /// Define the __write_witness function body
+    fn define_write_witness(&self, func: FunctionValue<'ctx>) {
+        let builder = self.context.create_builder();
+        let entry = self.context.append_basic_block(func, "entry");
+        builder.position_at_end(entry);
+
+        let vm_ptr = func.get_nth_param(0).unwrap().into_pointer_value();
+        let value = func.get_nth_param(1).unwrap();
+
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let field_type = self.field_type();
+
+        // VM struct type: { ptr, ptr, ptr, ptr }
+        let vm_struct_type = self.context.struct_type(
+            &[ptr_type.into(), ptr_type.into(), ptr_type.into(), ptr_type.into()],
+            false
+        );
+
+        // Get pointer to the first field pointer in VM struct (witness output ptr)
+        let witness_ptr_ptr = builder
+            .build_struct_gep(vm_struct_type, vm_ptr, 0, "witness_ptr_ptr")
+            .unwrap();
+
+        // Load the current witness pointer
+        let witness_ptr = builder
+            .build_load(ptr_type, witness_ptr_ptr, "witness_ptr")
+            .unwrap()
+            .into_pointer_value();
+
+        // Store the value at the current witness pointer
+        builder.build_store(witness_ptr, value).unwrap();
+
+        // Advance the pointer by one field element
+        let next_ptr = unsafe {
+            builder
+                .build_in_bounds_gep(
+                    field_type,
+                    witness_ptr,
+                    &[self.context.i32_type().const_int(1, false)],
+                    "witness_ptr_next",
+                )
+                .unwrap()
+        };
+
+        // Store the updated pointer back to VM struct
+        builder.build_store(witness_ptr_ptr, next_ptr).unwrap();
+
+        builder.build_return(None).unwrap();
     }
 
     /// Create a constant field value from an ark_bn254::Fr
@@ -279,6 +346,19 @@ impl<'ctx> FieldOps<'ctx> {
         } else {
             panic!("Field multiplication requires runtime support")
         }
+    }
+
+    /// Write a witness value to the VM's output buffer and advance the pointer
+    pub fn write_witness(
+        &self,
+        builder: &Builder<'ctx>,
+        vm_ptr: inkwell::values::PointerValue<'ctx>,
+        value: BasicValueEnum<'ctx>,
+    ) {
+        let write_fn = self.write_witness_fn.expect("__write_witness not declared");
+        builder
+            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
+            .unwrap();
     }
 
     /// Assert two field elements are equal
