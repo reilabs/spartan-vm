@@ -26,6 +26,22 @@ pub struct ProgramOptions {
 
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub pprint_r1cs: bool,
+
+    /// Emit LLVM IR to the specified file (or debug output if no path)
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub emit_llvm: bool,
+
+    /// Compile to WebAssembly (output to specified path)
+    #[arg(long, value_name = "PATH", value_parser = parse_path)]
+    pub emit_wasm: Option<PathBuf>,
+
+    /// Compile to native object file (output to specified path)
+    #[arg(long, value_name = "PATH", value_parser = parse_path)]
+    pub emit_object: Option<PathBuf>,
+
+    /// Skip the bytecode VM execution (useful when only generating LLVM/WASM)
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub skip_vm: bool,
 }
 
 /// The main function for the CLI utility, responsible for parsing program
@@ -68,6 +84,28 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         for r1c in r1cs.constraints.iter() {
             writeln!(r1cs_file, "{}", r1c).unwrap();
         }
+    }
+
+    // Handle LLVM/WASM compilation if requested
+    if args.emit_llvm {
+        info!(message = %"Generating LLVM IR");
+        driver.compile_llvm(None).unwrap();
+    }
+
+    if let Some(ref wasm_path) = args.emit_wasm {
+        info!(message = %"Generating WebAssembly", path = %wasm_path.display());
+        driver.compile_wasm(wasm_path.clone()).unwrap();
+    }
+
+    if let Some(ref obj_path) = args.emit_object {
+        info!(message = %"Generating native object", path = %obj_path.display());
+        driver.compile_native(obj_path.clone()).unwrap();
+    }
+
+    // Skip VM execution if requested
+    if args.skip_vm {
+        info!(message = %"Skipping VM execution as requested");
+        return Ok(ExitCode::SUCCESS);
     }
 
     let file_path = args.root.join("Prover.toml");

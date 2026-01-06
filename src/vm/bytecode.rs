@@ -107,7 +107,7 @@ impl AllocationInstrumenter {
         let max_total = *total_usage.iter().max().unwrap_or(&1);
 
         // Create the chart with three subplots side by side
-        let root = BitMapBackend::new(path, (2400, 800)).into_drawing_area();
+        let root = SVGBackend::new(path, (2400, 800)).into_drawing_area();
         root.fill(&WHITE).unwrap();
 
         // Split the drawing area into three equal horizontal sections

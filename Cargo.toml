@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["opcode-gen", "ssa-builder"]
+members = ["opcode-gen", "ssa-builder", "wasm-runtime"]
 
 [package]
 name = "spartan-vm"
@@ -29,8 +29,11 @@ serde = { version = "1.0.204", features = ["derive"] }
 toml = { version = "0.8.20" }
 ark-bn254 = "0.5.0"
 ark-ff = "0.5.0"
+
+# LLVM codegen
+inkwell = { version = "0.5", features = ["llvm18-0"] }
 graphviz-rust = "0.6.0"
-plotters = "0.3.5"
+plotters = { version = "0.3.5", default-features = false, features = ["svg_backend", "line_series"] }
 tracing = "0.1.41"
 tracing-forest = "0.1.6"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }

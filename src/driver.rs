@@ -356,4 +356,131 @@ impl Driver {
     pub fn abi(&self) -> &noirc_abi::Abi {
         self.abi.as_ref().unwrap()
     }
+
+    /// Compile to LLVM IR and optionally to WASM or native object file
+    #[tracing::instrument(skip_all)]
+    pub fn compile_llvm(&self, output_path: Option<std::path::PathBuf>) -> Result<String, Error> {
+        use crate::compiler::llvm_codegen::LLVMCodeGen;
+        use inkwell::context::Context;
+
+        let mut ssa = self.explicit_witness_ssa.clone().unwrap();
+
+        let mut pass_manager = PassManager::<ConstantTaint>::new(
+            "llvm_codegen".to_string(),
+            self.draw_cfg,
+            vec![
+                Box::new(WitnessWriteToVoid::new()),
+                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
+                Box::new(FixDoubleJumps::new()),
+            ],
+        );
+        pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
+        pass_manager.run(&mut ssa);
+
+        let flow_analysis = FlowAnalysis::run(&ssa);
+        let type_info = Types::new().run(&ssa, &flow_analysis);
+
+        // Create LLVM context and codegen
+        let context = Context::create();
+        let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_module");
+
+        // Compile SSA to LLVM IR
+        codegen.compile(&ssa, &flow_analysis, &type_info);
+
+        // Get the LLVM IR as string
+        let llvm_ir = codegen.get_ir();
+
+        // Write LLVM IR to file if output path provided
+        if let Some(path) = &output_path {
+            let ir_path = path.with_extension("ll");
+            codegen.write_ir(&ir_path);
+            info!(message = %"LLVM IR written", path = %ir_path.display());
+        }
+
+        // Also write to debug output
+        fs::write(
+            self.get_debug_output_dir().join("witgen.ll"),
+            &llvm_ir,
+        )
+        .unwrap();
+
+        info!(message = %"LLVM IR generated", ir_size = llvm_ir.len());
+
+        Ok(llvm_ir)
+    }
+
+    /// Compile to native object file via LLVM
+    #[tracing::instrument(skip_all)]
+    pub fn compile_native(&self, output_path: std::path::PathBuf) -> Result<(), Error> {
+        use crate::compiler::llvm_codegen::LLVMCodeGen;
+        use inkwell::context::Context;
+        use inkwell::OptimizationLevel;
+
+        let mut ssa = self.explicit_witness_ssa.clone().unwrap();
+
+        let mut pass_manager = PassManager::<ConstantTaint>::new(
+            "native_codegen".to_string(),
+            self.draw_cfg,
+            vec![
+                Box::new(WitnessWriteToVoid::new()),
+                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
+                Box::new(FixDoubleJumps::new()),
+            ],
+        );
+        pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
+        pass_manager.run(&mut ssa);
+
+        let flow_analysis = FlowAnalysis::run(&ssa);
+        let type_info = Types::new().run(&ssa, &flow_analysis);
+
+        let context = Context::create();
+        let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_module");
+        codegen.compile(&ssa, &flow_analysis, &type_info);
+
+        // Compile to native object
+        codegen.compile_to_object(&output_path, OptimizationLevel::Default);
+
+        info!(message = %"Native object generated", path = %output_path.display());
+
+        Ok(())
+    }
+
+    /// Compile to WebAssembly via LLVM
+    #[tracing::instrument(skip_all)]
+    pub fn compile_wasm(&self, output_path: std::path::PathBuf) -> Result<(), Error> {
+        use crate::compiler::llvm_codegen::LLVMCodeGen;
+        use inkwell::context::Context;
+        use inkwell::OptimizationLevel;
+
+        let mut ssa = self.explicit_witness_ssa.clone().unwrap();
+
+        let mut pass_manager = PassManager::<ConstantTaint>::new(
+            "wasm_codegen".to_string(),
+            self.draw_cfg,
+            vec![
+                Box::new(WitnessWriteToVoid::new()),
+                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
+                Box::new(FixDoubleJumps::new()),
+            ],
+        );
+        pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
+        pass_manager.run(&mut ssa);
+
+        let flow_analysis = FlowAnalysis::run(&ssa);
+        let type_info = Types::new().run(&ssa, &flow_analysis);
+
+        let context = Context::create();
+        let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_wasm");
+        codegen.compile(&ssa, &flow_analysis, &type_info);
+
+        // Also write LLVM IR for debugging
+        codegen.write_ir(&output_path.with_extension("ll"));
+
+        // Compile to WASM object
+        codegen.compile_to_wasm(&output_path, OptimizationLevel::Aggressive);
+
+        info!(message = %"WASM object generated", path = %output_path.display());
+
+        Ok(())
+    }
 }
