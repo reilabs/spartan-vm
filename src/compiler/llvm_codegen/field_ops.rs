@@ -10,7 +10,7 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::{BasicType, BasicTypeEnum};
-use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, IntValue, ArrayValue};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, IntValue, ArrayValue, PointerValue};
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
 
@@ -27,6 +27,15 @@ const MODULUS: [u64; 4] = [
     0x30644e72e131a029,
 ];
 
+/// Scratch space for field operations - allocated once per function
+/// to avoid stack growth from repeated alloca in loops
+pub struct FieldScratch<'ctx> {
+    pub result_ptr: PointerValue<'ctx>,
+    pub lhs_ptr: PointerValue<'ctx>,
+    pub rhs_ptr: PointerValue<'ctx>,
+    pub write_val_ptr: PointerValue<'ctx>,
+}
+
 /// Field operations implementation
 pub struct FieldOps<'ctx> {
     context: &'ctx Context,
@@ -42,6 +51,9 @@ pub struct FieldOps<'ctx> {
     write_a_fn: Option<FunctionValue<'ctx>>,
     write_b_fn: Option<FunctionValue<'ctx>>,
     write_c_fn: Option<FunctionValue<'ctx>>,
+
+    // Per-function scratch space (initialized at function entry)
+    scratch: Option<FieldScratch<'ctx>>,
 }
 
 impl<'ctx> FieldOps<'ctx> {
@@ -56,12 +68,37 @@ impl<'ctx> FieldOps<'ctx> {
             write_a_fn: None,
             write_b_fn: None,
             write_c_fn: None,
+            scratch: None,
         };
 
         // Declare field operation functions
         ops.declare_field_functions(module);
 
         ops
+    }
+
+    /// Allocate scratch space for field operations at function entry.
+    /// This must be called once at the start of each function, in the entry block.
+    /// The scratch space is reused for all field operations to avoid stack growth.
+    pub fn init_scratch(&mut self, builder: &Builder<'ctx>) {
+        let field_type = self.field_type();
+
+        let result_ptr = builder.build_alloca(field_type, "field_scratch_result").unwrap();
+        let lhs_ptr = builder.build_alloca(field_type, "field_scratch_lhs").unwrap();
+        let rhs_ptr = builder.build_alloca(field_type, "field_scratch_rhs").unwrap();
+        let write_val_ptr = builder.build_alloca(field_type, "field_scratch_write").unwrap();
+
+        self.scratch = Some(FieldScratch {
+            result_ptr,
+            lhs_ptr,
+            rhs_ptr,
+            write_val_ptr,
+        });
+    }
+
+    /// Clear scratch space when done with a function
+    pub fn clear_scratch(&mut self) {
+        self.scratch = None;
     }
 
     /// Get the field type ([4 x i64])
@@ -71,13 +108,14 @@ impl<'ctx> FieldOps<'ctx> {
 
     /// Declare all field operation functions in the module
     fn declare_field_functions(&mut self, module: &Module<'ctx>) {
-        let field_type = self.field_type();
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let void_type = self.context.void_type();
 
-        // All field operations take two [4 x i64] and return [4 x i64]
-        let field_binop_type = field_type.fn_type(
-            &[field_type.into(), field_type.into()],
+        // Field operations: void __field_op(ptr result, ptr a, ptr b)
+        // Using pointer-based ABI for cross-platform compatibility
+        // (AAPCS64 passes 32-byte structs by reference, not in registers)
+        let field_binop_type = void_type.fn_type(
+            &[ptr_type.into(), ptr_type.into(), ptr_type.into()],
             false
         );
 
@@ -88,27 +126,17 @@ impl<'ctx> FieldOps<'ctx> {
         self.field_div_fn = Some(module.add_function("__field_div", field_binop_type, None));
 
         // Write functions for VM output slots
-        // __write_witness writes to slot 0, __write_a/b/c write to slots 1/2/3
+        // void __write_witness(ptr vm, ptr value)
         let write_fn_type = void_type.fn_type(
-            &[ptr_type.into(), field_type.into()],
+            &[ptr_type.into(), ptr_type.into()],
             false
         );
 
-        let write_witness_fn = module.add_function("__write_witness", write_fn_type, None);
-        self.write_witness_fn = Some(write_witness_fn);
-        self.define_write_output(write_witness_fn, 0);
-
-        let write_a_fn = module.add_function("__write_a", write_fn_type, None);
-        self.write_a_fn = Some(write_a_fn);
-        self.define_write_output(write_a_fn, 1);
-
-        let write_b_fn = module.add_function("__write_b", write_fn_type, None);
-        self.write_b_fn = Some(write_b_fn);
-        self.define_write_output(write_b_fn, 2);
-
-        let write_c_fn = module.add_function("__write_c", write_fn_type, None);
-        self.write_c_fn = Some(write_c_fn);
-        self.define_write_output(write_c_fn, 3);
+        // Write functions are external - provided by runtime/harness
+        self.write_witness_fn = Some(module.add_function("__write_witness", write_fn_type, None));
+        self.write_a_fn = Some(module.add_function("__write_a", write_fn_type, None));
+        self.write_b_fn = Some(module.add_function("__write_b", write_fn_type, None));
+        self.write_c_fn = Some(module.add_function("__write_c", write_fn_type, None));
     }
 
     /// Define a write output function body for a specific VM struct slot
@@ -183,12 +211,8 @@ impl<'ctx> FieldOps<'ctx> {
         rhs: BasicValueEnum<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         if let Some(add_fn) = self.field_add_fn {
-            let result = builder
-                .build_call(add_fn, &[lhs.into(), rhs.into()], "field_add")
-                .unwrap();
-            result.try_as_basic_value().unwrap_basic()
+            self.call_field_binop(builder, add_fn, lhs, rhs, "field_add")
         } else {
-            // Inline implementation as fallback
             self.add_inline(builder, lhs, rhs)
         }
     }
@@ -201,10 +225,7 @@ impl<'ctx> FieldOps<'ctx> {
         rhs: BasicValueEnum<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         if let Some(sub_fn) = self.field_sub_fn {
-            let result = builder
-                .build_call(sub_fn, &[lhs.into(), rhs.into()], "field_sub")
-                .unwrap();
-            result.try_as_basic_value().unwrap_basic()
+            self.call_field_binop(builder, sub_fn, lhs, rhs, "field_sub")
         } else {
             self.sub_inline(builder, lhs, rhs)
         }
@@ -218,10 +239,7 @@ impl<'ctx> FieldOps<'ctx> {
         rhs: BasicValueEnum<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         if let Some(mul_fn) = self.field_mul_fn {
-            let result = builder
-                .build_call(mul_fn, &[lhs.into(), rhs.into()], "field_mul")
-                .unwrap();
-            result.try_as_basic_value().unwrap_basic()
+            self.call_field_binop(builder, mul_fn, lhs, rhs, "field_mul")
         } else {
             self.mul_inline(builder, lhs, rhs)
         }
@@ -235,14 +253,37 @@ impl<'ctx> FieldOps<'ctx> {
         rhs: BasicValueEnum<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         if let Some(div_fn) = self.field_div_fn {
-            let result = builder
-                .build_call(div_fn, &[lhs.into(), rhs.into()], "field_div")
-                .unwrap();
-            result.try_as_basic_value().unwrap_basic()
+            self.call_field_binop(builder, div_fn, lhs, rhs, "field_div")
         } else {
-            // Division is complex - we rely on runtime for now
             panic!("Inline field division not implemented - requires runtime support")
         }
+    }
+
+    /// Helper to call a field binary operation using pointer-based ABI.
+    /// Uses pre-allocated scratch space to avoid stack growth in loops.
+    fn call_field_binop(
+        &self,
+        builder: &Builder<'ctx>,
+        func: FunctionValue<'ctx>,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        name: &str,
+    ) -> BasicValueEnum<'ctx> {
+        let field_type = self.field_type();
+        let scratch = self.scratch.as_ref()
+            .expect("field_ops scratch space not initialized - call init_scratch first");
+
+        // Store operands to scratch space
+        builder.build_store(scratch.lhs_ptr, lhs).unwrap();
+        builder.build_store(scratch.rhs_ptr, rhs).unwrap();
+
+        // Call function: void __field_op(ptr result, ptr a, ptr b)
+        builder
+            .build_call(func, &[scratch.result_ptr.into(), scratch.lhs_ptr.into(), scratch.rhs_ptr.into()], name)
+            .unwrap();
+
+        // Load and return result
+        builder.build_load(field_type, scratch.result_ptr, &format!("{}_val", name)).unwrap()
     }
 
     /// Inline field addition with modular reduction
@@ -373,9 +414,7 @@ impl<'ctx> FieldOps<'ctx> {
         value: BasicValueEnum<'ctx>,
     ) {
         let write_fn = self.write_witness_fn.expect("__write_witness not declared");
-        builder
-            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
-            .unwrap();
+        self.call_write_fn(builder, write_fn, vm_ptr, value);
     }
 
     /// Write constraint 'a' value to VM's output buffer (slot 1) and advance the pointer
@@ -386,9 +425,7 @@ impl<'ctx> FieldOps<'ctx> {
         value: BasicValueEnum<'ctx>,
     ) {
         let write_fn = self.write_a_fn.expect("__write_a not declared");
-        builder
-            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
-            .unwrap();
+        self.call_write_fn(builder, write_fn, vm_ptr, value);
     }
 
     /// Write constraint 'b' value to VM's output buffer (slot 2) and advance the pointer
@@ -399,9 +436,7 @@ impl<'ctx> FieldOps<'ctx> {
         value: BasicValueEnum<'ctx>,
     ) {
         let write_fn = self.write_b_fn.expect("__write_b not declared");
-        builder
-            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
-            .unwrap();
+        self.call_write_fn(builder, write_fn, vm_ptr, value);
     }
 
     /// Write constraint 'c' value to VM's output buffer (slot 3) and advance the pointer
@@ -412,8 +447,27 @@ impl<'ctx> FieldOps<'ctx> {
         value: BasicValueEnum<'ctx>,
     ) {
         let write_fn = self.write_c_fn.expect("__write_c not declared");
+        self.call_write_fn(builder, write_fn, vm_ptr, value);
+    }
+
+    /// Helper to call a write function using pointer-based ABI.
+    /// Uses pre-allocated scratch space to avoid stack growth in loops.
+    fn call_write_fn(
+        &self,
+        builder: &Builder<'ctx>,
+        func: FunctionValue<'ctx>,
+        vm_ptr: inkwell::values::PointerValue<'ctx>,
+        value: BasicValueEnum<'ctx>,
+    ) {
+        let scratch = self.scratch.as_ref()
+            .expect("field_ops scratch space not initialized - call init_scratch first");
+
+        // Store value to scratch space
+        builder.build_store(scratch.write_val_ptr, value).unwrap();
+
+        // Call function: void __write_X(ptr vm, ptr value)
         builder
-            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
+            .build_call(func, &[vm_ptr.into(), scratch.write_val_ptr.into()], "")
             .unwrap();
     }
 

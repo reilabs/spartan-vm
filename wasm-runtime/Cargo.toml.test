@@ -1,0 +1,12 @@
+[package]
+name = "test-field"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ark-bn254 = "0.5"
+ark-ff = "0.5"
+
+[[bin]]
+name = "test-field"
+path = "test_field.rs"

@@ -35,7 +35,7 @@ export interface RunResult {
  * The generated WASM module exports
  */
 interface GeneratedWasmExports {
-  main: (...args: (number | bigint)[]) => void;
+  spartan_main: (...args: (number | bigint)[]) => void;
 }
 
 /**
@@ -261,9 +261,9 @@ export async function run(
   // Prepare main() arguments
   const args = prepareMainArgs(layout.vmPtr, inputs);
 
-  // Execute main()
+  // Execute spartan_main()
   const executionStart = performance.now();
-  generated.main(...args);
+  generated.spartan_main(...args);
   const executionMs = performance.now() - executionStart;
 
   // Read output buffers

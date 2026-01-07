@@ -171,8 +171,9 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         param_types.push(self.vm_type.ptr_type.into()); // VM* as first param
 
         // Add the regular function parameters
+        // Use param_type() to get pointer types for fields (cross-platform ABI)
         for (_, tp) in entry.get_parameters() {
-            param_types.push(self.type_converter.convert_type(tp).into());
+            param_types.push(self.type_converter.param_type(tp).into());
         }
 
         // Build return type - for now, we'll return a struct if multiple values
@@ -192,7 +193,13 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             return_struct.fn_type(&param_types, false)
         };
 
-        let fn_value = self.module.add_function(function.get_name(), fn_type, None);
+        // Rename "main" to "spartan_main" to avoid conflicts with C main()
+        let name = if function.get_name() == "main" {
+            "spartan_main"
+        } else {
+            function.get_name()
+        };
+        let fn_value = self.module.add_function(name, fn_type, None);
         self.function_map.insert(fn_id, fn_value);
     }
 
@@ -229,13 +236,29 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         let entry_bb = self.block_map[&function.get_entry_id()];
         self.builder.position_at_end(entry_bb);
 
+        // Allocate scratch space for field operations at function entry
+        // This avoids stack growth from repeated alloca in loops
+        self.field_ops.init_scratch(&self.builder);
+
         // First parameter is always VM*
         self.vm_ptr = Some(fn_value.get_nth_param(0).unwrap().into_pointer_value());
 
         // Map SSA parameters to LLVM function arguments (starting from index 1)
-        for (i, (param_id, _)) in entry.get_parameters().enumerate() {
+        // For pointer-passed parameters (field types), load the value from the pointer
+        for (i, (param_id, param_type)) in entry.get_parameters().enumerate() {
             let param_value = fn_value.get_nth_param((i + 1) as u32).unwrap();
-            self.value_map.insert(*param_id, param_value);
+
+            let mapped_value = if self.type_converter.should_pass_by_pointer(param_type) {
+                // Load field value from pointer
+                let field_type = self.type_converter.convert_type(param_type);
+                self.builder
+                    .build_load(field_type, param_value.into_pointer_value(), &format!("param_{}", i))
+                    .unwrap()
+            } else {
+                param_value
+            };
+
+            self.value_map.insert(*param_id, mapped_value);
         }
 
         // Generate constants
@@ -273,6 +296,9 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                 }
             }
         }
+
+        // Clear scratch space for next function
+        self.field_ops.clear_scratch();
     }
 
     /// Compile a block, tracking phi nodes for later
@@ -803,10 +829,22 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
     /// Compile to object file for native target
     pub fn compile_to_object(&self, path: &Path, optimization: OptimizationLevel) {
-        Target::initialize_native(&InitializationConfig::default()).unwrap();
+        // Initialize all native target components
+        Target::initialize_native(&InitializationConfig {
+            asm_parser: true,
+            asm_printer: true,
+            base: true,
+            disassembler: true,
+            info: true,
+            machine_code: true,
+        })
+        .unwrap();
 
-        let target_triple = TargetMachine::get_default_triple();
+        let target_triple = Self::get_native_target_triple();
         let target = Target::from_triple(&target_triple).unwrap();
+
+        // Use PIC for shared library compatibility
+        let reloc_mode = RelocMode::PIC;
 
         let target_machine = target
             .create_target_machine(
@@ -814,14 +852,49 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                 "generic",
                 "",
                 optimization,
-                RelocMode::Default,
+                reloc_mode,
                 CodeModel::Default,
             )
             .unwrap();
 
+        // Set the module's target triple
+        self.module.set_triple(&target_triple);
+
         target_machine
             .write_to_file(&self.module, FileType::Object, path)
             .unwrap();
+    }
+
+    /// Get the native target triple, adjusting for macOS deployment target
+    fn get_native_target_triple() -> TargetTriple {
+        let default_triple = TargetMachine::get_default_triple();
+        let triple_str = default_triple.as_str().to_string_lossy();
+
+        // On macOS, use MACOSX_DEPLOYMENT_TARGET or a reasonable default
+        // LLVM may return either "macos" or "darwin" variants:
+        // - arm64-apple-macosx14.0.0
+        // - arm64-apple-darwin24.0.0
+        // - x86_64-apple-macosx14.0
+        if triple_str.contains("apple") {
+            let deployment_target = std::env::var("MACOSX_DEPLOYMENT_TARGET")
+                .unwrap_or_else(|_| "11.0".to_string());
+
+            // Extract architecture from the triple
+            let parts: Vec<&str> = triple_str.split('-').collect();
+            if parts.len() >= 2 {
+                let arch = parts[0];
+                // Always use arm64-apple-macosx{version} format for Apple targets
+                // This avoids issues with LLVM returning darwin versions or future macOS versions
+                let new_triple = format!("{}-apple-macosx{}", arch, deployment_target);
+                eprintln!(
+                    "Note: Adjusting target triple from '{}' to '{}'",
+                    triple_str, new_triple
+                );
+                return TargetTriple::create(&new_triple);
+            }
+        }
+
+        default_triple
     }
 
     /// Compile to WebAssembly
@@ -865,8 +938,8 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
         let status = Command::new(&wasm_ld)
             .args([
-                "--no-entry",          // No entry point (we call main explicitly)
-                "--export=main",       // Export main function
+                "--no-entry",               // No entry point (we call main explicitly)
+                "--export=spartan_main",    // Export main function
                 "--import-memory",     // Import memory from host
                 "--allow-undefined",   // Allow undefined symbols (will be imported)
                 "-o",

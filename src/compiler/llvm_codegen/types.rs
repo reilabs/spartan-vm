@@ -83,4 +83,20 @@ impl<'ctx> TypeConverter<'ctx> {
             TypeExpr::Ref(_) => 8,   // Pointer size
         }
     }
+
+    /// Check if a type should be passed by pointer for cross-platform ABI compatibility.
+    /// Field elements (32 bytes) are passed by pointer because AAPCS64 passes
+    /// structs > 16 bytes by reference, while LLVM's `[4 x i64]` has different semantics.
+    pub fn should_pass_by_pointer(&self, ty: &Type<ConstantTaint>) -> bool {
+        matches!(ty.expr, TypeExpr::Field | TypeExpr::BoxedField)
+    }
+
+    /// Get the LLVM type for a parameter, using pointer for large types
+    pub fn param_type(&self, ty: &Type<ConstantTaint>) -> BasicTypeEnum<'ctx> {
+        if self.should_pass_by_pointer(ty) {
+            self.context.ptr_type(AddressSpace::default()).into()
+        } else {
+            self.convert_type(ty)
+        }
+    }
 }
