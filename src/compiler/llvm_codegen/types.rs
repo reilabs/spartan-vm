@@ -1,7 +1,11 @@
 //! Type conversion from Spartan VM types to LLVM types
+//!
+//! Currently only supports types needed for the `power` example:
+//! - Field (BN254 field elements as [4 x i64])
+//! - U (integers for loop counters)
 
 use inkwell::context::Context;
-use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::types::BasicTypeEnum;
 use inkwell::AddressSpace;
 
 use crate::compiler::ir::r#type::{Type, TypeExpr};
@@ -27,30 +31,11 @@ impl<'ctx> TypeConverter<'ctx> {
                 // Field is represented as [4 x i64] - 256 bits in Montgomery form
                 self.field_type().into()
             }
-            TypeExpr::BoxedField => {
-                // BoxedField is a pointer to a field
-                // For simplicity in LLVM, we'll represent it the same as Field
-                // In a more sophisticated implementation, this would be a pointer
-                self.field_type().into()
-            }
             TypeExpr::U(bits) => {
                 // Map to appropriate LLVM integer type
                 self.int_type(*bits).into()
             }
-            TypeExpr::Array(elem_type, size) => {
-                // Fixed-size array - represented as pointer to first element
-                let elem_llvm_type = self.convert_type(elem_type);
-                let array_type = elem_llvm_type.array_type(*size as u32);
-                self.context.ptr_type(AddressSpace::default()).into()
-            }
-            TypeExpr::Slice(elem_type) => {
-                // Slice - pointer type (dynamic size)
-                self.context.ptr_type(AddressSpace::default()).into()
-            }
-            TypeExpr::Ref(inner_type) => {
-                // Reference/pointer
-                self.context.ptr_type(AddressSpace::default()).into()
-            }
+            _ => panic!("Unsupported type in LLVM codegen: {:?}", ty.expr),
         }
     }
 
@@ -67,31 +52,18 @@ impl<'ctx> TypeConverter<'ctx> {
             16 => self.context.i16_type(),
             32 => self.context.i32_type(),
             64 => self.context.i64_type(),
-            128 => self.context.i128_type(),
             _ => self.context.custom_width_int_type(bits as u32),
-        }
-    }
-
-    /// Get the size in bytes of a type
-    pub fn type_size(&self, ty: &Type<ConstantTaint>) -> u64 {
-        match &ty.expr {
-            TypeExpr::Field => FIELD_LIMBS as u64 * 8, // 4 * 8 = 32 bytes
-            TypeExpr::BoxedField => FIELD_LIMBS as u64 * 8,
-            TypeExpr::U(bits) => (*bits as u64 + 7) / 8,
-            TypeExpr::Array(elem_type, size) => self.type_size(elem_type) * (*size as u64),
-            TypeExpr::Slice(_) => 8, // Pointer size
-            TypeExpr::Ref(_) => 8,   // Pointer size
         }
     }
 
     /// Check if a type should be passed by pointer for cross-platform ABI compatibility.
     /// Field elements (32 bytes) are passed by pointer because AAPCS64 passes
-    /// structs > 16 bytes by reference, while LLVM's `[4 x i64]` has different semantics.
+    /// structs > 16 bytes by reference.
     pub fn should_pass_by_pointer(&self, ty: &Type<ConstantTaint>) -> bool {
-        matches!(ty.expr, TypeExpr::Field | TypeExpr::BoxedField)
+        matches!(ty.expr, TypeExpr::Field)
     }
 
-    /// Get the LLVM type for a parameter, using pointer for large types
+    /// Get the LLVM type for a parameter, using pointer for field types
     pub fn param_type(&self, ty: &Type<ConstantTaint>) -> BasicTypeEnum<'ctx> {
         if self.should_pass_by_pointer(ty) {
             self.context.ptr_type(AddressSpace::default()).into()

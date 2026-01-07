@@ -357,6 +357,12 @@ impl<'ctx> LLVMCodeGen<'ctx> {
     }
 
     /// Compile a single instruction
+    ///
+    /// Currently only supports operations needed for the `power` example:
+    /// - BinaryArithOp (field mul, int add)
+    /// - Cmp (for loop conditions)
+    /// - Constrain (write constraints)
+    /// - WriteWitness
     fn compile_instruction(
         &mut self,
         instruction: &crate::compiler::ssa::OpCode<ConstantTaint>,
@@ -376,7 +382,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                 let result_type = type_info.get_value_type(*result);
 
                 let result_val = match &result_type.expr {
-                    TypeExpr::Field | TypeExpr::BoxedField => {
+                    TypeExpr::Field => {
                         self.compile_field_binop(*kind, lhs_val, rhs_val)
                     }
                     TypeExpr::U(_) => {
@@ -405,180 +411,9 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                 self.value_map.insert(*result, cmp_result.into());
             }
 
-            OpCode::Cast { result, value, target } => {
-                let val = self.value_map[value];
-                let result_type = type_info.get_value_type(*result);
-                let source_type = type_info.get_value_type(*value);
-
-                let result_val = self.compile_cast(val, &source_type, &result_type);
-                self.value_map.insert(*result, result_val);
-            }
-
-            OpCode::Truncate { result, value, to_bits, .. } => {
-                let val = self.value_map[value];
-                let target_type = self.context.custom_width_int_type(*to_bits as u32);
-
-                let result_val = if val.is_int_value() {
-                    self.builder
-                        .build_int_truncate(val.into_int_value(), target_type, &format!("v{}", result.0))
-                        .unwrap()
-                        .into()
-                } else {
-                    // Field to int truncation - extract low bits
-                    self.field_ops.truncate_to_int(&self.builder, val, *to_bits)
-                };
-
-                self.value_map.insert(*result, result_val);
-            }
-
-            OpCode::Not { result, value } => {
-                let val = self.value_map[value].into_int_value();
-                let result_val = self.builder.build_not(val, &format!("v{}", result.0)).unwrap();
-                self.value_map.insert(*result, result_val.into());
-            }
-
-            OpCode::Select { result, cond, if_t, if_f } => {
-                let cond_val = self.value_map[cond].into_int_value();
-                let true_val = self.value_map[if_t];
-                let false_val = self.value_map[if_f];
-
-                // Convert condition to i1
-                let cond_bool = self
-                    .builder
-                    .build_int_compare(
-                        IntPredicate::NE,
-                        cond_val,
-                        cond_val.get_type().const_zero(),
-                        "cond_bool",
-                    )
-                    .unwrap();
-
-                let result_val = self
-                    .builder
-                    .build_select(cond_bool, true_val, false_val, &format!("v{}", result.0))
-                    .unwrap();
-
-                self.value_map.insert(*result, result_val);
-            }
-
-            OpCode::Call { results, function, args } => {
-                let fn_value = self.function_map[function];
-
-                // Build argument list - VM* first, then regular args
-                let mut arg_values: Vec<BasicMetadataValueEnum> = Vec::new();
-                arg_values.push(self.vm_ptr.unwrap().into()); // Pass VM* to callee
-                for arg in args {
-                    arg_values.push(self.value_map[arg].into());
-                }
-
-                let call_result = self
-                    .builder
-                    .build_call(fn_value, &arg_values, "call_result")
-                    .unwrap();
-
-                if results.len() == 1 {
-                    if let Some(ret_val) = call_result.try_as_basic_value().basic() {
-                        self.value_map.insert(results[0], ret_val);
-                    }
-                } else if results.len() > 1 {
-                    // Multiple returns - extract from struct
-                    if let Some(ret_val) = call_result.try_as_basic_value().basic() {
-                        for (i, result_id) in results.iter().enumerate() {
-                            let extracted = self
-                                .builder
-                                .build_extract_value(
-                                    ret_val.into_struct_value(),
-                                    i as u32,
-                                    &format!("v{}", result_id.0),
-                                )
-                                .unwrap();
-                            self.value_map.insert(*result_id, extracted);
-                        }
-                    }
-                }
-            }
-
-            OpCode::MkSeq { result, elems, seq_type, elem_type } => {
-                // Create array on stack
-                let elem_llvm_type = self.type_converter.convert_type(elem_type);
-                let array_type = elem_llvm_type.array_type(elems.len() as u32);
-                let array_ptr = self
-                    .builder
-                    .build_alloca(array_type, &format!("v{}", result.0))
-                    .unwrap();
-
-                // Store elements
-                for (i, elem_id) in elems.iter().enumerate() {
-                    let elem_val = self.value_map[elem_id];
-                    let idx = self.context.i64_type().const_int(i as u64, false);
-                    let elem_ptr = unsafe {
-                        self.builder
-                            .build_in_bounds_gep(
-                                array_type,
-                                array_ptr,
-                                &[self.context.i64_type().const_zero(), idx],
-                                "elem_ptr",
-                            )
-                            .unwrap()
-                    };
-                    self.builder.build_store(elem_ptr, elem_val).unwrap();
-                }
-
-                self.value_map.insert(*result, array_ptr.into());
-            }
-
-            OpCode::ArrayGet { result, array, index } => {
-                let array_ptr = self.value_map[array].into_pointer_value();
-                let index_val = self.value_map[index].into_int_value();
-                let result_type = type_info.get_value_type(*result);
-                let elem_type = self.type_converter.convert_type(&result_type);
-
-                let elem_ptr = unsafe {
-                    self.builder
-                        .build_in_bounds_gep(
-                            elem_type,
-                            array_ptr,
-                            &[index_val],
-                            "array_elem_ptr",
-                        )
-                        .unwrap()
-                };
-
-                let loaded = self
-                    .builder
-                    .build_load(elem_type, elem_ptr, &format!("v{}", result.0))
-                    .unwrap();
-
-                self.value_map.insert(*result, loaded);
-            }
-
-            OpCode::ArraySet { result, array, index, value } => {
-                // ArraySet returns a new array (immutable semantics)
-                // For now, we'll do a copy-on-write style implementation
-                let array_ptr = self.value_map[array].into_pointer_value();
-                let index_val = self.value_map[index].into_int_value();
-                let new_value = self.value_map[value];
-                let elem_type = self.type_converter.convert_type(type_info.get_value_type(*value));
-
-                // For simplicity, modify in place (caller must ensure COW if needed)
-                let elem_ptr = unsafe {
-                    self.builder
-                        .build_in_bounds_gep(
-                            elem_type,
-                            array_ptr,
-                            &[index_val],
-                            "array_set_ptr",
-                        )
-                        .unwrap()
-                };
-
-                self.builder.build_store(elem_ptr, new_value).unwrap();
-                self.value_map.insert(*result, array_ptr.into());
-            }
-
             OpCode::Constrain { a, b, c } => {
                 // R1CS constraint: a * b = c
-                // Write the three constraint values to VM output slots 1, 2, 3
+                // Write the three constraint values to VM output
                 let a_val = self.value_map[a];
                 let b_val = self.value_map[b];
                 let c_val = self.value_map[c];
@@ -593,104 +428,21 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                 let val = self.value_map[value];
                 let vm_ptr = self.vm_ptr.unwrap();
 
-                // Call __write_witness(vm, value) to write and advance pointer
                 self.field_ops.write_witness(&self.builder, vm_ptr, val);
 
-                // Map result if present
                 if let Some(result_id) = result {
                     self.value_map.insert(*result_id, val);
                 }
             }
 
-            OpCode::AssertEq { lhs, rhs } => {
-                let lhs_val = self.value_map[lhs];
-                let rhs_val = self.value_map[rhs];
-
-                // Generate assertion
-                if lhs_val.is_int_value() {
-                    let cmp = self
-                        .builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            lhs_val.into_int_value(),
-                            rhs_val.into_int_value(),
-                            "assert_eq_cmp",
-                        )
-                        .unwrap();
-
-                    // For now, we could call an assert intrinsic or trap
-                    // This is a placeholder - in production you'd want proper error handling
-                } else {
-                    self.field_ops.assert_eq(&self.builder, lhs_val, rhs_val);
-                }
-            }
-
-            // Memory operations - simplified for now
-            OpCode::Alloc { result, elem_type, .. } => {
-                let llvm_type = self.type_converter.convert_type(elem_type);
-                let ptr = self
-                    .builder
-                    .build_alloca(llvm_type, &format!("v{}", result.0))
-                    .unwrap();
-                self.value_map.insert(*result, ptr.into());
-            }
-
-            OpCode::Store { ptr, value } => {
-                let ptr_val = self.value_map[ptr].into_pointer_value();
-                let val = self.value_map[value];
-                self.builder.build_store(ptr_val, val).unwrap();
-            }
-
-            OpCode::Load { result, ptr } => {
-                let ptr_val = self.value_map[ptr].into_pointer_value();
-                let result_type = type_info.get_value_type(*result);
-                let llvm_type = self.type_converter.convert_type(&result_type);
-                let loaded = self
-                    .builder
-                    .build_load(llvm_type, ptr_val, &format!("v{}", result.0))
-                    .unwrap();
-                self.value_map.insert(*result, loaded);
-            }
-
-            // Operations we'll skip or stub for now
-            OpCode::MemOp { .. } => {
-                // Reference counting - no-op for basic LLVM
-            }
-
-            OpCode::FreshWitness { result, result_type } => {
-                // Fresh witness - in LLVM mode, this should read from input
-                // For now, create an undefined value
-                let llvm_type = self.type_converter.convert_type(result_type);
-                let undef = llvm_type.const_zero();
-                self.value_map.insert(*result, undef);
-            }
-
-            OpCode::BoxField { result, value, .. } => {
-                // Boxing - for now just pass through
-                let val = self.value_map[value];
-                self.value_map.insert(*result, val);
-            }
-
-            OpCode::UnboxField { result, value } => {
-                let val = self.value_map[value];
-                self.value_map.insert(*result, val);
-            }
-
-            OpCode::ToBits { result, value, count, .. } => {
-                // Convert value to array of bits
-                let val = self.value_map[value];
-                let bits_array = self.field_ops.to_bits(&self.builder, val, *count);
-                self.value_map.insert(*result, bits_array);
-            }
-
+            // All other opcodes are not yet supported
             _ => {
-                // For unhandled opcodes, we'll need to implement them as needed
-                panic!("Unhandled opcode in LLVM: {:?}", instruction);
+                panic!("Unsupported opcode in LLVM codegen: {:?}", instruction);
             }
         }
     }
 
-    /// Compile integer binary operation
+    /// Compile integer binary operation (only Add supported for loop counters)
     fn compile_int_binop(
         &self,
         kind: BinaryArithOpKind,
@@ -702,16 +454,13 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
         let result = match kind {
             BinaryArithOpKind::Add => self.builder.build_int_add(lhs_int, rhs_int, "add").unwrap(),
-            BinaryArithOpKind::Sub => self.builder.build_int_sub(lhs_int, rhs_int, "sub").unwrap(),
-            BinaryArithOpKind::Mul => self.builder.build_int_mul(lhs_int, rhs_int, "mul").unwrap(),
-            BinaryArithOpKind::Div => self.builder.build_int_unsigned_div(lhs_int, rhs_int, "div").unwrap(),
-            BinaryArithOpKind::And => self.builder.build_and(lhs_int, rhs_int, "and").unwrap(),
+            _ => panic!("Unsupported integer binary op: {:?}", kind),
         };
 
         result.into()
     }
 
-    /// Compile field binary operation
+    /// Compile field binary operation (only Mul supported)
     fn compile_field_binop(
         &self,
         kind: BinaryArithOpKind,
@@ -719,41 +468,8 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         rhs: BasicValueEnum<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         match kind {
-            BinaryArithOpKind::Add => self.field_ops.add(&self.builder, lhs, rhs),
-            BinaryArithOpKind::Sub => self.field_ops.sub(&self.builder, lhs, rhs),
             BinaryArithOpKind::Mul => self.field_ops.mul(&self.builder, lhs, rhs),
-            BinaryArithOpKind::Div => self.field_ops.div(&self.builder, lhs, rhs),
-            BinaryArithOpKind::And => panic!("Bitwise AND not supported for field elements"),
-        }
-    }
-
-    /// Compile a cast operation
-    fn compile_cast(
-        &self,
-        val: BasicValueEnum<'ctx>,
-        from_type: &Type<ConstantTaint>,
-        to_type: &Type<ConstantTaint>,
-    ) -> BasicValueEnum<'ctx> {
-        match (&from_type.expr, &to_type.expr) {
-            (TypeExpr::U(from_bits), TypeExpr::U(to_bits)) => {
-                let int_val = val.into_int_value();
-                let target_type = self.context.custom_width_int_type(*to_bits as u32);
-
-                if to_bits > from_bits {
-                    self.builder.build_int_z_extend(int_val, target_type, "zext").unwrap().into()
-                } else if to_bits < from_bits {
-                    self.builder.build_int_truncate(int_val, target_type, "trunc").unwrap().into()
-                } else {
-                    val
-                }
-            }
-            (TypeExpr::U(_), TypeExpr::Field) => {
-                self.field_ops.from_int(&self.builder, val.into_int_value())
-            }
-            (TypeExpr::Field, TypeExpr::U(bits)) => {
-                self.field_ops.truncate_to_int(&self.builder, val, *bits)
-            }
-            _ => val, // Identity or unsupported
+            _ => panic!("Unsupported field binary op: {:?}", kind),
         }
     }
 
