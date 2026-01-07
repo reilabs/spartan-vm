@@ -31,15 +31,8 @@ async function main() {
         const result = await interpreter.execute_witgen(JSON.stringify(inputs));
 
         console.log('\nExecution completed!');
-        console.log('Witness pre-commitment size:', result.witness_pre_comm.length);
-        console.log('Witness post-commitment size:', result.witness_post_comm.length);
-        console.log('A vector size:', result.a.length);
-        console.log('B vector size:', result.b.length);
-        console.log('C vector size:', result.c.length);
-
-        console.log('\nFirst few witness values:');
-        console.log(result.witness_pre_comm.slice(0, 5));
-
+        const executionTime = result.get ? result.get('execution_time_ms') : result.execution_time_ms;
+        console.log('Interpreter execution time:', executionTime.toFixed(2), 'ms');
         console.log('\n✓ WASM interpreter test passed!');
     } catch (error) {
         console.error('Error:', error);

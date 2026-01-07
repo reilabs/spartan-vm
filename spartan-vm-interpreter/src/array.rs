@@ -129,8 +129,7 @@ impl BoxedValue {
 
         // Check for allocation failure
         if ptr.is_null() {
-            #[cfg(target_arch = "wasm32")]
-            web_sys::console::error_1(&format!("[WASM ERROR] BoxedValue allocation failed! size={}", arr_size).into());
+            tracing::error!(size = arr_size, "BoxedValue allocation failed");
             panic!("BoxedValue allocation failed - out of memory");
         }
 

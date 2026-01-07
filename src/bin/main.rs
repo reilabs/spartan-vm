@@ -210,7 +210,6 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         r1cs.constraints_layout,
     );
 
-
     let correct = r1cs.check_ad_output(&ad_coeffs, &ad_a, &ad_b, &ad_c);
     if !correct {
         error!(message = %"AD output is incorrect");

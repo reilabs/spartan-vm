@@ -20,6 +20,10 @@ getrandom = { version = "0.2", features = ["js"] }
 acir_field = { git = "https://github.com/reilabs/noir.git", branch = "spartan-vm", package = "acir_field" }
 noirc_abi = { git = "https://github.com/reilabs/noir.git", branch = "spartan-vm", package = "noirc_abi" }
 spartan-vm-interpreter = { path = "../spartan-vm-interpreter" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+tracing-subscriber-wasm = "0.1"
+js-sys = "0.3"
 
 [dependencies.web-sys]
 version = "0.3"

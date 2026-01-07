@@ -4,20 +4,15 @@ use spartan_vm_interpreter::{
 };
 use ark_ff::BigInteger;
 use acir_field::AcirField;
+use std::sync::Once;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber_wasm::MakeConsoleWriter;
 
 // Use wee_alloc as the global allocator for smaller WASM binary and better memory management
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
-}
-
-macro_rules! console_log {
-    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
-}
+static TRACING_INIT: Once = Once::new();
 
 #[wasm_bindgen]
 pub struct WasmInterpreter {
@@ -32,7 +27,24 @@ impl WasmInterpreter {
     #[wasm_bindgen(constructor)]
     pub fn new() -> WasmInterpreter {
         console_error_panic_hook::set_once();
-        console_log!("WasmInterpreter initialized");
+
+        // Initialize tracing to output to console (works in both browser and Node.js)
+        TRACING_INIT.call_once(|| {
+            use tracing_subscriber::fmt::format::FmtSpan;
+
+            let fmt_layer = tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .without_time()
+                // Note: Can't use FmtSpan::CLOSE as it requires std::time::Instant which isn't available in WASM
+                .with_span_events(FmtSpan::NEW | FmtSpan::ENTER | FmtSpan::EXIT)
+                .with_writer(MakeConsoleWriter::default());
+
+            tracing_subscriber::registry()
+                .with(fmt_layer)
+                .init();
+        });
+
+        tracing::info!("WasmInterpreter initialized");
         WasmInterpreter {
             witgen_bytecode: None,
             ad_bytecode: None,
@@ -53,7 +65,7 @@ impl WasmInterpreter {
             bytecode.push(value);
         }
 
-        console_log!("Loaded witgen bytecode: {} u64s", bytecode.len());
+        tracing::info!(size = bytecode.len(), "Loaded witgen bytecode");
         self.witgen_bytecode = Some(bytecode);
         Ok(())
     }
@@ -70,7 +82,7 @@ impl WasmInterpreter {
             bytecode.push(value);
         }
 
-        console_log!("Loaded AD bytecode: {} u64s", bytecode.len());
+        tracing::info!(size = bytecode.len(), "Loaded AD bytecode");
         self.ad_bytecode = Some(bytecode);
         Ok(())
     }
@@ -88,8 +100,11 @@ impl WasmInterpreter {
             serde_json::from_value(layouts["constraints"].clone())
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse constraints layout: {}", e)))?;
 
-        console_log!("Loaded layouts - witness size: {}, constraints size: {}",
-            witness_layout.size(), constraints_layout.size());
+        tracing::info!(
+            witness_size = witness_layout.size(),
+            constraints_size = constraints_layout.size(),
+            "Loaded layouts"
+        );
 
         self.witness_layout = Some(witness_layout);
         self.constraints_layout = Some(constraints_layout);
@@ -131,15 +146,12 @@ impl WasmInterpreter {
             })
             .collect::<Result<Vec<_>, JsValue>>()?;
 
-        console_log!("Running witgen with {} inputs {:?}", flat_inputs.len(), flat_inputs);
+        tracing::info!(num_inputs = flat_inputs.len(), "Running witgen");
 
-        // For now, we need to convert flat inputs to InputValue format
-        // This is a temporary workaround - we'll need the actual InputValue conversion
-        // For simple cases with just field inputs, we can create a vec of Field InputValues
+        // Convert flat inputs to InputValue format
         use noirc_abi::input_parser::InputValue;
         use acir_field::FieldElement;
 
-        console_log!("Converting inputs to InputValue format...");
         let input_values: Vec<InputValue> = flat_inputs
             .iter()
             .map(|f| {
@@ -148,38 +160,19 @@ impl WasmInterpreter {
             })
             .collect();
 
-        console_log!("Starting branching interpreter...");
-        console_log!("Bytecode size: {} u64s", bytecode.len());
-        console_log!("Witness layout size: {}", witness_layout.size());
-        console_log!("Constraints layout size: {}", constraints_layout.size());
-        console_log!("Input values: {:?}", input_values);
-
-        let result = interpreter::run_branching(
+        let start_time = js_sys::Date::now();
+        let _result = interpreter::run_branching(
             bytecode,
             *witness_layout,
             *constraints_layout,
             &input_values,
         );
+        let execution_time_ms = js_sys::Date::now() - start_time;
 
-        console_log!("Interpreter completed successfully!");
+        tracing::info!(execution_time_ms = execution_time_ms, "Interpreter completed");
 
-        // Convert result to JSON
         let output = serde_json::json!({
-            "witness_pre_comm": result.out_wit_pre_comm.iter()
-                .map(|f| f.0.to_string())
-                .collect::<Vec<_>>(),
-            "witness_post_comm": result.out_wit_post_comm.iter()
-                .map(|f| f.0.to_string())
-                .collect::<Vec<_>>(),
-            "a": result.out_a.iter()
-                .map(|f| f.0.to_string())
-                .collect::<Vec<_>>(),
-            "b": result.out_b.iter()
-                .map(|f| f.0.to_string())
-                .collect::<Vec<_>>(),
-            "c": result.out_c.iter()
-                .map(|f| f.0.to_string())
-                .collect::<Vec<_>>(),
+            "execution_time_ms": execution_time_ms,
         });
 
         Ok(serde_wasm_bindgen::to_value(&output)?)

@@ -45,8 +45,7 @@ impl Frame {
 
             // Check for allocation failure
             if data.is_null() {
-                #[cfg(target_arch = "wasm32")]
-                web_sys::console::error_1(&format!("[WASM ERROR] Frame allocation failed! size={}", size + 2).into());
+                tracing::error!(size = size + 2, "Frame allocation failed");
                 panic!("Frame allocation failed - out of memory");
             }
 
@@ -198,30 +197,18 @@ fn run_internal<F>(
 where
     F: FnOnce(*const u64, Frame, &mut VM),
 {
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&format!("[WASM] run_internal: Allocating vectors, wit={}, const={}",
-        witness_layout.pre_commitment_size(), constraints_layout.size()).into());
-
     let mut out_a = vec![Field::ZERO; constraints_layout.size()];
     let mut out_b = vec![Field::ZERO; constraints_layout.size()];
     let mut out_c = vec![Field::ZERO; constraints_layout.size()];
 
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"[WASM] run_internal: Constraint vectors allocated".into());
-
     let mut out_wit_pre_comm = vec![Field::ZERO; witness_layout.pre_commitment_size()];
     out_wit_pre_comm[0] = Field::ONE;
 
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"[WASM] run_internal: Witness vectors allocated".into());
     let flat_inputs = flatten_param_vec(ordered_inputs);
     for i in 0..flat_inputs.len() {
         out_wit_pre_comm[1 + i] = flat_inputs[i];
     }
     let mut out_wit_post_comm = vec![Field::ZERO; witness_layout.post_commitment_size()];
-
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"[WASM] run_internal: Creating VM".into());
 
     let mut vm = VM::new_witgen(
         out_a.as_mut_ptr(),
@@ -251,9 +238,6 @@ where
         witness_layout.tables_data_start() - witness_layout.challenges_start(),
     );
 
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&format!("[WASM] run_internal: Allocating frame, size={}", program[1]).into());
-
     let frame = Frame::push(
         program[1],
         Frame {
@@ -262,24 +246,13 @@ where
         &mut vm,
     );
 
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"[WASM] run_internal: Writing input values".into());
-
-    let mut current_offset = 2 as isize ;
+    let mut current_offset = 2 as isize;
     for (_, el) in ordered_inputs.iter().enumerate() {
-        unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
+        unsafe { current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm) };
     }
 
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"[WASM] run_internal: Starting dispatch".into());
-
     let pc = unsafe { program.as_ptr().offset(2) };
-
-    // Call the provided dispatch function
     dispatch_fn(pc, frame, &mut vm);
-
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"[WASM] run_internal: Dispatch completed".into());
 
     fix_multiplicities_section(&mut out_wit_pre_comm, witness_layout);
 
@@ -408,17 +381,9 @@ pub fn run_branching(
     constraints_layout: ConstraintsLayout,
     ordered_inputs: &[InputValue],
 ) -> WitgenResult {
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"[WASM] Entering run_branching".into());
-
-    let result = run_internal(program, witness_layout, constraints_layout, ordered_inputs, |pc, frame, vm| {
+    run_internal(program, witness_layout, constraints_layout, ordered_inputs, |pc, frame, vm| {
         bytecode::dispatch_branching(pc, frame, vm)
-    });
-
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"[WASM] Exiting run_branching".into());
-
-    result
+    })
 }
 
 /// Internal implementation shared by both threaded and branching AD interpreters
@@ -453,8 +418,6 @@ where
     );
 
     let pc = unsafe { program.as_ptr().offset(2) };
-
-    // Call the provided dispatch function
     dispatch_fn(pc, frame, &mut vm);
 
     (out_da, out_db, out_dc, vm.allocation_instrumenter)
