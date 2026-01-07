@@ -409,42 +409,6 @@ impl Driver {
         Ok(llvm_ir)
     }
 
-    /// Compile to native object file via LLVM
-    #[tracing::instrument(skip_all)]
-    pub fn compile_native(&self, output_path: std::path::PathBuf) -> Result<(), Error> {
-        use crate::compiler::llvm_codegen::LLVMCodeGen;
-        use inkwell::context::Context;
-        use inkwell::OptimizationLevel;
-
-        let mut ssa = self.explicit_witness_ssa.clone().unwrap();
-
-        let mut pass_manager = PassManager::<ConstantTaint>::new(
-            "native_codegen".to_string(),
-            self.draw_cfg,
-            vec![
-                Box::new(WitnessWriteToVoid::new()),
-                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
-                Box::new(FixDoubleJumps::new()),
-            ],
-        );
-        pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
-        pass_manager.run(&mut ssa);
-
-        let flow_analysis = FlowAnalysis::run(&ssa);
-        let type_info = Types::new().run(&ssa, &flow_analysis);
-
-        let context = Context::create();
-        let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_module");
-        codegen.compile(&ssa, &flow_analysis, &type_info);
-
-        // Compile to native object
-        codegen.compile_to_object(&output_path, OptimizationLevel::Default);
-
-        info!(message = %"Native object generated", path = %output_path.display());
-
-        Ok(())
-    }
-
     /// Compile to WebAssembly via LLVM
     #[tracing::instrument(skip_all)]
     pub fn compile_wasm(&self, output_path: std::path::PathBuf, r1cs: &R1CS) -> Result<(), Error> {

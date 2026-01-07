@@ -13,7 +13,7 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::targets::{
-    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple,
 };
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType};
 use inkwell::values::{
@@ -825,76 +825,6 @@ impl<'ctx> LLVMCodeGen<'ctx> {
     /// Write LLVM IR to a file
     pub fn write_ir(&self, path: &Path) {
         self.module.print_to_file(path).unwrap();
-    }
-
-    /// Compile to object file for native target
-    pub fn compile_to_object(&self, path: &Path, optimization: OptimizationLevel) {
-        // Initialize all native target components
-        Target::initialize_native(&InitializationConfig {
-            asm_parser: true,
-            asm_printer: true,
-            base: true,
-            disassembler: true,
-            info: true,
-            machine_code: true,
-        })
-        .unwrap();
-
-        let target_triple = Self::get_native_target_triple();
-        let target = Target::from_triple(&target_triple).unwrap();
-
-        // Use PIC for shared library compatibility
-        let reloc_mode = RelocMode::PIC;
-
-        let target_machine = target
-            .create_target_machine(
-                &target_triple,
-                "generic",
-                "",
-                optimization,
-                reloc_mode,
-                CodeModel::Default,
-            )
-            .unwrap();
-
-        // Set the module's target triple
-        self.module.set_triple(&target_triple);
-
-        target_machine
-            .write_to_file(&self.module, FileType::Object, path)
-            .unwrap();
-    }
-
-    /// Get the native target triple, adjusting for macOS deployment target
-    fn get_native_target_triple() -> TargetTriple {
-        let default_triple = TargetMachine::get_default_triple();
-        let triple_str = default_triple.as_str().to_string_lossy();
-
-        // On macOS, use MACOSX_DEPLOYMENT_TARGET or a reasonable default
-        // LLVM may return either "macos" or "darwin" variants:
-        // - arm64-apple-macosx14.0.0
-        // - arm64-apple-darwin24.0.0
-        // - x86_64-apple-macosx14.0
-        if triple_str.contains("apple") {
-            let deployment_target = std::env::var("MACOSX_DEPLOYMENT_TARGET")
-                .unwrap_or_else(|_| "11.0".to_string());
-
-            // Extract architecture from the triple
-            let parts: Vec<&str> = triple_str.split('-').collect();
-            if parts.len() >= 2 {
-                let arch = parts[0];
-                // Always use arm64-apple-macosx{version} format for Apple targets
-                // This avoids issues with LLVM returning darwin versions or future macOS versions
-                let new_triple = format!("{}-apple-macosx{}", arch, deployment_target);
-                eprintln!(
-                    "Note: Adjusting target triple from '{}' to '{}'",
-                    triple_str, new_triple
-                );
-                return TargetTriple::create(&new_triple);
-            }
-        }
-
-        default_triple
     }
 
     /// Compile to WebAssembly

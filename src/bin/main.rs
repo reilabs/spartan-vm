@@ -35,10 +35,6 @@ pub struct ProgramOptions {
     #[arg(long, value_name = "PATH", value_parser = parse_path)]
     pub emit_wasm: Option<PathBuf>,
 
-    /// Compile to native object file (output to specified path)
-    #[arg(long, value_name = "PATH", value_parser = parse_path)]
-    pub emit_object: Option<PathBuf>,
-
     /// Skip the bytecode VM execution (useful when only generating LLVM/WASM)
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub skip_vm: bool,
@@ -95,11 +91,6 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     if let Some(ref wasm_path) = args.emit_wasm {
         info!(message = %"Generating WebAssembly", path = %wasm_path.display());
         driver.compile_wasm(wasm_path.clone(), &r1cs).unwrap();
-    }
-
-    if let Some(ref obj_path) = args.emit_object {
-        info!(message = %"Generating native object", path = %obj_path.display());
-        driver.compile_native(obj_path.clone()).unwrap();
     }
 
     // Skip VM execution if requested

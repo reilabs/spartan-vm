@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["opcode-gen", "ssa-builder", "wasm-runtime", "native-runner"]
+members = ["opcode-gen", "ssa-builder", "wasm-runtime"]
 
 [package]
 name = "spartan-vm"
