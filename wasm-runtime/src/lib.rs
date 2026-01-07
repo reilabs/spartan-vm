@@ -3,163 +3,114 @@
 //! This library provides BN254 field arithmetic functions that are called
 //! by the LLVM-generated code when targeting WebAssembly.
 //!
-//! Field elements are represented as [4 x u64] arrays in Montgomery form.
+//! Field elements are represented as [4 x i64] (internally u64) in Montgomery form.
+//!
+//! WASM Calling Convention:
+//! - result_ptr: i32 - pointer where to write the 32-byte result
+//! - a0, a1, a2, a3: i64 - 4 limbs of first operand
+//! - b0, b1, b2, b3: i64 - 4 limbs of second operand (for binary ops)
 
 use ark_bn254::Fr;
-use ark_ff::{BigInt, BigInteger256, Field, MontBackend, PrimeField};
+use ark_ff::BigInt;
 
-/// Field element represented as 4 u64 limbs in Montgomery form
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct FieldElement {
-    pub limbs: [u64; 4],
+/// Convert 4 i64 limbs to ark Fr
+#[inline]
+fn limbs_to_fr(l0: i64, l1: i64, l2: i64, l3: i64) -> Fr {
+    // WASM i64 are signed, reinterpret as unsigned
+    let limbs = [l0 as u64, l1 as u64, l2 as u64, l3 as u64];
+    Fr::new_unchecked(BigInt::new(limbs))
 }
 
-impl FieldElement {
-    /// Create a new field element from limbs
-    #[inline]
-    pub const fn new(limbs: [u64; 4]) -> Self {
-        Self { limbs }
-    }
-
-    /// Create a zero field element
-    #[inline]
-    pub const fn zero() -> Self {
-        Self { limbs: [0, 0, 0, 0] }
-    }
-
-    /// Create a one field element (in Montgomery form)
-    #[inline]
-    pub fn one() -> Self {
-        Self::from_fr(Fr::from(1u64))
-    }
-
-    /// Convert from ark_bn254::Fr
-    #[inline]
-    pub fn from_fr(fr: Fr) -> Self {
-        Self { limbs: fr.0 .0 }
-    }
-
-    /// Convert to ark_bn254::Fr
-    #[inline]
-    pub fn to_fr(self) -> Fr {
-        // Directly construct Fr from Montgomery form limbs
-        Fr::new_unchecked(BigInt::new(self.limbs))
-    }
+/// Write Fr to memory at ptr as 4 x u64 limbs (little-endian)
+#[inline]
+unsafe fn write_fr(ptr: *mut u64, fr: Fr) {
+    let limbs = fr.0 .0;
+    *ptr = limbs[0];
+    *ptr.add(1) = limbs[1];
+    *ptr.add(2) = limbs[2];
+    *ptr.add(3) = limbs[3];
 }
 
-/// Field addition
+/// Field addition: (a + b) mod p
 #[no_mangle]
-pub extern "C" fn __field_add(a: FieldElement, b: FieldElement) -> FieldElement {
-    let a_fr = a.to_fr();
-    let b_fr = b.to_fr();
-    let sum = a_fr + b_fr;
-    FieldElement::from_fr(sum)
-}
-
-/// Field subtraction
-#[no_mangle]
-pub extern "C" fn __field_sub(a: FieldElement, b: FieldElement) -> FieldElement {
-    let a_fr = a.to_fr();
-    let b_fr = b.to_fr();
-    let diff = a_fr - b_fr;
-    FieldElement::from_fr(diff)
-}
-
-/// Field multiplication
-#[no_mangle]
-pub extern "C" fn __field_mul(a: FieldElement, b: FieldElement) -> FieldElement {
-    let a_fr = a.to_fr();
-    let b_fr = b.to_fr();
-    let product = a_fr * b_fr;
-    FieldElement::from_fr(product)
-}
-
-/// Field division (multiplication by modular inverse)
-#[no_mangle]
-pub extern "C" fn __field_div(a: FieldElement, b: FieldElement) -> FieldElement {
-    let a_fr = a.to_fr();
-    let b_fr = b.to_fr();
-    let quotient = a_fr / b_fr;
-    FieldElement::from_fr(quotient)
-}
-
-/// Field negation
-#[no_mangle]
-pub extern "C" fn __field_neg(a: FieldElement) -> FieldElement {
-    let a_fr = a.to_fr();
-    let neg = -a_fr;
-    FieldElement::from_fr(neg)
-}
-
-/// Field equality check
-#[no_mangle]
-pub extern "C" fn __field_eq(a: FieldElement, b: FieldElement) -> u32 {
-    let a_fr = a.to_fr();
-    let b_fr = b.to_fr();
-    if a_fr == b_fr {
-        1
-    } else {
-        0
+pub extern "C" fn __field_add(
+    result_ptr: i32,
+    a0: i64,
+    a1: i64,
+    a2: i64,
+    a3: i64,
+    b0: i64,
+    b1: i64,
+    b2: i64,
+    b3: i64,
+) {
+    let a = limbs_to_fr(a0, a1, a2, a3);
+    let b = limbs_to_fr(b0, b1, b2, b3);
+    let result = a + b;
+    unsafe {
+        write_fr(result_ptr as *mut u64, result);
     }
 }
 
-/// Field element from u64
+/// Field subtraction: (a - b) mod p
 #[no_mangle]
-pub extern "C" fn __field_from_u64(value: u64) -> FieldElement {
-    let fr = Fr::from(value);
-    FieldElement::from_fr(fr)
+pub extern "C" fn __field_sub(
+    result_ptr: i32,
+    a0: i64,
+    a1: i64,
+    a2: i64,
+    a3: i64,
+    b0: i64,
+    b1: i64,
+    b2: i64,
+    b3: i64,
+) {
+    let a = limbs_to_fr(a0, a1, a2, a3);
+    let b = limbs_to_fr(b0, b1, b2, b3);
+    let result = a - b;
+    unsafe {
+        write_fr(result_ptr as *mut u64, result);
+    }
 }
 
-/// Get low 64 bits of field element (converts from Montgomery form first)
+/// Field multiplication: (a * b) mod p in Montgomery form
 #[no_mangle]
-pub extern "C" fn __field_to_u64(a: FieldElement) -> u64 {
-    let fr = a.to_fr();
-    let bigint = fr.into_bigint();
-    bigint.0[0]
+pub extern "C" fn __field_mul(
+    result_ptr: i32,
+    a0: i64,
+    a1: i64,
+    a2: i64,
+    a3: i64,
+    b0: i64,
+    b1: i64,
+    b2: i64,
+    b3: i64,
+) {
+    let a = limbs_to_fr(a0, a1, a2, a3);
+    let b = limbs_to_fr(b0, b1, b2, b3);
+    let result = a * b;
+    unsafe {
+        write_fr(result_ptr as *mut u64, result);
+    }
 }
 
-/// Field element square
+/// Field division: (a / b) mod p
 #[no_mangle]
-pub extern "C" fn __field_square(a: FieldElement) -> FieldElement {
-    let a_fr = a.to_fr();
-    let squared = a_fr.square();
-    FieldElement::from_fr(squared)
-}
-
-/// Field element power
-#[no_mangle]
-pub extern "C" fn __field_pow(a: FieldElement, exp: u64) -> FieldElement {
-    let a_fr = a.to_fr();
-    let powered = a_fr.pow([exp]);
-    FieldElement::from_fr(powered)
-}
-
-/// Field element inverse
-#[no_mangle]
-pub extern "C" fn __field_inverse(a: FieldElement) -> FieldElement {
-    let a_fr = a.to_fr();
-    let inv = a_fr.inverse().expect("Cannot invert zero");
-    FieldElement::from_fr(inv)
-}
-
-/// Assert two field elements are equal (for R1CS constraints)
-#[no_mangle]
-pub extern "C" fn __field_assert_eq(a: FieldElement, b: FieldElement) {
-    let a_fr = a.to_fr();
-    let b_fr = b.to_fr();
-    assert!(
-        a_fr == b_fr,
-        "Field assertion failed: values are not equal"
-    );
-}
-
-/// Check R1CS constraint: a * b == c
-#[no_mangle]
-pub extern "C" fn __r1cs_constrain(a: FieldElement, b: FieldElement, c: FieldElement) {
-    let a_fr = a.to_fr();
-    let b_fr = b.to_fr();
-    let c_fr = c.to_fr();
-    let product = a_fr * b_fr;
-    assert!(product == c_fr, "R1CS constraint failed: a * b != c");
+pub extern "C" fn __field_div(
+    result_ptr: i32,
+    a0: i64,
+    a1: i64,
+    a2: i64,
+    a3: i64,
+    b0: i64,
+    b1: i64,
+    b2: i64,
+    b3: i64,
+) {
+    let a = limbs_to_fr(a0, a1, a2, a3);
+    let b = limbs_to_fr(b0, b1, b2, b3);
+    let result = a / b;
+    unsafe {
+        write_fr(result_ptr as *mut u64, result);
+    }
 }

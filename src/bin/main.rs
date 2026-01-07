@@ -94,7 +94,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
 
     if let Some(ref wasm_path) = args.emit_wasm {
         info!(message = %"Generating WebAssembly", path = %wasm_path.display());
-        driver.compile_wasm(wasm_path.clone()).unwrap();
+        driver.compile_wasm(wasm_path.clone(), &r1cs).unwrap();
     }
 
     if let Some(ref obj_path) = args.emit_object {

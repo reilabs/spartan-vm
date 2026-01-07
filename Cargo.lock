@@ -2996,6 +2996,7 @@ dependencies = [
  "plotters",
  "rand 0.8.5",
  "serde",
+ "serde_json",
  "ssa-builder",
  "tempfile",
  "thiserror 2.0.12",

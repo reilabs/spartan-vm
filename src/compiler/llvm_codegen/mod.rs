@@ -826,6 +826,8 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
     /// Compile to WebAssembly
     pub fn compile_to_wasm(&self, path: &Path, optimization: OptimizationLevel) {
+        use std::process::Command;
+
         Target::initialize_webassembly(&InitializationConfig::default());
 
         let target_triple = TargetTriple::create("wasm32-unknown-unknown");
@@ -842,9 +844,44 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             )
             .unwrap();
 
+        // First write to an object file
+        let obj_path = path.with_extension("o");
         target_machine
-            .write_to_file(&self.module, FileType::Object, path)
+            .write_to_file(&self.module, FileType::Object, &obj_path)
             .unwrap();
+
+        // Link with wasm-ld to produce final WASM module with exports
+        // Find wasm-ld: try LLVM prefix from env, then fall back to PATH
+        let wasm_ld = std::env::var("LLVM_SYS_211_PREFIX")
+            .map(|prefix| {
+                let path = std::path::PathBuf::from(&prefix).join("bin").join("wasm-ld");
+                if path.exists() {
+                    path.to_string_lossy().to_string()
+                } else {
+                    "wasm-ld".to_string()
+                }
+            })
+            .unwrap_or_else(|_| "wasm-ld".to_string());
+
+        let status = Command::new(&wasm_ld)
+            .args([
+                "--no-entry",          // No entry point (we call main explicitly)
+                "--export=main",       // Export main function
+                "--import-memory",     // Import memory from host
+                "--allow-undefined",   // Allow undefined symbols (will be imported)
+                "-o",
+            ])
+            .arg(path)
+            .arg(&obj_path)
+            .status()
+            .expect(&format!("Failed to run wasm-ld (tried: {}). Make sure LLVM with wasm-ld is installed and either in PATH or LLVM_SYS_211_PREFIX is set.", wasm_ld));
+
+        if !status.success() {
+            panic!("wasm-ld failed with status: {}", status);
+        }
+
+        // Clean up object file
+        std::fs::remove_file(&obj_path).ok();
     }
 
     /// Get the LLVM module

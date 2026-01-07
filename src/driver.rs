@@ -447,7 +447,7 @@ impl Driver {
 
     /// Compile to WebAssembly via LLVM
     #[tracing::instrument(skip_all)]
-    pub fn compile_wasm(&self, output_path: std::path::PathBuf) -> Result<(), Error> {
+    pub fn compile_wasm(&self, output_path: std::path::PathBuf, r1cs: &R1CS) -> Result<(), Error> {
         use crate::compiler::llvm_codegen::LLVMCodeGen;
         use inkwell::context::Context;
         use inkwell::OptimizationLevel;
@@ -481,6 +481,53 @@ impl Driver {
 
         info!(message = %"WASM object generated", path = %output_path.display());
 
+        // Generate metadata JSON
+        self.write_wasm_metadata(&output_path, r1cs)?;
+
         Ok(())
+    }
+
+    /// Write WASM metadata JSON file
+    fn write_wasm_metadata(&self, wasm_path: &std::path::PathBuf, r1cs: &R1CS) -> Result<(), Error> {
+        let abi = self.abi.as_ref().unwrap();
+
+        // Build parameter info
+        let mut parameters = Vec::new();
+        for param in &abi.parameters {
+            let element_count = count_abi_type_elements(&param.typ);
+            parameters.push(serde_json::json!({
+                "name": param.name,
+                "elementCount": element_count
+            }));
+        }
+
+        let metadata = serde_json::json!({
+            "witnessCount": r1cs.witness_layout.size(),
+            "constraintCount": r1cs.constraints.len(),
+            "parameters": parameters
+        });
+
+        let metadata_path = format!("{}.meta.json", wasm_path.display());
+        fs::write(&metadata_path, serde_json::to_string_pretty(&metadata).unwrap()).unwrap();
+
+        info!(message = %"WASM metadata generated", path = %metadata_path);
+
+        Ok(())
+    }
+}
+
+/// Count the number of field elements in an ABI type
+fn count_abi_type_elements(typ: &noirc_abi::AbiType) -> usize {
+    use noirc_abi::AbiType;
+    match typ {
+        AbiType::Field => 1,
+        AbiType::Integer { .. } => 1,
+        AbiType::Boolean => 1,
+        AbiType::String { length } => *length as usize,
+        AbiType::Array { length, typ } => (*length as usize) * count_abi_type_elements(typ),
+        AbiType::Struct { fields, .. } => {
+            fields.iter().map(|(_, t)| count_abi_type_elements(t)).sum()
+        }
+        AbiType::Tuple { fields } => fields.iter().map(count_abi_type_elements).sum(),
     }
 }
