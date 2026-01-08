@@ -1,8 +1,10 @@
-//! BN254 Field Operations for LLVM Code Generation
+//! Runtime function declarations for LLVM codegen
 //!
-//! This module provides LLVM implementations of BN254 field arithmetic.
+//! Declares external functions that will be provided by the WASM runtime:
+//! - Field arithmetic operations
+//! - VM output write functions
+//!
 //! Field elements are represented as [4 x i64] arrays in Montgomery form.
-//!
 //! Uses WASM-friendly calling convention: field elements passed by value.
 
 use inkwell::builder::Builder;
@@ -15,23 +17,62 @@ use ark_bn254::Fr;
 
 use super::types::FIELD_LIMBS;
 
-/// Field operations implementation
-pub struct FieldOps<'ctx> {
+/// VM struct containing output pointers
+pub struct VMType<'ctx> {
+    pub struct_type: inkwell::types::StructType<'ctx>,
+    pub ptr_type: inkwell::types::PointerType<'ctx>,
+}
+
+impl<'ctx> VMType<'ctx> {
+    pub const NUM_OUTPUT_PTRS: usize = 4;
+
+    pub fn new(context: &'ctx Context, _field_type: inkwell::types::ArrayType<'ctx>) -> Self {
+        let field_ptr_type = context.ptr_type(AddressSpace::default());
+
+        let field_types: Vec<inkwell::types::BasicTypeEnum> = (0..Self::NUM_OUTPUT_PTRS)
+            .map(|_| field_ptr_type.into())
+            .collect();
+
+        let struct_type = context.struct_type(&field_types, false);
+        let ptr_type = context.ptr_type(AddressSpace::default());
+
+        Self { struct_type, ptr_type }
+    }
+
+    pub fn get_output_ptr(
+        &self,
+        builder: &Builder<'ctx>,
+        vm_ptr: PointerValue<'ctx>,
+        index: u32,
+        name: &str,
+    ) -> PointerValue<'ctx> {
+        assert!((index as usize) < Self::NUM_OUTPUT_PTRS);
+
+        let field_ptr_ptr = builder
+            .build_struct_gep(self.struct_type, vm_ptr, index, &format!("{}_ptr_ptr", name))
+            .unwrap();
+
+        let ptr_type = builder.get_insert_block().unwrap().get_context().ptr_type(AddressSpace::default());
+        builder
+            .build_load(ptr_type, field_ptr_ptr, &format!("{}_ptr", name))
+            .unwrap()
+            .into_pointer_value()
+    }
+}
+
+/// Runtime function declarations
+pub struct Runtime<'ctx> {
     context: &'ctx Context,
-
-    // Field multiplication function
     field_mul_fn: Option<FunctionValue<'ctx>>,
-
-    // VM write functions
     write_witness_fn: Option<FunctionValue<'ctx>>,
     write_a_fn: Option<FunctionValue<'ctx>>,
     write_b_fn: Option<FunctionValue<'ctx>>,
     write_c_fn: Option<FunctionValue<'ctx>>,
 }
 
-impl<'ctx> FieldOps<'ctx> {
+impl<'ctx> Runtime<'ctx> {
     pub fn new(context: &'ctx Context, module: &Module<'ctx>) -> Self {
-        let mut ops = Self {
+        let mut rt = Self {
             context,
             field_mul_fn: None,
             write_witness_fn: None,
@@ -40,31 +81,25 @@ impl<'ctx> FieldOps<'ctx> {
             write_c_fn: None,
         };
 
-        ops.declare_field_functions(module);
-        ops
+        rt.declare_functions(module);
+        rt
     }
 
-    /// Get the field type ([4 x i64])
     fn field_type(&self) -> inkwell::types::ArrayType<'ctx> {
         self.context.i64_type().array_type(FIELD_LIMBS)
     }
 
-    /// Declare all field operation functions in the module
-    fn declare_field_functions(&mut self, module: &Module<'ctx>) {
+    fn declare_functions(&mut self, module: &Module<'ctx>) {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let void_type = self.context.void_type();
         let field_type = self.field_type();
 
-        // Field multiplication: [4 x i64] __field_mul([4 x i64] a, [4 x i64] b)
-        // Pass field elements by value, return result by value
         let field_mul_type = field_type.fn_type(
             &[field_type.into(), field_type.into()],
             false
         );
         self.field_mul_fn = Some(module.add_function("__field_mul", field_mul_type, None));
 
-        // Write functions: void __write_X(ptr vm, [4 x i64] value)
-        // VM pointer first, then field value directly
         let write_fn_type = void_type.fn_type(
             &[ptr_type.into(), field_type.into()],
             false
@@ -76,10 +111,9 @@ impl<'ctx> FieldOps<'ctx> {
         self.write_c_fn = Some(module.add_function("__write_c", write_fn_type, None));
     }
 
-    /// Create a constant field value from an ark_bn254::Fr
     pub fn const_field(&self, value: &Fr) -> BasicValueEnum<'ctx> {
         let i64_type = self.context.i64_type();
-        let limbs = value.0.0; // Access Montgomery form limbs
+        let limbs = value.0.0;
 
         let mut values = Vec::with_capacity(FIELD_LIMBS as usize);
         for i in 0..FIELD_LIMBS as usize {
@@ -90,7 +124,6 @@ impl<'ctx> FieldOps<'ctx> {
         array.into()
     }
 
-    /// Field multiplication - pass values directly, get result directly
     pub fn mul(
         &self,
         builder: &Builder<'ctx>,
@@ -109,7 +142,6 @@ impl<'ctx> FieldOps<'ctx> {
         }
     }
 
-    /// Write a witness value
     pub fn write_witness(
         &self,
         builder: &Builder<'ctx>,
@@ -122,7 +154,6 @@ impl<'ctx> FieldOps<'ctx> {
             .unwrap();
     }
 
-    /// Write constraint 'a' value
     pub fn write_a(
         &self,
         builder: &Builder<'ctx>,
@@ -135,7 +166,6 @@ impl<'ctx> FieldOps<'ctx> {
             .unwrap();
     }
 
-    /// Write constraint 'b' value
     pub fn write_b(
         &self,
         builder: &Builder<'ctx>,
@@ -148,7 +178,6 @@ impl<'ctx> FieldOps<'ctx> {
             .unwrap();
     }
 
-    /// Write constraint 'c' value
     pub fn write_c(
         &self,
         builder: &Builder<'ctx>,

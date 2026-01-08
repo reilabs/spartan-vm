@@ -3,7 +3,7 @@
 //! This module translates Spartan VM's SSA representation into LLVM IR,
 //! which can then be compiled to native code or WebAssembly.
 
-mod field_ops;
+mod runtime;
 mod types;
 
 use std::collections::HashMap;
@@ -32,61 +32,8 @@ use crate::compiler::ssa::{
 };
 use crate::compiler::taint_analysis::ConstantTaint;
 
-use self::field_ops::FieldOps;
+use self::runtime::{Runtime, VMType};
 use self::types::TypeConverter;
-
-/// VM struct containing output pointers
-/// struct VM { field_ptr[4] }
-pub struct VMType<'ctx> {
-    /// The LLVM struct type for VM
-    pub struct_type: inkwell::types::StructType<'ctx>,
-    /// Pointer type to VM
-    pub ptr_type: inkwell::types::PointerType<'ctx>,
-}
-
-impl<'ctx> VMType<'ctx> {
-    /// Number of output field pointers in the VM struct
-    pub const NUM_OUTPUT_PTRS: usize = 4;
-
-    pub fn new(context: &'ctx Context, field_type: inkwell::types::ArrayType<'ctx>) -> Self {
-        // VM struct contains 4 pointers to field elements
-        // Each field element is [4 x i64], so pointer to that
-        let field_ptr_type = context.ptr_type(AddressSpace::default());
-
-        // Create struct with 4 field pointers
-        let field_types: Vec<inkwell::types::BasicTypeEnum> = (0..Self::NUM_OUTPUT_PTRS)
-            .map(|_| field_ptr_type.into())
-            .collect();
-
-        let struct_type = context.struct_type(&field_types, false);
-        let ptr_type = context.ptr_type(AddressSpace::default());
-
-        Self { struct_type, ptr_type }
-    }
-
-    /// Get a pointer to the nth output field from a VM pointer
-    pub fn get_output_ptr(
-        &self,
-        builder: &Builder<'ctx>,
-        vm_ptr: PointerValue<'ctx>,
-        index: u32,
-        name: &str,
-    ) -> PointerValue<'ctx> {
-        assert!((index as usize) < Self::NUM_OUTPUT_PTRS);
-
-        // Get pointer to the field within the VM struct
-        let field_ptr_ptr = builder
-            .build_struct_gep(self.struct_type, vm_ptr, index, &format!("{}_ptr_ptr", name))
-            .unwrap();
-
-        // Load the pointer value
-        let ptr_type = builder.get_insert_block().unwrap().get_context().ptr_type(AddressSpace::default());
-        builder
-            .build_load(ptr_type, field_ptr_ptr, &format!("{}_ptr", name))
-            .unwrap()
-            .into_pointer_value()
-    }
-}
 
 /// LLVM Code Generator for Spartan VM SSA
 pub struct LLVMCodeGen<'ctx> {
@@ -94,31 +41,20 @@ pub struct LLVMCodeGen<'ctx> {
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     type_converter: TypeConverter<'ctx>,
-    field_ops: FieldOps<'ctx>,
+    runtime: Runtime<'ctx>,
     vm_type: VMType<'ctx>,
-
-    /// Maps SSA ValueIds to LLVM values within the current function
     value_map: HashMap<ValueId, BasicValueEnum<'ctx>>,
-
-    /// Maps SSA BlockIds to LLVM basic blocks within the current function
     block_map: HashMap<BlockId, inkwell::basic_block::BasicBlock<'ctx>>,
-
-    /// Maps SSA FunctionIds to LLVM functions
     function_map: HashMap<FunctionId, FunctionValue<'ctx>>,
-
-    /// The VM pointer for the current function
     vm_ptr: Option<PointerValue<'ctx>>,
 }
 
 impl<'ctx> LLVMCodeGen<'ctx> {
-    /// Create a new LLVM code generator
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
         let type_converter = TypeConverter::new(context);
-        let field_ops = FieldOps::new(context, &module);
-
-        // Create VM type with field array type
+        let runtime = Runtime::new(context, &module);
         let field_type = context.i64_type().array_type(types::FIELD_LIMBS);
         let vm_type = VMType::new(context, field_type);
 
@@ -127,7 +63,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             module,
             builder,
             type_converter,
-            field_ops,
+            runtime,
             vm_type,
             value_map: HashMap::new(),
             block_map: HashMap::new(),
@@ -328,11 +264,11 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             }
             Const::Field(field_val) => {
                 // Field is represented as [4 x i64] in Montgomery form
-                self.field_ops.const_field(field_val)
+                self.runtime.const_field(field_val)
             }
             Const::BoxedField(field_val) => {
                 // BoxedField is a pointer to a field - for now, treat similarly
-                self.field_ops.const_field(field_val)
+                self.runtime.const_field(field_val)
             }
         }
     }
@@ -400,16 +336,16 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                 let c_val = self.value_map[c];
                 let vm_ptr = self.vm_ptr.unwrap();
 
-                self.field_ops.write_a(&self.builder, vm_ptr, a_val);
-                self.field_ops.write_b(&self.builder, vm_ptr, b_val);
-                self.field_ops.write_c(&self.builder, vm_ptr, c_val);
+                self.runtime.write_a(&self.builder, vm_ptr, a_val);
+                self.runtime.write_b(&self.builder, vm_ptr, b_val);
+                self.runtime.write_c(&self.builder, vm_ptr, c_val);
             }
 
             OpCode::WriteWitness { result, value, .. } => {
                 let val = self.value_map[value];
                 let vm_ptr = self.vm_ptr.unwrap();
 
-                self.field_ops.write_witness(&self.builder, vm_ptr, val);
+                self.runtime.write_witness(&self.builder, vm_ptr, val);
 
                 if let Some(result_id) = result {
                     self.value_map.insert(*result_id, val);
@@ -449,7 +385,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         rhs: BasicValueEnum<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         match kind {
-            BinaryArithOpKind::Mul => self.field_ops.mul(&self.builder, lhs, rhs),
+            BinaryArithOpKind::Mul => self.runtime.mul(&self.builder, lhs, rhs),
             _ => panic!("Unsupported field binary op: {:?}", kind),
         }
     }

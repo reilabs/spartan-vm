@@ -27,15 +27,12 @@ pub struct ProgramOptions {
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub pprint_r1cs: bool,
 
-    /// Emit LLVM IR to the specified file (or debug output if no path)
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub emit_llvm: bool,
 
-    /// Compile to WebAssembly (output to specified path)
-    #[arg(long, value_name = "PATH", value_parser = parse_path)]
-    pub emit_wasm: Option<PathBuf>,
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub emit_wasm: bool,
 
-    /// Skip the bytecode VM execution (useful when only generating LLVM/WASM)
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub skip_vm: bool,
 }
@@ -82,15 +79,15 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         }
     }
 
-    // Handle LLVM/WASM compilation if requested
     if args.emit_llvm {
         info!(message = %"Generating LLVM IR");
         driver.compile_llvm(None).unwrap();
     }
 
-    if let Some(ref wasm_path) = args.emit_wasm {
+    if args.emit_wasm {
+        let wasm_path = driver.get_debug_output_dir().join("witgen.wasm");
         info!(message = %"Generating WebAssembly", path = %wasm_path.display());
-        driver.compile_wasm(wasm_path.clone(), &r1cs).unwrap();
+        driver.compile_wasm(wasm_path, &r1cs).unwrap();
     }
 
     // Skip VM execution if requested
