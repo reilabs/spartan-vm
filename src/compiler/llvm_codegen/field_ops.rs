@@ -3,28 +3,17 @@
 //! This module provides LLVM implementations of BN254 field arithmetic.
 //! Field elements are represented as [4 x i64] arrays in Montgomery form.
 //!
-//! Currently only supports operations needed for the `power` example:
-//! - Field multiplication (via external runtime call)
-//! - Write operations for witnesses and constraints
+//! Uses WASM-friendly calling convention: field elements passed by value.
 
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
+use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue, ValueKind};
 use inkwell::AddressSpace;
 
 use ark_bn254::Fr;
 
 use super::types::FIELD_LIMBS;
-
-/// Scratch space for field operations - allocated once per function
-/// to avoid stack growth from repeated alloca in loops
-pub struct FieldScratch<'ctx> {
-    pub result_ptr: PointerValue<'ctx>,
-    pub lhs_ptr: PointerValue<'ctx>,
-    pub rhs_ptr: PointerValue<'ctx>,
-    pub write_val_ptr: PointerValue<'ctx>,
-}
 
 /// Field operations implementation
 pub struct FieldOps<'ctx> {
@@ -38,9 +27,6 @@ pub struct FieldOps<'ctx> {
     write_a_fn: Option<FunctionValue<'ctx>>,
     write_b_fn: Option<FunctionValue<'ctx>>,
     write_c_fn: Option<FunctionValue<'ctx>>,
-
-    // Per-function scratch space (initialized at function entry)
-    scratch: Option<FieldScratch<'ctx>>,
 }
 
 impl<'ctx> FieldOps<'ctx> {
@@ -52,34 +38,10 @@ impl<'ctx> FieldOps<'ctx> {
             write_a_fn: None,
             write_b_fn: None,
             write_c_fn: None,
-            scratch: None,
         };
 
         ops.declare_field_functions(module);
         ops
-    }
-
-    /// Allocate scratch space for field operations at function entry.
-    /// This must be called once at the start of each function, in the entry block.
-    pub fn init_scratch(&mut self, builder: &Builder<'ctx>) {
-        let field_type = self.field_type();
-
-        let result_ptr = builder.build_alloca(field_type, "field_scratch_result").unwrap();
-        let lhs_ptr = builder.build_alloca(field_type, "field_scratch_lhs").unwrap();
-        let rhs_ptr = builder.build_alloca(field_type, "field_scratch_rhs").unwrap();
-        let write_val_ptr = builder.build_alloca(field_type, "field_scratch_write").unwrap();
-
-        self.scratch = Some(FieldScratch {
-            result_ptr,
-            lhs_ptr,
-            rhs_ptr,
-            write_val_ptr,
-        });
-    }
-
-    /// Clear scratch space when done with a function
-    pub fn clear_scratch(&mut self) {
-        self.scratch = None;
     }
 
     /// Get the field type ([4 x i64])
@@ -91,22 +53,20 @@ impl<'ctx> FieldOps<'ctx> {
     fn declare_field_functions(&mut self, module: &Module<'ctx>) {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let void_type = self.context.void_type();
+        let field_type = self.field_type();
 
-        // Field multiplication: void __field_mul(ptr result, ptr a, ptr b)
-        let field_binop_type = void_type.fn_type(
-            &[ptr_type.into(), ptr_type.into(), ptr_type.into()],
+        // Field multiplication: [4 x i64] __field_mul([4 x i64] a, [4 x i64] b)
+        // Pass field elements by value, return result by value
+        let field_mul_type = field_type.fn_type(
+            &[field_type.into(), field_type.into()],
             false
         );
-        self.field_mul_fn = Some(module.add_function("__field_mul", field_binop_type, None));
+        self.field_mul_fn = Some(module.add_function("__field_mul", field_mul_type, None));
 
-        // Also declare add/sub/div for the runtime (even though we don't use them yet)
-        module.add_function("__field_add", field_binop_type, None);
-        module.add_function("__field_sub", field_binop_type, None);
-        module.add_function("__field_div", field_binop_type, None);
-
-        // Write functions: void __write_X(ptr vm, ptr value)
+        // Write functions: void __write_X(ptr vm, [4 x i64] value)
+        // VM pointer first, then field value directly
         let write_fn_type = void_type.fn_type(
-            &[ptr_type.into(), ptr_type.into()],
+            &[ptr_type.into(), field_type.into()],
             false
         );
 
@@ -130,7 +90,7 @@ impl<'ctx> FieldOps<'ctx> {
         array.into()
     }
 
-    /// Field multiplication
+    /// Field multiplication - pass values directly, get result directly
     pub fn mul(
         &self,
         builder: &Builder<'ctx>,
@@ -138,33 +98,15 @@ impl<'ctx> FieldOps<'ctx> {
         rhs: BasicValueEnum<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         let mul_fn = self.field_mul_fn.expect("__field_mul not declared");
-        self.call_field_binop(builder, mul_fn, lhs, rhs, "field_mul")
-    }
 
-    /// Helper to call a field binary operation using pointer-based ABI.
-    fn call_field_binop(
-        &self,
-        builder: &Builder<'ctx>,
-        func: FunctionValue<'ctx>,
-        lhs: BasicValueEnum<'ctx>,
-        rhs: BasicValueEnum<'ctx>,
-        name: &str,
-    ) -> BasicValueEnum<'ctx> {
-        let field_type = self.field_type();
-        let scratch = self.scratch.as_ref()
-            .expect("field_ops scratch space not initialized - call init_scratch first");
-
-        // Store operands to scratch space
-        builder.build_store(scratch.lhs_ptr, lhs).unwrap();
-        builder.build_store(scratch.rhs_ptr, rhs).unwrap();
-
-        // Call function: void __field_op(ptr result, ptr a, ptr b)
-        builder
-            .build_call(func, &[scratch.result_ptr.into(), scratch.lhs_ptr.into(), scratch.rhs_ptr.into()], name)
+        let call_site = builder
+            .build_call(mul_fn, &[lhs.into(), rhs.into()], "field_mul")
             .unwrap();
 
-        // Load and return result
-        builder.build_load(field_type, scratch.result_ptr, &format!("{}_val", name)).unwrap()
+        match call_site.try_as_basic_value() {
+            ValueKind::Basic(val) => val,
+            ValueKind::Instruction(_) => panic!("field_mul should return a value"),
+        }
     }
 
     /// Write a witness value
@@ -175,7 +117,9 @@ impl<'ctx> FieldOps<'ctx> {
         value: BasicValueEnum<'ctx>,
     ) {
         let write_fn = self.write_witness_fn.expect("__write_witness not declared");
-        self.call_write_fn(builder, write_fn, vm_ptr, value);
+        builder
+            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
+            .unwrap();
     }
 
     /// Write constraint 'a' value
@@ -186,7 +130,9 @@ impl<'ctx> FieldOps<'ctx> {
         value: BasicValueEnum<'ctx>,
     ) {
         let write_fn = self.write_a_fn.expect("__write_a not declared");
-        self.call_write_fn(builder, write_fn, vm_ptr, value);
+        builder
+            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
+            .unwrap();
     }
 
     /// Write constraint 'b' value
@@ -197,7 +143,9 @@ impl<'ctx> FieldOps<'ctx> {
         value: BasicValueEnum<'ctx>,
     ) {
         let write_fn = self.write_b_fn.expect("__write_b not declared");
-        self.call_write_fn(builder, write_fn, vm_ptr, value);
+        builder
+            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
+            .unwrap();
     }
 
     /// Write constraint 'c' value
@@ -208,26 +156,8 @@ impl<'ctx> FieldOps<'ctx> {
         value: BasicValueEnum<'ctx>,
     ) {
         let write_fn = self.write_c_fn.expect("__write_c not declared");
-        self.call_write_fn(builder, write_fn, vm_ptr, value);
-    }
-
-    /// Helper to call a write function using pointer-based ABI.
-    fn call_write_fn(
-        &self,
-        builder: &Builder<'ctx>,
-        func: FunctionValue<'ctx>,
-        vm_ptr: PointerValue<'ctx>,
-        value: BasicValueEnum<'ctx>,
-    ) {
-        let scratch = self.scratch.as_ref()
-            .expect("field_ops scratch space not initialized - call init_scratch first");
-
-        // Store value to scratch space
-        builder.build_store(scratch.write_val_ptr, value).unwrap();
-
-        // Call function: void __write_X(ptr vm, ptr value)
         builder
-            .build_call(func, &[vm_ptr.into(), scratch.write_val_ptr.into()], "")
+            .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
             .unwrap();
     }
 }

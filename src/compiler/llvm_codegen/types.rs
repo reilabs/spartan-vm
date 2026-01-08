@@ -3,10 +3,11 @@
 //! Currently only supports types needed for the `power` example:
 //! - Field (BN254 field elements as [4 x i64])
 //! - U (integers for loop counters)
+//!
+//! Uses WASM-friendly calling convention: all values passed directly.
 
 use inkwell::context::Context;
 use inkwell::types::BasicTypeEnum;
-use inkwell::AddressSpace;
 
 use crate::compiler::ir::r#type::{Type, TypeExpr};
 use crate::compiler::taint_analysis::ConstantTaint;
@@ -53,22 +54,6 @@ impl<'ctx> TypeConverter<'ctx> {
             32 => self.context.i32_type(),
             64 => self.context.i64_type(),
             _ => self.context.custom_width_int_type(bits as u32),
-        }
-    }
-
-    /// Check if a type should be passed by pointer for cross-platform ABI compatibility.
-    /// Field elements (32 bytes) are passed by pointer because AAPCS64 passes
-    /// structs > 16 bytes by reference.
-    pub fn should_pass_by_pointer(&self, ty: &Type<ConstantTaint>) -> bool {
-        matches!(ty.expr, TypeExpr::Field)
-    }
-
-    /// Get the LLVM type for a parameter, using pointer for field types
-    pub fn param_type(&self, ty: &Type<ConstantTaint>) -> BasicTypeEnum<'ctx> {
-        if self.should_pass_by_pointer(ty) {
-            self.context.ptr_type(AddressSpace::default()).into()
-        } else {
-            self.convert_type(ty)
         }
     }
 }

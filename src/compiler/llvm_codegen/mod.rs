@@ -170,10 +170,9 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
         param_types.push(self.vm_type.ptr_type.into()); // VM* as first param
 
-        // Add the regular function parameters
-        // Use param_type() to get pointer types for fields (cross-platform ABI)
+        // Add the regular function parameters - field elements passed directly as [4 x i64]
         for (_, tp) in entry.get_parameters() {
-            param_types.push(self.type_converter.param_type(tp).into());
+            param_types.push(self.type_converter.convert_type(tp).into());
         }
 
         // Build return type - for now, we'll return a struct if multiple values
@@ -236,29 +235,14 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         let entry_bb = self.block_map[&function.get_entry_id()];
         self.builder.position_at_end(entry_bb);
 
-        // Allocate scratch space for field operations at function entry
-        // This avoids stack growth from repeated alloca in loops
-        self.field_ops.init_scratch(&self.builder);
-
         // First parameter is always VM*
         self.vm_ptr = Some(fn_value.get_nth_param(0).unwrap().into_pointer_value());
 
         // Map SSA parameters to LLVM function arguments (starting from index 1)
-        // For pointer-passed parameters (field types), load the value from the pointer
-        for (i, (param_id, param_type)) in entry.get_parameters().enumerate() {
+        // Field elements are passed directly as [4 x i64] values
+        for (i, (param_id, _param_type)) in entry.get_parameters().enumerate() {
             let param_value = fn_value.get_nth_param((i + 1) as u32).unwrap();
-
-            let mapped_value = if self.type_converter.should_pass_by_pointer(param_type) {
-                // Load field value from pointer
-                let field_type = self.type_converter.convert_type(param_type);
-                self.builder
-                    .build_load(field_type, param_value.into_pointer_value(), &format!("param_{}", i))
-                    .unwrap()
-            } else {
-                param_value
-            };
-
-            self.value_map.insert(*param_id, mapped_value);
+            self.value_map.insert(*param_id, param_value);
         }
 
         // Generate constants
@@ -296,9 +280,6 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                 }
             }
         }
-
-        // Clear scratch space for next function
-        self.field_ops.clear_scratch();
     }
 
     /// Compile a block, tracking phi nodes for later
