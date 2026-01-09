@@ -1,47 +1,29 @@
 #!/usr/bin/env node
 /**
  * Spartan WASM Runner CLI
- *
- * Usage:
- *   spartan-wasm-runner <wasm-file> [options]
- *
- * Options:
- *   --input, -i <path>     Path to Prover.toml (default: ./Prover.toml)
- *   --output, -o <path>    Output JSON file (default: ./output.json)
- *   --runtime, -r <path>   Path to wasm-runtime.wasm
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
 import { parseInputs } from './input.js';
 import { run, writeResult } from './runner.js';
 
-interface CLIOptions {
-  wasmPath: string;
-  inputPath: string;
-  outputPath: string;
-}
-
 function printUsage(): void {
   console.log(`
-Spartan WASM Runner
-
-Usage:
-  spartan-wasm-runner <wasm-file> [options]
+Usage: spartan-wasm-runner <wasm-file> [options]
 
 Options:
-  --input, -i <path>     Path to Prover.toml (default: ./Prover.toml)
-  --output, -o <path>    Output JSON file (default: ./output.json)
-
-Examples:
-  spartan-wasm-runner output.wasm
-  spartan-wasm-runner output.wasm -i Prover.toml -o result.json
+  -i, --input <path>   Path to Prover.toml (default: ./Prover.toml)
+  -o, --output <path>  Output JSON file (default: ./output.json)
+  -h, --help           Show this help
 `);
 }
 
-function parseArgs(args: string[]): CLIOptions | null {
-  if (args.length < 1) {
-    return null;
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+
+  if (args.length < 1 || args.includes('-h') || args.includes('--help')) {
+    printUsage();
+    process.exit(args.length < 1 ? 1 : 0);
   }
 
   const wasmPath = args[0];
@@ -49,86 +31,37 @@ function parseArgs(args: string[]): CLIOptions | null {
   let outputPath = './output.json';
 
   for (let i = 1; i < args.length; i++) {
-    const arg = args[i];
-
-    if (arg === '--input' || arg === '-i') {
-      inputPath = args[++i];
-    } else if (arg === '--output' || arg === '-o') {
-      outputPath = args[++i];
-    } else if (arg === '--help' || arg === '-h') {
-      return null;
-    }
+    if (args[i] === '-i' || args[i] === '--input') inputPath = args[++i];
+    else if (args[i] === '-o' || args[i] === '--output') outputPath = args[++i];
   }
 
-  return {
-    wasmPath,
-    inputPath,
-    outputPath,
-  };
-}
-
-function validatePaths(options: CLIOptions): boolean {
-  if (!fs.existsSync(options.wasmPath)) {
-    console.error(`Error: WASM file not found: ${options.wasmPath}`);
-    return false;
-  }
-
-  const metadataPath = `${options.wasmPath}.meta.json`;
-  if (!fs.existsSync(metadataPath)) {
-    console.error(`Error: Metadata file not found: ${metadataPath}`);
-    console.error('The WASM file must have an accompanying .meta.json file');
-    return false;
-  }
-
-  if (!fs.existsSync(options.inputPath)) {
-    console.error(`Error: Input file not found: ${options.inputPath}`);
-    return false;
-  }
-
-  return true;
-}
-
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-
-  const options = parseArgs(args);
-  if (!options) {
-    printUsage();
+  // Validate paths
+  if (!fs.existsSync(wasmPath)) {
+    console.error(`Error: WASM file not found: ${wasmPath}`);
     process.exit(1);
   }
-
-  if (!validatePaths(options)) {
+  if (!fs.existsSync(`${wasmPath}.meta.json`)) {
+    console.error(`Error: Metadata not found: ${wasmPath}.meta.json`);
+    process.exit(1);
+  }
+  if (!fs.existsSync(inputPath)) {
+    console.error(`Error: Input file not found: ${inputPath}`);
     process.exit(1);
   }
 
   try {
-    console.log(`Loading inputs from ${options.inputPath}...`);
-    const { inputs, metadata } = parseInputs(options.wasmPath, options.inputPath);
-    console.log(`  Parameters: ${metadata.parameters.map((p) => p.name).join(', ')}`);
-    console.log(`  Total inputs: ${inputs.length} field elements`);
-    console.log(`  Witnesses: ${metadata.witnessCount}`);
-    console.log(`  Constraints: ${metadata.constraintCount}`);
+    const { inputs, metadata } = parseInputs(wasmPath, inputPath);
+    console.log(`Running ${wasmPath} with ${inputs.length} inputs...`);
 
-    console.log(`\nRunning WASM...`);
-    const { result, timing } = await run(
-      options.wasmPath,
-      '', // Not used - WASM runtime found automatically
-      inputs,
-      metadata
-    );
+    const start = performance.now();
+    const result = await run(wasmPath, inputs, metadata);
+    const elapsed = performance.now() - start;
 
-    console.log(`\nWriting output to ${options.outputPath}...`);
-    writeResult(result, options.outputPath);
-
-    console.log('\nDone!');
-    console.log(`  Witnesses written: ${result.witnesses.length}`);
-    console.log(`  Constraints written: ${result.constraints.a.length}`);
-    console.log(`\nTiming:`);
-    console.log(`  Load runtime:    ${timing.loadRuntimeMs.toFixed(2)} ms`);
-    console.log(`  Load generated:  ${timing.loadGeneratedMs.toFixed(2)} ms`);
-    console.log(`  Execution:       ${timing.executionMs.toFixed(2)} ms`);
-    console.log(`  Read output:     ${timing.readOutputMs.toFixed(2)} ms`);
-    console.log(`  Total:           ${timing.totalMs.toFixed(2)} ms`);
+    writeResult(result, outputPath);
+    console.log(`Done in ${elapsed.toFixed(0)}ms`);
+    console.log(`  Witnesses: ${result.witnesses.length}`);
+    console.log(`  Constraints: ${result.constraints.a.length}`);
+    console.log(`  Output: ${outputPath}`);
   } catch (error) {
     console.error('Error:', error instanceof Error ? error.message : error);
     process.exit(1);

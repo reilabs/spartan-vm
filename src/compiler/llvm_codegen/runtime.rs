@@ -10,7 +10,7 @@
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue, ValueKind};
+use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::AddressSpace;
 
 use ark_bn254::Fr;
@@ -136,10 +136,10 @@ impl<'ctx> Runtime<'ctx> {
             .build_call(mul_fn, &[lhs.into(), rhs.into()], "field_mul")
             .unwrap();
 
-        match call_site.try_as_basic_value() {
-            ValueKind::Basic(val) => val,
-            ValueKind::Instruction(_) => panic!("field_mul should return a value"),
-        }
+        call_site
+            .try_as_basic_value()
+            .left()
+            .expect("field_mul should return a value")
     }
 
     pub fn write_witness(
