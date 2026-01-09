@@ -2,14 +2,15 @@
 //!
 //! Declares external functions that will be provided by the WASM runtime:
 //! - Field arithmetic operations
-//! - VM output write functions
+//!
+//! VM write operations are defined as internal functions for LLVM to optimize.
 //!
 //! Field elements are represented as [4 x i64] arrays in Montgomery form.
 //! Uses WASM-friendly calling convention: field elements passed by value.
 
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::module::Module;
+use inkwell::module::{Linkage, Module};
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::AddressSpace;
 
@@ -17,48 +18,17 @@ use ark_bn254::Fr;
 
 use super::types::FIELD_LIMBS;
 
-/// VM struct containing output pointers
-pub struct VMType<'ctx> {
-    pub struct_type: inkwell::types::StructType<'ctx>,
-    pub ptr_type: inkwell::types::PointerType<'ctx>,
-}
+const FIELD_SIZE: u32 = 32; // 4 x i64 = 32 bytes
 
-impl<'ctx> VMType<'ctx> {
-    pub const NUM_OUTPUT_PTRS: usize = 4;
-
-    pub fn new(context: &'ctx Context, _field_type: inkwell::types::ArrayType<'ctx>) -> Self {
-        let field_ptr_type = context.ptr_type(AddressSpace::default());
-
-        let field_types: Vec<inkwell::types::BasicTypeEnum> = (0..Self::NUM_OUTPUT_PTRS)
-            .map(|_| field_ptr_type.into())
-            .collect();
-
-        let struct_type = context.struct_type(&field_types, false);
-        let ptr_type = context.ptr_type(AddressSpace::default());
-
-        Self { struct_type, ptr_type }
-    }
-
-    pub fn get_output_ptr(
-        &self,
-        builder: &Builder<'ctx>,
-        vm_ptr: PointerValue<'ctx>,
-        index: u32,
-        name: &str,
-    ) -> PointerValue<'ctx> {
-        assert!((index as usize) < Self::NUM_OUTPUT_PTRS);
-
-        let field_ptr_ptr = builder
-            .build_struct_gep(self.struct_type, vm_ptr, index, &format!("{}_ptr_ptr", name))
-            .unwrap();
-
-        let ptr_type = builder.get_insert_block().unwrap().get_context().ptr_type(AddressSpace::default());
-        builder
-            .build_load(ptr_type, field_ptr_ptr, &format!("{}_ptr", name))
-            .unwrap()
-            .into_pointer_value()
-    }
-}
+/// VM struct layout (offsets in bytes):
+/// - 0: witness write pointer (i32)
+/// - 4: a write pointer (i32)
+/// - 8: b write pointer (i32)
+/// - 12: c write pointer (i32)
+const VM_WITNESS_PTR_OFFSET: u32 = 0;
+const VM_A_PTR_OFFSET: u32 = 4;
+const VM_B_PTR_OFFSET: u32 = 8;
+const VM_C_PTR_OFFSET: u32 = 12;
 
 /// Runtime function declarations
 pub struct Runtime<'ctx> {
@@ -82,6 +52,7 @@ impl<'ctx> Runtime<'ctx> {
         };
 
         rt.declare_functions(module);
+        rt.define_write_functions(module);
         rt
     }
 
@@ -90,25 +61,93 @@ impl<'ctx> Runtime<'ctx> {
     }
 
     fn declare_functions(&mut self, module: &Module<'ctx>) {
-        let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let void_type = self.context.void_type();
         let field_type = self.field_type();
 
+        // Only field_mul remains as an external function
         let field_mul_type = field_type.fn_type(
             &[field_type.into(), field_type.into()],
             false
         );
         self.field_mul_fn = Some(module.add_function("__field_mul", field_mul_type, None));
+    }
 
-        let write_fn_type = void_type.fn_type(
+    /// Define write functions as internal LLVM functions
+    fn define_write_functions(&mut self, module: &Module<'ctx>) {
+        self.write_witness_fn = Some(self.define_write_fn(module, "__write_witness", VM_WITNESS_PTR_OFFSET));
+        self.write_a_fn = Some(self.define_write_fn(module, "__write_a", VM_A_PTR_OFFSET));
+        self.write_b_fn = Some(self.define_write_fn(module, "__write_b", VM_B_PTR_OFFSET));
+        self.write_c_fn = Some(self.define_write_fn(module, "__write_c", VM_C_PTR_OFFSET));
+    }
+
+    /// Define a single write function
+    fn define_write_fn(
+        &self,
+        module: &Module<'ctx>,
+        name: &str,
+        ptr_offset: u32,
+    ) -> FunctionValue<'ctx> {
+        let void_type = self.context.void_type();
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let field_type = self.field_type();
+        let i32_type = self.context.i32_type();
+
+        // Function signature: void(ptr vm_ptr, [4 x i64] value)
+        let fn_type = void_type.fn_type(
             &[ptr_type.into(), field_type.into()],
             false
         );
 
-        self.write_witness_fn = Some(module.add_function("__write_witness", write_fn_type, None));
-        self.write_a_fn = Some(module.add_function("__write_a", write_fn_type, None));
-        self.write_b_fn = Some(module.add_function("__write_b", write_fn_type, None));
-        self.write_c_fn = Some(module.add_function("__write_c", write_fn_type, None));
+        let function = module.add_function(name, fn_type, Some(Linkage::Internal));
+
+        // Create entry block
+        let entry = self.context.append_basic_block(function, "entry");
+        let builder = self.context.create_builder();
+        builder.position_at_end(entry);
+
+        // Get parameters
+        let vm_ptr = function.get_nth_param(0).unwrap().into_pointer_value();
+        let value = function.get_nth_param(1).unwrap().into_array_value();
+
+        // Get pointer to the write position in VM struct
+        let write_pos_ptr = unsafe {
+            builder.build_gep(
+                i32_type,
+                vm_ptr,
+                &[i32_type.const_int((ptr_offset / 4) as u64, false)],
+                "pos_ptr",
+            ).unwrap()
+        };
+
+        // Load current write position (i32 pointer value)
+        let write_pos = builder
+            .build_load(i32_type, write_pos_ptr, "pos")
+            .unwrap()
+            .into_int_value();
+
+        // Convert i32 position to pointer
+        let write_ptr = builder
+            .build_int_to_ptr(write_pos, ptr_type, "ptr")
+            .unwrap();
+
+        // Store entire [4 x i64] array at once
+        builder.build_store(write_ptr, value).unwrap();
+
+        // Advance write position by FIELD_SIZE
+        let new_pos = builder
+            .build_int_add(
+                write_pos,
+                i32_type.const_int(FIELD_SIZE as u64, false),
+                "new_pos",
+            )
+            .unwrap();
+
+        // Store updated position
+        builder.build_store(write_pos_ptr, new_pos).unwrap();
+
+        // Return void
+        builder.build_return(None).unwrap();
+
+        function
     }
 
     pub fn const_field(&self, value: &Fr) -> BasicValueEnum<'ctx> {
@@ -148,7 +187,7 @@ impl<'ctx> Runtime<'ctx> {
         vm_ptr: PointerValue<'ctx>,
         value: BasicValueEnum<'ctx>,
     ) {
-        let write_fn = self.write_witness_fn.expect("__write_witness not declared");
+        let write_fn = self.write_witness_fn.expect("__write_witness not defined");
         builder
             .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
             .unwrap();
@@ -160,7 +199,7 @@ impl<'ctx> Runtime<'ctx> {
         vm_ptr: PointerValue<'ctx>,
         value: BasicValueEnum<'ctx>,
     ) {
-        let write_fn = self.write_a_fn.expect("__write_a not declared");
+        let write_fn = self.write_a_fn.expect("__write_a not defined");
         builder
             .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
             .unwrap();
@@ -172,7 +211,7 @@ impl<'ctx> Runtime<'ctx> {
         vm_ptr: PointerValue<'ctx>,
         value: BasicValueEnum<'ctx>,
     ) {
-        let write_fn = self.write_b_fn.expect("__write_b not declared");
+        let write_fn = self.write_b_fn.expect("__write_b not defined");
         builder
             .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
             .unwrap();
@@ -184,7 +223,7 @@ impl<'ctx> Runtime<'ctx> {
         vm_ptr: PointerValue<'ctx>,
         value: BasicValueEnum<'ctx>,
     ) {
-        let write_fn = self.write_c_fn.expect("__write_c not declared");
+        let write_fn = self.write_c_fn.expect("__write_c not defined");
         builder
             .build_call(write_fn, &[vm_ptr.into(), value.into()], "")
             .unwrap();

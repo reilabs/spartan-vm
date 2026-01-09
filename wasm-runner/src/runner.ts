@@ -1,8 +1,9 @@
 /**
- * WASM Runner - executes generated WASM with JavaScript runtime functions
+ * WASM Runner - executes generated WASM with native WASM runtime functions
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import { FieldElement, fieldToHex } from './field.js';
 import { ProgramMetadata } from './input.js';
 
@@ -18,34 +19,19 @@ export interface RunResult {
   executionTimeMs: number;
 }
 
-const MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-const R_INV = 9915499612839321149637521777990102151350674507940716049588462388200839649614n;
-const MASK64 = (1n << 64n) - 1n;
+// Path to the compiled WASM runtime
+const RUNTIME_WASM_PATH = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  '../../target/wasm32-unknown-unknown/release/spartan_wasm_runtime.wasm'
+);
 
-// Convert signed i64 to unsigned u64
-function toU64(v: bigint): bigint {
-  return v < 0n ? v + (1n << 64n) : v;
-}
+let runtimeModule: WebAssembly.Module | null = null;
 
-// Convert 4 signed i64 limbs to a single bigint
-function limbsToValue(l0: bigint, l1: bigint, l2: bigint, l3: bigint): bigint {
-  return toU64(l0) | (toU64(l1) << 64n) | (toU64(l2) << 128n) | (toU64(l3) << 192n);
-}
-
-// Convert bigint to 4 unsigned limbs
-function valueToLimbs(v: bigint): FieldElement {
-  return [v & MASK64, (v >> 64n) & MASK64, (v >> 128n) & MASK64, (v >> 192n) & MASK64];
-}
-
-/**
- * BN254 field multiplication in Montgomery form
- */
-function fieldMul(a0: bigint, a1: bigint, a2: bigint, a3: bigint,
-                  b0: bigint, b1: bigint, b2: bigint, b3: bigint): FieldElement {
-  const aVal = limbsToValue(a0, a1, a2, a3);
-  const bVal = limbsToValue(b0, b1, b2, b3);
-  const product = (aVal * bVal * R_INV) % MODULUS;
-  return valueToLimbs(product);
+async function loadRuntimeModule(): Promise<WebAssembly.Module> {
+  if (runtimeModule) return runtimeModule;
+  const runtimeBytes = fs.readFileSync(RUNTIME_WASM_PATH);
+  runtimeModule = await WebAssembly.compile(runtimeBytes);
+  return runtimeModule;
 }
 
 /**
@@ -81,7 +67,7 @@ export async function run(
   const totalBytes = 64 + witnessBytes + constraintBytes * 3; // VM struct + buffers
   const pages = Math.ceil(totalBytes / 65536) + 1;
 
-  // Create memory
+  // Create shared memory
   const memory = new WebAssembly.Memory({ initial: pages, maximum: pages * 2 });
   const view = new DataView(memory.buffer);
 
@@ -98,43 +84,20 @@ export async function run(
   view.setUint32(vmPtr + 8, bPtr, true);
   view.setUint32(vmPtr + 12, cPtr, true);
 
-  // Runtime functions that operate on the shared memory
+  // Load the WASM runtime module (provides __field_mul)
+  const runtimeMod = await loadRuntimeModule();
+  const runtimeInstance = await WebAssembly.instantiate(runtimeMod, {
+    env: { memory },
+  });
+  const runtimeExports = runtimeInstance.exports as {
+    __field_mul: Function;
+  };
+
+  // Import __field_mul from the runtime WASM module
   const imports: WebAssembly.Imports = {
     env: {
       memory,
-      __field_mul: (
-        resultPtr: number,
-        a0: bigint, a1: bigint, a2: bigint, a3: bigint,
-        b0: bigint, b1: bigint, b2: bigint, b3: bigint
-      ) => {
-        const result = fieldMul(a0, a1, a2, a3, b0, b1, b2, b3);
-        const v = new DataView(memory.buffer);
-        writeField(v, resultPtr, result);
-      },
-      __write_witness: (vmPtr: number, v0: bigint, v1: bigint, v2: bigint, v3: bigint) => {
-        const v = new DataView(memory.buffer);
-        const ptr = v.getUint32(vmPtr, true);
-        writeField(v, ptr, [toU64(v0), toU64(v1), toU64(v2), toU64(v3)]);
-        v.setUint32(vmPtr, ptr + FIELD_SIZE, true);
-      },
-      __write_a: (vmPtr: number, v0: bigint, v1: bigint, v2: bigint, v3: bigint) => {
-        const v = new DataView(memory.buffer);
-        const ptr = v.getUint32(vmPtr + 4, true);
-        writeField(v, ptr, [toU64(v0), toU64(v1), toU64(v2), toU64(v3)]);
-        v.setUint32(vmPtr + 4, ptr + FIELD_SIZE, true);
-      },
-      __write_b: (vmPtr: number, v0: bigint, v1: bigint, v2: bigint, v3: bigint) => {
-        const v = new DataView(memory.buffer);
-        const ptr = v.getUint32(vmPtr + 8, true);
-        writeField(v, ptr, [toU64(v0), toU64(v1), toU64(v2), toU64(v3)]);
-        v.setUint32(vmPtr + 8, ptr + FIELD_SIZE, true);
-      },
-      __write_c: (vmPtr: number, v0: bigint, v1: bigint, v2: bigint, v3: bigint) => {
-        const v = new DataView(memory.buffer);
-        const ptr = v.getUint32(vmPtr + 12, true);
-        writeField(v, ptr, [toU64(v0), toU64(v1), toU64(v2), toU64(v3)]);
-        v.setUint32(vmPtr + 12, ptr + FIELD_SIZE, true);
-      },
+      __field_mul: runtimeExports.__field_mul,
     },
   };
 

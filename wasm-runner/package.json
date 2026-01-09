@@ -13,6 +13,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "koffi": "^2.15.0",
     "toml": "^3.0.0"
   },
   "devDependencies": {

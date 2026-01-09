@@ -32,7 +32,7 @@ use crate::compiler::ssa::{
 };
 use crate::compiler::taint_analysis::ConstantTaint;
 
-use self::runtime::{Runtime, VMType};
+use self::runtime::Runtime;
 use self::types::TypeConverter;
 
 /// LLVM Code Generator for Spartan VM SSA
@@ -42,7 +42,6 @@ pub struct LLVMCodeGen<'ctx> {
     builder: Builder<'ctx>,
     type_converter: TypeConverter<'ctx>,
     runtime: Runtime<'ctx>,
-    vm_type: VMType<'ctx>,
     value_map: HashMap<ValueId, BasicValueEnum<'ctx>>,
     block_map: HashMap<BlockId, inkwell::basic_block::BasicBlock<'ctx>>,
     function_map: HashMap<FunctionId, FunctionValue<'ctx>>,
@@ -55,8 +54,6 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         let builder = context.create_builder();
         let type_converter = TypeConverter::new(context);
         let runtime = Runtime::new(context, &module);
-        let field_type = context.i64_type().array_type(types::FIELD_LIMBS);
-        let vm_type = VMType::new(context, field_type);
 
         Self {
             context,
@@ -64,7 +61,6 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             builder,
             type_converter,
             runtime,
-            vm_type,
             value_map: HashMap::new(),
             block_map: HashMap::new(),
             function_map: HashMap::new(),
@@ -104,7 +100,8 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
         // Build parameter types - first parameter is always VM*
         let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
-        param_types.push(self.vm_type.ptr_type.into()); // VM* as first param
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        param_types.push(ptr_type.into()); // VM* as first param
 
         // Add the regular function parameters - field elements passed directly as [4 x i64]
         for (_, tp) in entry.get_parameters() {
