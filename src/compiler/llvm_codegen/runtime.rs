@@ -124,7 +124,7 @@ impl<'ctx> Runtime<'ctx> {
         array.into()
     }
 
-    pub fn mul(
+    pub fn field_mul(
         &self,
         builder: &Builder<'ctx>,
         lhs: BasicValueEnum<'ctx>,

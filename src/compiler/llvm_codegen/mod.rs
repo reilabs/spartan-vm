@@ -266,9 +266,8 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                 // Field is represented as [4 x i64] in Montgomery form
                 self.runtime.const_field(field_val)
             }
-            Const::BoxedField(field_val) => {
-                // BoxedField is a pointer to a field - for now, treat similarly
-                self.runtime.const_field(field_val)
+            Const::BoxedField(_) => {
+                todo!("BoxedField constants not yet supported in LLVM codegen")
             }
         }
     }
@@ -312,6 +311,13 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             }
 
             OpCode::Cmp { kind, result, lhs, rhs } => {
+                let lhs_type = type_info.get_value_type(*lhs);
+                assert!(
+                    matches!(lhs_type.expr, TypeExpr::U(_)),
+                    "Cmp only supports U types, got {:?}",
+                    lhs_type
+                );
+
                 let lhs_val = self.value_map[lhs].into_int_value();
                 let rhs_val = self.value_map[rhs].into_int_value();
 
@@ -385,7 +391,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         rhs: BasicValueEnum<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         match kind {
-            BinaryArithOpKind::Mul => self.runtime.mul(&self.builder, lhs, rhs),
+            BinaryArithOpKind::Mul => self.runtime.field_mul(&self.builder, lhs, rhs),
             _ => panic!("Unsupported field binary op: {:?}", kind),
         }
     }
@@ -398,14 +404,8 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         terminator: &Terminator,
     ) {
         match terminator {
-            Terminator::Jmp(target_id, args) => {
+            Terminator::Jmp(target_id, _args) => {
                 let target_bb = self.block_map[target_id];
-                let target_block = function.get_block(*target_id);
-
-                // Add incoming values to phi nodes
-                // Note: Phi node handling is complex - for now we rely on mem2reg
-                // In a full implementation, we'd add incoming values here
-
                 self.builder.build_unconditional_branch(target_bb).unwrap();
             }
 

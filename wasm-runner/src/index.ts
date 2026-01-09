@@ -4,40 +4,49 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import { parseInputs } from './input.js';
 import { run, writeResult } from './runner.js';
 
 function printUsage(): void {
   console.log(`
-Usage: spartan-wasm-runner <wasm-file> [options]
+Usage: spartan-wasm-runner <project-root>
 
-Options:
-  -i, --input <path>   Path to Prover.toml (default: ./Prover.toml)
-  -o, --output <path>  Output JSON file (default: ./output.json)
-  -h, --help           Show this help
+Arguments:
+  project-root    Path to Noir project (default: ./)
+
+Expected project structure:
+  <project-root>/
+    Prover.toml                      # Input values
+    spartan_vm_debug/
+      witgen.wasm                    # Generated WASM artifact
+      witgen.wasm.meta.json          # Metadata
+
+Output is written to: <project-root>/spartan_vm_debug/output.json
 `);
 }
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
-  if (args.length < 1 || args.includes('-h') || args.includes('--help')) {
+  if (args.includes('-h') || args.includes('--help')) {
     printUsage();
-    process.exit(args.length < 1 ? 1 : 0);
+    process.exit(0);
   }
 
-  const wasmPath = args[0];
-  let inputPath = './Prover.toml';
-  let outputPath = './output.json';
-
-  for (let i = 1; i < args.length; i++) {
-    if (args[i] === '-i' || args[i] === '--input') inputPath = args[++i];
-    else if (args[i] === '-o' || args[i] === '--output') outputPath = args[++i];
-  }
+  const projectRoot = args[0] || './';
+  const inputPath = path.join(projectRoot, 'Prover.toml');
+  const wasmPath = path.join(projectRoot, 'spartan_vm_debug', 'witgen.wasm');
+  const outputPath = path.join(projectRoot, 'spartan_vm_debug', 'output.json');
 
   // Validate paths
+  if (!fs.existsSync(projectRoot)) {
+    console.error(`Error: Project root not found: ${projectRoot}`);
+    process.exit(1);
+  }
   if (!fs.existsSync(wasmPath)) {
     console.error(`Error: WASM file not found: ${wasmPath}`);
+    console.error(`Run spartan-vm --emit-wasm on the project first.`);
     process.exit(1);
   }
   if (!fs.existsSync(`${wasmPath}.meta.json`)) {
@@ -59,6 +68,7 @@ async function main(): Promise<void> {
 
     writeResult(result, outputPath);
     console.log(`Done in ${elapsed.toFixed(0)}ms`);
+    console.log(`  WASM execution: ${result.executionTimeMs.toFixed(0)}ms`);
     console.log(`  Witnesses: ${result.witnesses.length}`);
     console.log(`  Constraints: ${result.constraints.a.length}`);
     console.log(`  Output: ${outputPath}`);

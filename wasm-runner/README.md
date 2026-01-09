@@ -12,43 +12,43 @@ npm run build
 ## Usage
 
 ```bash
-node dist/index.js <wasm-file> [options]
+node dist/index.js <project-root>
 ```
 
-### Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `-i, --input <path>` | Path to Prover.toml input file | `./Prover.toml` |
-| `-o, --output <path>` | Output JSON file path | `./output.json` |
+Where `<project-root>` is a Noir project that has been compiled with `spartan-vm --emit-wasm`.
 
 ### Example
 
 ```bash
-node dist/index.js ./witgen.wasm -i ./Prover.toml -o ./output.json
+# First, generate the WASM artifact
+spartan-vm --root ./my-noir-project --emit-wasm
+
+# Then run it
+node dist/index.js ./my-noir-project
+```
+
+## Expected Project Structure
+
+```
+<project-root>/
+  Prover.toml                      # Input values
+  spartan_vm_debug/
+    witgen.wasm                    # Generated WASM artifact
+    witgen.wasm.meta.json          # Metadata
 ```
 
 ## Input Format
 
-The runner expects a `Prover.toml` file with field element inputs:
+The runner reads inputs from `Prover.toml`:
 
 ```toml
 x = "2"
 y = "123"
 ```
 
-It also requires a metadata file `<wasm-file>.meta.json` alongside the WASM file:
-
-```json
-{
-  "witnessCount": 1000003,
-  "constraintCount": 1000001,
-  "parameterCount": 2,
-  "parameterNames": ["x", "y"]
-}
-```
-
 ## Output Format
+
+Output is written to `<project-root>/spartan_vm_debug/output.json`:
 
 ```json
 {

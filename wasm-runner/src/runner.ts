@@ -15,6 +15,7 @@ export interface RunResult {
     b: string[];
     c: string[];
   };
+  executionTimeMs: number;
 }
 
 const MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
@@ -150,7 +151,9 @@ export async function run(
   }
 
   // Execute
+  const execStart = performance.now();
   exports.spartan_main(...args);
+  const executionTimeMs = performance.now() - execStart;
 
   // Read output buffers
   const witnesses: FieldElement[] = [];
@@ -174,9 +177,11 @@ export async function run(
       b: constraintsB.map(fieldToHex),
       c: constraintsC.map(fieldToHex),
     },
+    executionTimeMs,
   };
 }
 
 export function writeResult(result: RunResult, outputPath: string): void {
-  fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));
+  const { executionTimeMs, ...output } = result;
+  fs.writeFileSync(outputPath, JSON.stringify(output, null, 2));
 }
