@@ -108,41 +108,38 @@ impl<'ctx> Runtime<'ctx> {
         let vm_ptr = function.get_nth_param(0).unwrap().into_pointer_value();
         let value = function.get_nth_param(1).unwrap().into_array_value();
 
-        // Get pointer to the write position in VM struct
+        // Get pointer to the write position slot in VM struct (ptr to ptr)
         let write_pos_ptr = unsafe {
             builder.build_gep(
-                i32_type,
+                ptr_type,
                 vm_ptr,
                 &[i32_type.const_int((ptr_offset / 4) as u64, false)],
                 "pos_ptr",
             ).unwrap()
         };
 
-        // Load current write position (i32 pointer value)
-        let write_pos = builder
-            .build_load(i32_type, write_pos_ptr, "pos")
-            .unwrap()
-            .into_int_value();
-
-        // Convert i32 position to pointer
+        // Load current write position directly as pointer
         let write_ptr = builder
-            .build_int_to_ptr(write_pos, ptr_type, "ptr")
-            .unwrap();
+            .build_load(ptr_type, write_pos_ptr, "ptr")
+            .unwrap()
+            .into_pointer_value();
 
         // Store entire [4 x i64] array at once
         builder.build_store(write_ptr, value).unwrap();
 
-        // Advance write position by FIELD_SIZE
-        let new_pos = builder
-            .build_int_add(
-                write_pos,
-                i32_type.const_int(FIELD_SIZE as u64, false),
-                "new_pos",
-            )
-            .unwrap();
+        // Advance write pointer by FIELD_SIZE bytes using GEP on i8
+        let i8_type = self.context.i8_type();
+        let new_ptr = unsafe {
+            builder.build_gep(
+                i8_type,
+                write_ptr,
+                &[i32_type.const_int(FIELD_SIZE as u64, false)],
+                "new_ptr",
+            ).unwrap()
+        };
 
-        // Store updated position
-        builder.build_store(write_pos_ptr, new_pos).unwrap();
+        // Store updated pointer
+        builder.build_store(write_pos_ptr, new_ptr).unwrap();
 
         // Return void
         builder.build_return(None).unwrap();
