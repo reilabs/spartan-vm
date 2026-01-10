@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     compiler::Field,
-    vm::bytecode::{AllocationType, VM},
+    vm::{bytecode::{AllocationType, VM}, interpreter::InputValueOrdered},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -20,6 +20,7 @@ pub enum DataType {
     ADWitness = 3,
     ADSum = 4,
     ADMulConst = 5,
+    Struct = 6,
 }
 
 // BoxedLayout packing scheme:
@@ -43,6 +44,26 @@ impl BoxedLayout {
         } else {
             Self::new_sized(DataType::PrimArray, size)
         }
+    }
+
+    pub fn new_struct(fields: Vec<&InputValueOrdered>) -> Self {
+        let mut size = 0;
+        for field in &fields {
+            match field {
+                &InputValueOrdered::Field(_) => {
+                    size = (size << 4) | 4;
+                }
+                &InputValueOrdered::Struct(_) | &InputValueOrdered::Vec(_) => {
+                    size = (size << 4) | 1;
+                }
+                &InputValueOrdered::String(_) => {
+                    panic!("Strings not supported here yet");
+                }
+            }
+        }
+        size = (size << 8) | (fields.len() as usize);
+        
+        Self::new_sized(DataType::Struct, size)
     }
 
     pub fn ad_const() -> Self {
@@ -70,6 +91,21 @@ impl BoxedLayout {
         self.0 as usize >> 8
     }
 
+    pub fn struct_field_count(&self) -> usize {
+        let field_count = ((self.0 as usize) >> 8) & 0xFF;
+        field_count
+    }
+
+    pub fn struct_size(&self) -> usize {
+        let field_sizes_combined = self.0 as usize >> 16;
+        let mut sum_of_field_sizes_in_8byte_chunks = 0;
+        for i in 0..12 {
+            let field_size = (field_sizes_combined >> (i * 4)) & 0xF;
+            sum_of_field_sizes_in_8byte_chunks += field_size;
+        }   
+        sum_of_field_sizes_in_8byte_chunks
+    }
+
     pub fn is_boxed_array(&self) -> bool {
         self.data_type() == DataType::BoxedArray
     }
@@ -85,6 +121,7 @@ impl BoxedLayout {
             DataType::ADMulConst => size_of::<ADMulConst>(),
             DataType::ADSum => size_of::<ADSum>(),
             DataType::BoxedArray | DataType::PrimArray => 8 * self.array_size(),
+            DataType::Struct => 8 * self.struct_size(),
         };
         let arr_size = ((base_byte_size + 7) / 8) + 2;
         arr_size
@@ -190,6 +227,9 @@ impl BoxedValue {
             DataType::BoxedArray => {
                 panic!("bump_da for BoxedArray")
             }
+            DataType::Struct => {
+                panic!("bump_da for Struct")
+            }
         }
     }
 
@@ -218,6 +258,9 @@ impl BoxedValue {
             }
             DataType::BoxedArray => {
                 panic!("bump_da for BoxedArray")
+            }
+            DataType::Struct => {
+                panic!("bump_db for Struct")
             }
         }
     }
@@ -248,6 +291,9 @@ impl BoxedValue {
             DataType::BoxedArray => {
                 panic!("bump_dc for BoxedArray")
             }
+            DataType::Struct => {
+                panic!("bump_dc for Struct")
+            }
         }
     }
 
@@ -269,12 +315,12 @@ impl BoxedValue {
 
     pub fn inc_rc(&self, by: u64) {
         let rc = self.rc();
-        // println!(
-        //     "inc_array_rc from {} by {} at {:?}",
-        //     unsafe { *rc },
-        //     by,
-        //     self.0
-        // );
+        println!(
+            "inc_array_rc from {} by {} at {:?}",
+            unsafe { *rc },
+            by,
+            self.0
+        );
         unsafe {
             *rc += by;
         }
@@ -282,7 +328,7 @@ impl BoxedValue {
 
     fn free(&self, vm: &mut VM) {
         let arr_size = self.layout().underlying_array_size();
-        // println!("freeing {:?} of size {} ({:?})", self.0, arr_size, self.layout().data_type());
+        println!("freeing {:?} of size {} ({:?})", self.0, arr_size, self.layout().data_type());
         unsafe {
             alloc::dealloc(self.0 as *mut u8, Layout::array::<u64>(arr_size).unwrap());
             vm.allocation_instrumenter
@@ -320,6 +366,15 @@ impl BoxedValue {
                         item.free(vm);
                         println!("Here 4");
 
+                    }
+                    DataType::Struct => {
+                        println!("freeing struct");
+                        for i in 0..layout.struct_field_count() {
+                            println!("freeing struct field {}", i);
+                            // let field_ptr = item.tuple_idx(i, &vec![8; layout.struct_size()]);
+                        }
+                        item.free(vm);
+                        println!("Freed");
                     }
                     DataType::ADConst => {
                         println!("freeing ad const");

@@ -591,10 +591,7 @@ impl RCInsertion {
             TypeExpr::Field => false,
             TypeExpr::U(_) => false,
             TypeExpr::BoxedField => true,
-            TypeExpr::Tuple(elements) => {
-                // Tuple needs RC if ANY of its elements need RC
-                elements.iter().any(|elem| self.type_needs_rc(elem))
-            }
+            TypeExpr::Tuple(_) => true,
         }
     }
 }
