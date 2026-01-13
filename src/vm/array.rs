@@ -46,23 +46,28 @@ impl BoxedLayout {
         }
     }
 
-    pub fn new_struct(fields: Vec<&InputValueOrdered>) -> Self {
+    pub fn new_struct(field_sizes: Vec<usize>) -> Self {
         let mut size = 0;
-        for field in &fields {
-            match field {
-                &InputValueOrdered::Field(_) => {
-                    size = (size << 4) | 4;
-                }
-                &InputValueOrdered::Struct(_) | &InputValueOrdered::Vec(_) => {
-                    size = (size << 4) | 1;
-                }
-                &InputValueOrdered::String(_) => {
-                    panic!("Strings not supported here yet");
-                }
-            }
+        // for field in &fields {
+        //     match field {
+        //         &InputValueOrdered::Field(_) => {
+        //             size = (size << 4) | 4;
+        //         }
+        //         &InputValueOrdered::Struct(_) | &InputValueOrdered::Vec(_) => {
+        //             size = (size << 4) | 1;
+        //         }
+        //         &InputValueOrdered::String(_) => {
+        //             panic!("Strings not supported here yet");
+        //         }
+        //     }
+        // }
+        // size = (size << 8) | (fields.len() as usize);
+        for field_size in &field_sizes {
+            assert!(*field_size < 16);
+            size = (size << 4) | *field_size;
         }
-        size = (size << 8) | (fields.len() as usize);
-        
+        size = (size << 8) | (field_sizes.len() as usize);
+        assert!(size < (1 << 56));
         Self::new_sized(DataType::Struct, size)
     }
 
@@ -104,6 +109,17 @@ impl BoxedLayout {
             sum_of_field_sizes_in_8byte_chunks += field_size;
         }   
         sum_of_field_sizes_in_8byte_chunks
+    }
+
+    pub fn child_sizes(&self) -> Vec<usize> {
+        let field_count = self.struct_field_count();
+        let field_sizes_combined = self.0 as usize >> 16;
+        let mut field_sizes = Vec::new();
+        for i in 0..field_count {
+            let field_size = (field_sizes_combined >> ((field_count - i - 1) * 4)) & 0xF;
+            field_sizes.push(field_size);
+        }   
+        field_sizes
     }
 
     pub fn is_boxed_array(&self) -> bool {

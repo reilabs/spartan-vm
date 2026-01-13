@@ -492,11 +492,40 @@ impl RCInsertion {
                         new_instructions.push(instruction);
                     }
                     OpCode::MkTuple { 
-                        result: _, 
-                        elems: _, 
-                        element_types: _, 
+                        result, 
+                        elems, 
+                        element_types, 
                     } => {
-                        panic!("MkTuple only appears after freshwitness")
+                        new_instructions.push(instruction.clone());
+                        for (input, group) in elems
+                            .iter()
+                            .zip(element_types)
+                            .sorted_by_key(|(v, _)| v.0)
+                            .chunk_by(|(v, _)| *v)
+                            .into_iter()
+                        {
+                            let items: Vec<_> = group.collect();
+                            let count = items.iter().count();
+                            let (_, elem_type) = items[0];
+                            
+                            if self.type_needs_rc(elem_type) {
+                                let mut count = count;
+                                if !currently_live.contains(input) {
+                                    count -= 1;
+                                }
+                                if count > 0 {
+                                    new_instructions.push(OpCode::MemOp {
+                                        kind: MemOp::Bump(count),
+                                        value: *input
+                                    });
+                                }
+                            }
+                        }
+                            
+                        if !currently_live.contains(result) {
+                            panic!("ICE: Result of MkTuple is immediately dropped. This is a bug.")
+                        }
+                        currently_live.extend(elems);
                     }
                 }
             }

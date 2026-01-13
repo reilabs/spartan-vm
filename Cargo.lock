@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "acir"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acir_field",
  "base64",
@@ -32,7 +32,7 @@ dependencies = [
 [[package]]
 name = "acir_field"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "ark-bn254",
  "ark-ff",
@@ -46,7 +46,7 @@ dependencies = [
 [[package]]
 name = "acvm"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acir",
  "acvm_blackbox_solver",
@@ -61,7 +61,7 @@ dependencies = [
 [[package]]
 name = "acvm_blackbox_solver"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acir",
  "blake2",
@@ -482,7 +482,7 @@ dependencies = [
 [[package]]
 name = "bn254_blackbox_solver"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acir",
  "acvm_blackbox_solver",
@@ -507,7 +507,7 @@ dependencies = [
 [[package]]
 name = "brillig"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acir_field",
  "serde",
@@ -516,7 +516,7 @@ dependencies = [
 [[package]]
 name = "brillig_vm"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acir",
  "acvm_blackbox_solver",
@@ -1160,7 +1160,7 @@ checksum = "8ce81f49ae8a0482e4c55ea62ebbd7e5a686af544c00b9d090bba3ff9be97b3d"
 [[package]]
 name = "fm"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "codespan-reporting",
  "iter-extended",
@@ -1665,7 +1665,7 @@ checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
 [[package]]
 name = "iter-extended"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 
 [[package]]
 name = "itertools"
@@ -1860,7 +1860,7 @@ checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 [[package]]
 name = "nargo"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acvm",
  "brillig",
@@ -1885,7 +1885,7 @@ dependencies = [
 [[package]]
 name = "nargo_toml"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "dirs 4.0.0",
  "fm",
@@ -1904,7 +1904,7 @@ dependencies = [
 [[package]]
 name = "noir_greybox_fuzzer"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acvm",
  "build-data",
@@ -1924,7 +1924,7 @@ dependencies = [
 [[package]]
 name = "noir_protobuf"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "color-eyre",
  "prost",
@@ -1933,7 +1933,7 @@ dependencies = [
 [[package]]
 name = "noirc_abi"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acvm",
  "iter-extended",
@@ -1949,12 +1949,12 @@ dependencies = [
 [[package]]
 name = "noirc_arena"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 
 [[package]]
 name = "noirc_artifacts"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acvm",
  "codespan-reporting",
@@ -1969,7 +1969,7 @@ dependencies = [
 [[package]]
 name = "noirc_driver"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acvm",
  "build-data",
@@ -1989,7 +1989,7 @@ dependencies = [
 [[package]]
 name = "noirc_errors"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acvm",
  "base64",
@@ -2007,7 +2007,7 @@ dependencies = [
 [[package]]
 name = "noirc_evaluator"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acvm",
  "bn254_blackbox_solver",
@@ -2039,7 +2039,7 @@ dependencies = [
 [[package]]
 name = "noirc_frontend"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acvm",
  "bn254_blackbox_solver",
@@ -2068,7 +2068,7 @@ dependencies = [
 [[package]]
 name = "noirc_printable_type"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "acvm",
  "iter-extended",
@@ -2079,7 +2079,7 @@ dependencies = [
 [[package]]
 name = "noirc_span"
 version = "1.0.0-beta.13"
-source = "git+https://github.com/reilabs/noir.git?branch=spartan-vm#a5ee768fad07e5ecd293c4147c4a4188b47ce1db"
+source = "git+https://github.com/Batmend-Reilabs/noir.git?branch=spartan-vm#4282587658d4d7b79c46b3bee091b678f03877eb"
 dependencies = [
  "codespan",
  "serde",

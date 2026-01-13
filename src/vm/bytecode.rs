@@ -653,6 +653,24 @@ mod def {
     }
 
     #[opcode]
+    fn tuple_alloc(
+        #[out] res: *mut BoxedValue,
+        meta: BoxedLayout,
+        fields: &[FramePosition],
+        frame: Frame,
+        vm: &mut VM,
+    ) {
+        let tuple = BoxedValue::alloc(meta, vm);
+        for (i, field) in fields.iter().enumerate() {
+            let tgt = tuple.tuple_idx(i, &meta.child_sizes());
+            frame.write_to(tgt, field.0 as isize, meta.child_sizes()[i]);
+        }
+        unsafe {
+            *res = tuple;
+        }
+    }
+
+    #[opcode]
     fn array_get(
         #[out] res: *mut u64,
         #[frame] array: BoxedValue,

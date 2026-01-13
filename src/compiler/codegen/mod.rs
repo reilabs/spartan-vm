@@ -647,6 +647,26 @@ impl CodeGen {
                         items: args,
                     });
                 }
+                ssa::OpCode::MkTuple { 
+                    result, 
+                    elems, 
+                    element_types 
+                } => {
+                    let res = layouter.alloc_value(*result, &type_info.get_value_type(*result));
+                    let fields = elems
+                        .iter()
+                        .map(|a| layouter.get_value(*a))
+                        .collect::<Vec<_>>();
+                    emitter.push_op(bytecode::OpCode::TupleAlloc {
+                        res,
+                        meta: vm::array::BoxedLayout::new_struct(
+                            element_types.iter().map(
+                                |elem_type| layouter.type_size(elem_type)    
+                            ).collect()
+                        ),
+                        fields,
+                    });
+                }
                 ssa::OpCode::Call {
                     results: r,
                     function: fnid,

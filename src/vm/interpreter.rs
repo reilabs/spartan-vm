@@ -439,7 +439,14 @@ fn write_input_value(ptr: *mut u64, el: &InputValueOrdered, vm: &mut VM) -> isiz
             return 1;
         }
         InputValueOrdered::Struct(elements ) => {
-            let layout = BoxedLayout::new_struct(elements.iter().map(|(_, v)| v).collect());
+            let element_sizes = elements.iter().map(|(_, v)| {
+                match v {
+                    InputValueOrdered::Field(_) => 4,
+                    InputValueOrdered::Struct(_) | InputValueOrdered::Vec(_) => 1,
+                    _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
+                }
+            }).collect::<Vec<usize>>();
+            let layout = BoxedLayout::new_struct(element_sizes);
             let boxed_struct = BoxedValue::alloc(layout, vm);  
             
             let child_sizes: Vec<usize> = elements.iter().map(|(_, v)| {
