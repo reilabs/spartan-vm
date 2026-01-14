@@ -6,6 +6,7 @@ use std::{
 };
 
 use ark_ff::{AdditiveGroup, BigInt, Field as _, Fp, PrimeField as _};
+use noirc_abi::input_parser::InputValue;
 use tracing::instrument;
 
 use crate::{
@@ -196,6 +197,10 @@ pub fn run(
     for i in 0..flat_inputs.len() {
         out_wit_pre_comm[1 + i] = flat_inputs[i];
     }
+    let flat_inputs = flatten_param_vec(ordered_inputs);
+    for i in 0..flat_inputs.len() {
+        out_wit_pre_comm[1 + i] = flat_inputs[i];
+    }
     let mut out_wit_post_comm = vec![Field::ZERO; witness_layout.post_commitment_size()];
     let mut vm = VM::new_witgen(
         out_a.as_mut_ptr(),
@@ -204,6 +209,7 @@ pub fn run(
         unsafe {
             out_wit_pre_comm
                 .as_mut_ptr()
+                .offset(1 + flat_inputs.len() as isize)
                 .offset(1 + flat_inputs.len() as isize)
         },
         unsafe {
@@ -233,6 +239,10 @@ pub fn run(
         &mut vm,
     );
 
+    let mut current_offset = 2 as isize ;
+    for (_, el) in ordered_inputs.iter().enumerate() {
+        unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
+    }
     let mut current_offset = 2 as isize ;
     for (_, el) in ordered_inputs.iter().enumerate() {
         unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
@@ -504,4 +514,3 @@ fn flatten_params(value: &InputValueOrdered) -> Vec<Field> {
     }
     encoded_value
 }
-
