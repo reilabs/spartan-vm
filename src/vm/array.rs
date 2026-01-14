@@ -48,20 +48,6 @@ impl BoxedLayout {
 
     pub fn new_struct(field_sizes: Vec<usize>) -> Self {
         let mut size = 0;
-        // for field in &fields {
-        //     match field {
-        //         &InputValueOrdered::Field(_) => {
-        //             size = (size << 4) | 4;
-        //         }
-        //         &InputValueOrdered::Struct(_) | &InputValueOrdered::Vec(_) => {
-        //             size = (size << 4) | 1;
-        //         }
-        //         &InputValueOrdered::String(_) => {
-        //             panic!("Strings not supported here yet");
-        //         }
-        //     }
-        // }
-        // size = (size << 8) | (fields.len() as usize);
         for field_size in &field_sizes {
             assert!(*field_size < 16);
             size = (size << 4) | *field_size;
@@ -331,12 +317,6 @@ impl BoxedValue {
 
     pub fn inc_rc(&self, by: u64) {
         let rc = self.rc();
-        println!(
-            "inc_array_rc from {} by {} at {:?}",
-            unsafe { *rc },
-            by,
-            self.0
-        );
         unsafe {
             *rc += by;
         }
@@ -344,13 +324,11 @@ impl BoxedValue {
 
     fn free(&self, vm: &mut VM) {
         let arr_size = self.layout().underlying_array_size();
-        println!("freeing {:?} of size {} ({:?})", self.0, arr_size, self.layout().data_type());
         unsafe {
             alloc::dealloc(self.0 as *mut u8, Layout::array::<u64>(arr_size).unwrap());
             vm.allocation_instrumenter
                 .free(AllocationType::Heap, arr_size);
         }
-        println!("Freed");
     }
 
     // #[inline(always)]
@@ -358,46 +336,33 @@ impl BoxedValue {
         let mut queue = VecDeque::<BoxedValue>::new();
         queue.push_back(*self);
         while let Some(item) = queue.pop_front() {
-            println!("Starting");
             let rc = item.rc();
-            println!("dec_rc: val={:?} rc={} ({:?})", item.0, unsafe { *rc }, item.layout().data_type());
-            println!("dec_rc: array={:?} rc={}", item.0, unsafe { *rc });
             let rc_val = unsafe { *rc };
             if rc_val == 1 {
-                println!("Here");
                 let layout = item.layout();
                 match layout.data_type() {
                     DataType::PrimArray => {
-                        println!("freeing prim array");
                         item.free(vm);
                     }
                     DataType::BoxedArray => {
-                        println!("freeing boxed array");
                         for i in 0..layout.array_size() {
-                            println!("I: {:?}", i);
                             let elem = unsafe { *(item.array_idx(i, 1) as *mut BoxedValue) };
                             queue.push_back(elem);
                         }
-                        println!("Here 3");
                         item.free(vm);
-                        println!("Here 4");
 
                     }
                     DataType::Struct => {
-                        println!("freeing struct");
                         for i in 0..layout.struct_field_count() {
-                            println!("freeing struct field {}", i);
+                            // TODO: free children
                             // let field_ptr = item.tuple_idx(i, &vec![8; layout.struct_size()]);
                         }
                         item.free(vm);
-                        println!("Freed");
                     }
                     DataType::ADConst => {
-                        println!("freeing ad const");
                         item.free(vm);
                     }
                     DataType::ADWitness => {
-                        println!("freeing ad witness");
                         item.free(vm);
                     }
                     DataType::ADSum => {
@@ -414,7 +379,6 @@ impl BoxedValue {
                         item.free(vm);
                     }
                     DataType::ADMulConst => {
-                        println!("freeing ad mul const");
                         let ad_mul_const = unsafe { *item.as_mul_const() };
                         ad_mul_const
                             .value
@@ -429,17 +393,13 @@ impl BoxedValue {
                         item.free(vm);
                     }
                 }
-                println!("Here6");
             } else {
-                println!("Here3");
                 unsafe {
                     *rc -= 1;
                 }
             }
-            println!("Here7");
         }
         
-        println!("Here2");
         // let rc = self.rc();
         // let rc_val = unsafe { *rc };
         // // println!("dec_array_rc from {} at {:?}", unsafe { *rc }, self.0);
