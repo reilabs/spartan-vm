@@ -293,21 +293,10 @@ impl Driver {
 
     pub fn compile_witgen(&mut self) -> Result<Vec<u64>, Error> {
         self.prepare_base_witgen_ssa();
-        let mut ssa = self.base_witgen_ssa.clone().unwrap();
+        let ssa = self.base_witgen_ssa.as_ref().unwrap();
 
-        let mut pass_manager = PassManager::<ConstantTaint>::new(
-            "witgen".to_string(),
-            self.draw_cfg,
-            vec![
-                Box::new(RCInsertion::new()),
-                Box::new(FixDoubleJumps::new()),
-            ],
-        );
-        pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
-        pass_manager.run(&mut ssa);
-
-        let flow_analysis = FlowAnalysis::run(&ssa);
-        let type_info = Types::new().run(&ssa, &flow_analysis);
+        let flow_analysis = FlowAnalysis::run(ssa);
+        let type_info = Types::new().run(ssa, &flow_analysis);
 
         let codegen = CodeGen::new();
         let program = codegen.run(&ssa, &flow_analysis, &type_info);
@@ -372,6 +361,8 @@ impl Driver {
             vec![
                 Box::new(WitnessWriteToVoid::new()),
                 Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
+                Box::new(RCInsertion::new()),
+                Box::new(FixDoubleJumps::new()),
             ],
         );
         pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
@@ -391,22 +382,14 @@ impl Driver {
         use inkwell::OptimizationLevel;
 
         self.prepare_base_witgen_ssa();
+        let ssa = self.base_witgen_ssa.as_ref().unwrap();
 
-        let mut ssa = self.base_witgen_ssa.clone().unwrap();
-        let mut pass_manager = PassManager::<ConstantTaint>::new(
-            "llvm_finalize".to_string(),
-            self.draw_cfg,
-            vec![Box::new(FixDoubleJumps::new())],
-        );
-        pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
-        pass_manager.run(&mut ssa);
-
-        let flow_analysis = FlowAnalysis::run(&ssa);
-        let type_info = Types::new().run(&ssa, &flow_analysis);
+        let flow_analysis = FlowAnalysis::run(ssa);
+        let type_info = Types::new().run(ssa, &flow_analysis);
 
         let context = Context::create();
         let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_module");
-        codegen.compile(&ssa, &flow_analysis, &type_info);
+        codegen.compile(ssa, &flow_analysis, &type_info);
 
         let llvm_ir = if emit_llvm {
             let ir = codegen.get_ir();
