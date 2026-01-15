@@ -42,6 +42,7 @@ pub struct Driver {
     monomorphized_ssa: Option<SSA<ConstantTaint>>,
     explicit_witness_ssa: Option<SSA<ConstantTaint>>,
     r1cs_ssa: Option<SSA<ConstantTaint>>,
+    base_witgen_ssa: Option<SSA<ConstantTaint>>,
     abi: Option<noirc_abi::Abi>,
     draw_cfg: bool,
 }
@@ -64,6 +65,7 @@ impl Driver {
             monomorphized_ssa: None,
             explicit_witness_ssa: None,
             r1cs_ssa: None,
+            base_witgen_ssa: None,
             abi: None,
             draw_cfg,
         }
@@ -289,15 +291,14 @@ impl Driver {
         Ok(r1cs)
     }
 
-    pub fn compile_witgen(&self) -> Result<Vec<u64>, Error> {
-        let mut ssa = self.explicit_witness_ssa.clone().unwrap();
+    pub fn compile_witgen(&mut self) -> Result<Vec<u64>, Error> {
+        self.prepare_base_witgen_ssa();
+        let mut ssa = self.base_witgen_ssa.clone().unwrap();
 
         let mut pass_manager = PassManager::<ConstantTaint>::new(
             "witgen".to_string(),
             self.draw_cfg,
             vec![
-                Box::new(WitnessWriteToVoid::new()),
-                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
                 Box::new(RCInsertion::new()),
                 Box::new(FixDoubleJumps::new()),
             ],
@@ -357,75 +358,45 @@ impl Driver {
         self.abi.as_ref().unwrap()
     }
 
-    /// Compile to LLVM IR and optionally to WASM or native object file
     #[tracing::instrument(skip_all)]
-    pub fn compile_llvm(&self, output_path: Option<std::path::PathBuf>) -> Result<String, Error> {
-        use crate::compiler::llvm_codegen::LLVMCodeGen;
-        use inkwell::context::Context;
+    fn prepare_base_witgen_ssa(&mut self) {
+        if self.base_witgen_ssa.is_some() {
+            return;
+        }
 
         let mut ssa = self.explicit_witness_ssa.clone().unwrap();
 
         let mut pass_manager = PassManager::<ConstantTaint>::new(
-            "llvm_codegen".to_string(),
+            "base_witgen".to_string(),
             self.draw_cfg,
             vec![
                 Box::new(WitnessWriteToVoid::new()),
                 Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
-                Box::new(FixDoubleJumps::new()),
             ],
         );
         pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
         pass_manager.run(&mut ssa);
 
-        let flow_analysis = FlowAnalysis::run(&ssa);
-        let type_info = Types::new().run(&ssa, &flow_analysis);
-
-        // Create LLVM context and codegen
-        let context = Context::create();
-        let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_module");
-
-        // Compile SSA to LLVM IR
-        codegen.compile(&ssa, &flow_analysis, &type_info);
-
-        // Get the LLVM IR as string
-        let llvm_ir = codegen.get_ir();
-
-        // Write LLVM IR to file if output path provided
-        if let Some(path) = &output_path {
-            let ir_path = path.with_extension("ll");
-            codegen.write_ir(&ir_path);
-            info!(message = %"LLVM IR written", path = %ir_path.display());
-        }
-
-        // Also write to debug output
-        fs::write(
-            self.get_debug_output_dir().join("witgen.ll"),
-            &llvm_ir,
-        )
-        .unwrap();
-
-        info!(message = %"LLVM IR generated", ir_size = llvm_ir.len());
-
-        Ok(llvm_ir)
+        self.base_witgen_ssa = Some(ssa);
     }
 
-    /// Compile to WebAssembly via LLVM
     #[tracing::instrument(skip_all)]
-    pub fn compile_wasm(&self, output_path: std::path::PathBuf, r1cs: &R1CS) -> Result<(), Error> {
+    pub fn compile_llvm_targets(
+        &mut self,
+        emit_llvm: bool,
+        wasm_config: Option<(std::path::PathBuf, &R1CS)>,
+    ) -> Result<Option<String>, Error> {
         use crate::compiler::llvm_codegen::LLVMCodeGen;
         use inkwell::context::Context;
         use inkwell::OptimizationLevel;
 
-        let mut ssa = self.explicit_witness_ssa.clone().unwrap();
+        self.prepare_base_witgen_ssa();
 
+        let mut ssa = self.base_witgen_ssa.clone().unwrap();
         let mut pass_manager = PassManager::<ConstantTaint>::new(
-            "wasm_codegen".to_string(),
+            "llvm_finalize".to_string(),
             self.draw_cfg,
-            vec![
-                Box::new(WitnessWriteToVoid::new()),
-                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
-                Box::new(FixDoubleJumps::new()),
-            ],
+            vec![Box::new(FixDoubleJumps::new())],
         );
         pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
         pass_manager.run(&mut ssa);
@@ -434,21 +405,26 @@ impl Driver {
         let type_info = Types::new().run(&ssa, &flow_analysis);
 
         let context = Context::create();
-        let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_wasm");
+        let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_module");
         codegen.compile(&ssa, &flow_analysis, &type_info);
 
-        // Also write LLVM IR for debugging
-        codegen.write_ir(&output_path.with_extension("ll"));
+        let llvm_ir = if emit_llvm {
+            let ir = codegen.get_ir();
+            fs::write(self.get_debug_output_dir().join("witgen.ll"), &ir).unwrap();
+            info!(message = %"LLVM IR generated", ir_size = ir.len());
+            Some(ir)
+        } else {
+            None
+        };
 
-        // Compile to WASM object
-        codegen.compile_to_wasm(&output_path, OptimizationLevel::Aggressive);
+        if let Some((wasm_path, r1cs)) = wasm_config {
+            codegen.write_ir(&wasm_path.with_extension("ll"));
+            codegen.compile_to_wasm(&wasm_path, OptimizationLevel::Aggressive);
+            info!(message = %"WASM object generated", path = %wasm_path.display());
+            self.write_wasm_metadata(&wasm_path, r1cs)?;
+        }
 
-        info!(message = %"WASM object generated", path = %output_path.display());
-
-        // Generate metadata JSON
-        self.write_wasm_metadata(&output_path, r1cs)?;
-
-        Ok(())
+        Ok(llvm_ir)
     }
 
     /// Write WASM metadata JSON file

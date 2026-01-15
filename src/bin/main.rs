@@ -76,15 +76,20 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         }
     }
 
-    if args.emit_llvm {
-        info!(message = %"Generating LLVM IR");
-        driver.compile_llvm(None).unwrap();
-    }
+    if args.emit_llvm || args.emit_wasm {
+        let wasm_config = if args.emit_wasm {
+            let wasm_path = driver.get_debug_output_dir().join("witgen.wasm");
+            info!(message = %"Generating WebAssembly", path = %wasm_path.display());
+            Some((wasm_path, &r1cs))
+        } else {
+            None
+        };
 
-    if args.emit_wasm {
-        let wasm_path = driver.get_debug_output_dir().join("witgen.wasm");
-        info!(message = %"Generating WebAssembly", path = %wasm_path.display());
-        driver.compile_wasm(wasm_path, &r1cs).unwrap();
+        if args.emit_llvm {
+            info!(message = %"Generating LLVM IR");
+        }
+
+        driver.compile_llvm_targets(args.emit_llvm, wasm_config).unwrap();
     }
 
     // Skip VM execution if requested
