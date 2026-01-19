@@ -243,10 +243,6 @@ pub fn run(
     for (_, el) in ordered_inputs.iter().enumerate() {
         unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
     }
-    let mut current_offset = 2 as isize ;
-    for (_, el) in ordered_inputs.iter().enumerate() {
-        unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
-    }
 
     let mut program = program.to_vec();
     prepare_dispatch(&mut program);
