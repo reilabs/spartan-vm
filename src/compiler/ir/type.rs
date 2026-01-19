@@ -318,10 +318,7 @@ impl<V> Type<V> {
     pub fn calculate_type_size(&self) -> usize {
         match &self.expr {
             TypeExpr::Field => 1,
-            TypeExpr::Array(inner, size) => {
-                let element_size = inner.calculate_type_size();
-                element_size * size
-            }
+            TypeExpr::Array(inner, size) => 1,
             TypeExpr::Tuple(inner_types) => {
                 inner_types.iter().map(|t| t.calculate_type_size()).sum()
             }
