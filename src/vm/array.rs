@@ -353,9 +353,12 @@ impl BoxedValue {
 
                     }
                     DataType::Struct => {
+                        let child_sizes = layout.child_sizes();
                         for i in 0..layout.struct_field_count() {
-                            // TODO: free children
-                            // let field_ptr = item.tuple_idx(i, &vec![8; layout.struct_size()]);
+                            if child_sizes[i] == 1 {
+                                let elem = unsafe { *(item.tuple_idx(i, &child_sizes) as *mut BoxedValue) };
+                                queue.push_back(elem);
+                            }
                         }
                         item.free(vm);
                     }
