@@ -285,6 +285,10 @@ impl<V> Type<V> {
         matches!(self.expr, TypeExpr::Ref(_))
     }
 
+    pub fn is_tuple(&self) -> bool {
+        matches!(self.expr, TypeExpr::Tuple(_))
+    }
+
     pub fn equal_up_to_annotation(&self, other: &Self) -> bool {
         self.expr.equal_up_to_annotation(&other.expr)
     }

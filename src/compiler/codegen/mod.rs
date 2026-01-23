@@ -638,7 +638,8 @@ impl CodeGen {
                     let is_ptr = eltype.is_ref()
                         || eltype.is_slice()
                         || eltype.is_array()
-                        || eltype.is_boxed_field();
+                        || eltype.is_boxed_field()
+                        || eltype.is_tuple();
                     let stride = layouter.type_size(eltype);
                     emitter.push_op(bytecode::OpCode::ArrayAlloc {
                         res,
