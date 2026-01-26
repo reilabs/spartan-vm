@@ -1,0 +1,5 @@
+[package]
+name = "rebuild_main_params"
+type = "bin"
+
+[dependencies]

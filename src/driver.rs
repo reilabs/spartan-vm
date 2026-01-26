@@ -26,6 +26,7 @@ use crate::{
 pub struct Driver {
     project: Project,
     initial_ssa: Option<SSA<Empty>>,
+    rebuilt_main_params_ssa: Option<SSA<Empty>>,
     static_struct_access_ssa: Option<SSA<Empty>>,
     monomorphized_ssa: Option<SSA<ConstantTaint>>,
     explicit_witness_ssa: Option<SSA<ConstantTaint>>,
@@ -50,6 +51,7 @@ impl Driver {
             project,
             initial_ssa: None,
             static_struct_access_ssa: None,
+            rebuilt_main_params_ssa: None,
             monomorphized_ssa: None,
             explicit_witness_ssa: None,
             r1cs_ssa: None,
@@ -129,6 +131,21 @@ impl Driver {
     }
 
     #[tracing::instrument(skip_all)]
+    pub fn rebuild_main_params(&mut self) -> Result<(), Error> {
+        let mut pass_manager = PassManager::<Empty>::new(
+            "rebuild_main_params".to_string(),
+            self.draw_cfg,
+            vec![],
+        );
+
+        pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
+        let mut ssa = self.initial_ssa.clone().unwrap();
+        pass_manager.run(&mut ssa);
+        self.rebuilt_main_params_ssa = Some(ssa);
+        Ok(())
+    }
+
+    #[tracing::instrument(skip_all)]
     pub fn make_struct_access_static(&mut self) -> Result<(), Error> {
         let mut pass_manager = PassManager::<Empty>::new(
             "make_struct_access_static".to_string(),
@@ -140,7 +157,7 @@ impl Driver {
         );
 
         pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
-        let mut ssa = self.initial_ssa.clone().unwrap();
+        let mut ssa = self.rebuilt_main_params_ssa.clone().unwrap();
         pass_manager.run(&mut ssa);
         self.static_struct_access_ssa = Some(ssa);
         Ok(())
