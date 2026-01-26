@@ -35,18 +35,19 @@ impl RebuildMainParams {
         ssa: &mut crate::compiler::ssa::SSA<Empty>,
         value_definitions: &ValueDefinitions<Empty>,
     ) {
-        for (function_id, function) in ssa.iter_functions_mut() {
-            let value_definitions = value_definitions.get_function(*function_id);
-            let mut new_blocks = HashMap::new();
-            for (bid, mut block) in function.take_blocks().into_iter() {
-                let mut new_instructions = Vec::new();
-                for instruction in block.take_instructions().into_iter() {
-                    new_instructions.push(instruction);
-                }
-                block.put_instructions(new_instructions);
-                new_blocks.insert(bid, block);
+        let main_id = ssa.get_main_id();
+        let _value_definitions = value_definitions.get_function(main_id);
+        let function = ssa.get_main_mut();
+
+        let mut new_blocks = HashMap::new();
+        for (bid, mut block) in function.take_blocks().into_iter() {
+            let mut new_instructions = Vec::new();
+            for instruction in block.take_instructions().into_iter() {
+                new_instructions.push(instruction);
             }
-            function.put_blocks(new_blocks);
+            block.put_instructions(new_instructions);
+            new_blocks.insert(bid, block);
         }
+        function.put_blocks(new_blocks);
     }
 }
