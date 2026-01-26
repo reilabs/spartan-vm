@@ -14,7 +14,7 @@ use crate::{
         monomorphization::Monomorphization,
         pass_manager::PassManager,
         passes::{
-            arithmetic_simplifier::ArithmeticSimplifier, box_fields::BoxFields, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, specializer::Specializer, struct_access_simplifier::MakeStructAccessStatic, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
+            arithmetic_simplifier::ArithmeticSimplifier, box_fields::BoxFields, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, rebuild_main_params::RebuildMainParams, specializer::Specializer, struct_access_simplifier::MakeStructAccessStatic, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
         },
         r1cs_gen::{R1CGen, R1CS},
         ssa::{DefaultSsaAnnotator, SSA},
@@ -135,7 +135,9 @@ impl Driver {
         let mut pass_manager = PassManager::<Empty>::new(
             "rebuild_main_params".to_string(),
             self.draw_cfg,
-            vec![],
+            vec![
+                Box::new(RebuildMainParams::new()),
+            ],
         );
 
         pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
