@@ -52,5 +52,9 @@ walkdir = "2.5.0"
 name = "spartan-vm"
 path = "src/bin/main.rs"
 
+[[bin]]
+name = "test-runner"
+path = "src/bin/test_runner.rs"
+
 [profile.release]
 debug = true
