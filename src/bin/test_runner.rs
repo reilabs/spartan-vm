@@ -21,6 +21,13 @@ fn main() {
         return;
     }
 
+    // Regression check mode: --check-regression <baseline> <current>
+    if args.len() >= 4 && args[1] == "--check-regression" {
+        let baseline = PathBuf::from(&args[2]);
+        let current = PathBuf::from(&args[3]);
+        std::process::exit(check_regression(&baseline, &current));
+    }
+
     // Parent mode
     let output_path = parse_output_arg(&args);
     run_parent(&output_path);
@@ -301,6 +308,68 @@ fn parse_child_output(name: &str, lines: &[String]) -> TestResult {
         .collect();
 
     TestResult { name: name.to_string(), steps, rows, cols }
+}
+
+// ── Regression check ─────────────────────────────────────────────────
+
+fn parse_status_md(path: &Path) -> HashMap<(String, usize), &'static str> {
+    let content = fs::read_to_string(path)
+        .unwrap_or_else(|_| panic!("Cannot read {}", path.display()));
+    let content: &'static str = Box::leak(content.into_boxed_str());
+    let mut map = HashMap::new();
+    for line in content.lines().skip(2) {
+        let cells: Vec<&str> = line.split('|')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if cells.len() < 11 { continue; }
+        let name = cells[0].to_string();
+        // cols 1..=10 map to the step columns (Compiled, R1CS, Rows, Cols, Witgen, ...)
+        // but Rows(3) and Cols(4) are numeric, skip them for regression
+        for (i, &cell) in cells[1..].iter().enumerate() {
+            map.insert((name.clone(), i), cell);
+        }
+    }
+    map
+}
+
+const REGRESSION_COLS: &[(usize, &str)] = &[
+    (0, "Compiled"), (1, "R1CS"),
+    (4, "Witgen"), (5, "Witgen Correct"), (6, "Witgen No Leak"),
+    (7, "AD"), (8, "AD Correct"), (9, "AD No Leak"),
+];
+
+fn check_regression(baseline_path: &Path, current_path: &Path) -> i32 {
+    let baseline = parse_status_md(baseline_path);
+    let current = parse_status_md(current_path);
+
+    let mut regressions = Vec::new();
+
+    for ((name, col), &cur_val) in &current {
+        let col_name = REGRESSION_COLS.iter().find(|(i, _)| i == col);
+        let col_name = match col_name {
+            Some((_, n)) => n,
+            None => continue, // skip Rows/Cols columns
+        };
+        let base_val = baseline.get(&(name.clone(), *col));
+        // Regression: baseline was ✅ and current is ❌ or 💥
+        if let Some(&"✅") = base_val {
+            if cur_val != "✅" {
+                regressions.push(format!("  {name} / {col_name}: ✅ → {cur_val}"));
+            }
+        }
+    }
+
+    if regressions.is_empty() {
+        eprintln!("No regressions detected.");
+        0
+    } else {
+        eprintln!("REGRESSIONS DETECTED:");
+        for r in &regressions {
+            eprintln!("{r}");
+        }
+        1
+    }
 }
 
 fn render_markdown(results: &[TestResult]) -> String {
