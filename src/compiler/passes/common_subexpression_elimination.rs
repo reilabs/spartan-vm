@@ -443,7 +443,7 @@ impl CSE {
                             *r,
                         ));
                     }
-                    // Should this be changed?
+                    // TODO: Implement expression logic
                     OpCode::TupleProj { 
                         result: _,
                         tuple: _,

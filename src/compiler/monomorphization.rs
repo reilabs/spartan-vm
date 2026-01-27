@@ -154,7 +154,6 @@ impl Monomorphization {
                 TaintType::Primitive(Taint::Constant(ConstantTaint::Witness))
             }
             TaintType::NestedImmutable(_, inner) => TaintType::NestedImmutable(
-                // Why is this constant?
                 Taint::Constant(ConstantTaint::Pure),
                 Box::new(self.monomorphize_main_taint(inner)),
             ),

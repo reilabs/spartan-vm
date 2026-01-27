@@ -370,16 +370,6 @@ impl Types {
                 tuple,
                 idx,
             } => {
-                // let array_type = function_info.values.get(array).ok_or_else(|| {
-                //     format!("Array value {:?} not found in type assignments", array)
-                // })?;
-
-                // let element_type = array_type.get_array_element();
-                // function_info.values.insert(
-                //     *result,
-                //     element_type.combine_with_annotation(array_type.get_annotation()),
-                // );
-                // Ok(())
                 if let TupleIdx::Static(sz) = idx {
                     let tuple_type = function_info.values.get(tuple).ok_or_else(|| {
                         format!("Tuple value {:?} not found in type assignments", tuple)
@@ -387,7 +377,7 @@ impl Types {
                     let element_type = tuple_type.get_tuple_element(*sz);
                     function_info.values.insert(
                         *result,
-                        element_type.combine_with_annotation(tuple_type.get_annotation()), // Why combine here
+                        element_type.combine_with_annotation(tuple_type.get_annotation()),
                     );
                     Ok(())
                 } else {

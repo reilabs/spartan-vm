@@ -603,11 +603,7 @@ impl UntaintControlFlow {
                         });
                     }
                     
-                    OpCode::TupleProj {
-                        result: _,
-                        tuple: _,
-                        idx: _,
-                    } => {
+                    OpCode::TupleProj {..} => {
                         new_instructions.push(instruction);
                     } 
                     _ => {

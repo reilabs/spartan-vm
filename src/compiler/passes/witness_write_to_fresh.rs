@@ -152,9 +152,9 @@ impl WitnessWriteToFresh {
                     elem_type: *inner_type.clone(),
                 });
             }    
-            TypeExpr::Tuple(_child_types) => {
+            TypeExpr::Tuple(child_types) => {
                 let mut value_ids = vec![];
-                for child_type in _child_types.iter() {
+                for child_type in child_types.iter() {
                     let new_value_id = Self::generate_fresh_witness_for_parameter(
                         None,
                         child_type.clone(),
@@ -166,7 +166,7 @@ impl WitnessWriteToFresh {
                 instruction_collector.push(OpCode::MkTuple {
                     result: r,
                     elems: value_ids,
-                    element_types: _child_types.clone(),
+                    element_types: child_types.clone(),
                 });
             }    
             _ => panic!("Unsupported parameter type for witness write to fresh. We only support fields and nested arrays of fields for now"), 

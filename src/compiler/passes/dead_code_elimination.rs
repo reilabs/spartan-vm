@@ -161,7 +161,7 @@ impl DCE {
                         | OpCode::Select { .. }
                         | OpCode::ArrayGet { .. }
                         | OpCode::ArraySet { .. }
-                        | OpCode::TupleProj { .. } // Why is it this way??
+                        | OpCode::TupleProj { .. }
                         | OpCode::SlicePush { .. }
                         | OpCode::SliceLen { .. }
                         | OpCode::MkSeq { .. }
