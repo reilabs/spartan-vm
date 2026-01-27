@@ -485,7 +485,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
         // Link with wasm-ld to produce final WASM module with exports
         // Find wasm-ld: try LLVM prefix from env, then fall back to PATH
-        let wasm_ld = std::env::var("LLVM_SYS_211_PREFIX")
+        let wasm_ld = std::env::var("LLVM_SYS_180_PREFIX")
             .map(|prefix| {
                 let path = std::path::PathBuf::from(&prefix).join("bin").join("wasm-ld");
                 if path.exists() {
@@ -507,7 +507,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             .arg(path)
             .arg(&obj_path)
             .status()
-            .expect(&format!("Failed to run wasm-ld (tried: {}). Make sure LLVM with wasm-ld is installed and either in PATH or LLVM_SYS_211_PREFIX is set.", wasm_ld));
+            .expect(&format!("Failed to run wasm-ld (tried: {}). Make sure LLVM with wasm-ld is installed and either in PATH or LLVM_SYS_180_PREFIX is set.", wasm_ld));
 
         if !status.success() {
             panic!("wasm-ld failed with status: {}", status);
