@@ -148,20 +148,26 @@ fn load_inputs(file_path: &Path, driver: &Driver) -> Option<Vec<InputValue>> {
 
 // ── Parent: discover & run all tests ──────────────────────────────────
 
+/// The ordered pipeline steps as they appear in the child's stdout protocol.
+/// Each step lists its key and the index of its prerequisite (None = first step).
+const STEPS: &[(&str, Option<usize>)] = &[
+    ("COMPILED",        None),    // 0
+    ("R1CS",            Some(0)), // 1
+    ("WITGEN_COMPILE",  Some(1)), // 2
+    ("AD_COMPILE",      Some(2)), // 3
+    ("WITGEN_RUN",      Some(3)), // 4
+    ("WITGEN_CORRECT",  Some(4)), // 5
+    ("WITGEN_NOLEAK",   Some(5)), // 6
+    ("AD_RUN",          Some(6)), // 7
+    ("AD_CORRECT",      Some(7)), // 8
+    ("AD_NOLEAK",       Some(8)), // 9
+];
+
 struct TestResult {
     name: String,
-    compiled: Status,
-    r1cs: Status,
+    steps: Vec<Status>,
     rows: Option<usize>,
     cols: Option<usize>,
-    witgen_compile: Status,
-    ad_compile: Status,
-    witgen_run: Status,
-    witgen_correct: Status,
-    witgen_noleak: Status,
-    ad_run: Status,
-    ad_correct: Status,
-    ad_noleak: Status,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -181,6 +187,10 @@ impl Status {
             Status::Skip => "➖",
         }
     }
+}
+
+fn step_index(key: &str) -> Option<usize> {
+    STEPS.iter().position(|(k, _)| *k == key)
 }
 
 fn run_parent(output_path: &Path) {
@@ -225,108 +235,51 @@ fn run_parent(output_path: &Path) {
 }
 
 fn parse_child_output(name: &str, lines: &[String]) -> TestResult {
-    let mut r = TestResult {
-        name: name.to_string(),
-        compiled: Status::Crash,
-        r1cs: Status::Crash,
-        rows: None,
-        cols: None,
-        witgen_compile: Status::Crash,
-        ad_compile: Status::Crash,
-        witgen_run: Status::Crash,
-        witgen_correct: Status::Crash,
-        witgen_noleak: Status::Crash,
-        ad_run: Status::Crash,
-        ad_correct: Status::Crash,
-        ad_noleak: Status::Crash,
-    };
+    let mut steps: Vec<Option<Status>> = vec![None; STEPS.len()];
+    let mut rows = None;
+    let mut cols = None;
 
-    // Track which steps we've seen to distinguish crash vs skip
-    let mut seen_compiled = false;
-    let mut seen_r1cs = false;
-    let mut seen_witgen_compile = false;
-    let mut seen_ad_compile = false;
-    let mut seen_witgen_run = false;
-    let mut seen_witgen_correct = false;
-    let mut seen_witgen_noleak = false;
-    let mut seen_ad_run = false;
-    let mut seen_ad_correct = false;
-
+    // Parse reported lines into the steps vec
     for line in lines {
         let parts: Vec<&str> = line.split(':').collect();
-        match parts.as_slice() {
-            ["COMPILED", "ok"] => { r.compiled = Status::Pass; seen_compiled = true; }
-            ["COMPILED", "fail"] => { r.compiled = Status::Fail; seen_compiled = true; }
-            ["R1CS", "ok", rows, cols] => {
-                r.r1cs = Status::Pass;
-                r.rows = rows.parse().ok();
-                r.cols = cols.parse().ok();
-                seen_r1cs = true;
+        let (key, ok) = match parts.as_slice() {
+            [key, "ok", ..] => (*key, true),
+            [key, "fail"] => (*key, false),
+            _ => continue,
+        };
+        if let Some(idx) = step_index(key) {
+            steps[idx] = Some(if ok { Status::Pass } else { Status::Fail });
+            // R1CS carries extra fields
+            if key == "R1CS" && ok && parts.len() >= 4 {
+                rows = parts[2].parse().ok();
+                cols = parts[3].parse().ok();
             }
-            ["R1CS", "fail"] => { r.r1cs = Status::Fail; seen_r1cs = true; }
-            ["WITGEN_COMPILE", "ok"] => { r.witgen_compile = Status::Pass; seen_witgen_compile = true; }
-            ["WITGEN_COMPILE", "fail"] => { r.witgen_compile = Status::Fail; seen_witgen_compile = true; }
-            ["AD_COMPILE", "ok"] => { r.ad_compile = Status::Pass; seen_ad_compile = true; }
-            ["AD_COMPILE", "fail"] => { r.ad_compile = Status::Fail; seen_ad_compile = true; }
-            ["WITGEN_RUN", "ok"] => { r.witgen_run = Status::Pass; seen_witgen_run = true; }
-            ["WITGEN_RUN", "fail"] => { r.witgen_run = Status::Fail; seen_witgen_run = true; }
-            ["WITGEN_CORRECT", "ok"] => { r.witgen_correct = Status::Pass; seen_witgen_correct = true; }
-            ["WITGEN_CORRECT", "fail"] => { r.witgen_correct = Status::Fail; seen_witgen_correct = true; }
-            ["WITGEN_NOLEAK", "ok"] => { r.witgen_noleak = Status::Pass; seen_witgen_noleak = true; }
-            ["WITGEN_NOLEAK", "fail"] => { r.witgen_noleak = Status::Fail; seen_witgen_noleak = true; }
-            ["AD_RUN", "ok"] => { r.ad_run = Status::Pass; seen_ad_run = true; }
-            ["AD_RUN", "fail"] => { r.ad_run = Status::Fail; seen_ad_run = true; }
-            ["AD_CORRECT", "ok"] => { r.ad_correct = Status::Pass; seen_ad_correct = true; }
-            ["AD_CORRECT", "fail"] => { r.ad_correct = Status::Fail; seen_ad_correct = true; }
-            ["AD_NOLEAK", "ok"] => { r.ad_noleak = Status::Pass; }
-            ["AD_NOLEAK", "fail"] => { r.ad_noleak = Status::Fail; }
-            _ => {}
         }
     }
 
-    // Mark unseen steps as skip (prior step failed) vs crash (process died)
-    // The child stops printing after a failure, so anything after the last seen line
-    // that wasn't reported is a skip if the prior step failed, crash otherwise.
-    if !seen_compiled { /* already Crash */ }
-    else if r.compiled == Status::Fail {
-        r.r1cs = Status::Skip; r.witgen_compile = Status::Skip; r.ad_compile = Status::Skip;
-        r.witgen_run = Status::Skip; r.witgen_correct = Status::Skip; r.witgen_noleak = Status::Skip;
-        r.ad_run = Status::Skip; r.ad_correct = Status::Skip; r.ad_noleak = Status::Skip;
-    } else if !seen_r1cs { /* crash during r1cs */ }
-    else if r.r1cs == Status::Fail {
-        r.witgen_compile = Status::Skip; r.ad_compile = Status::Skip;
-        r.witgen_run = Status::Skip; r.witgen_correct = Status::Skip; r.witgen_noleak = Status::Skip;
-        r.ad_run = Status::Skip; r.ad_correct = Status::Skip; r.ad_noleak = Status::Skip;
-    } else if !seen_witgen_compile { /* crash */ }
-    else if r.witgen_compile == Status::Fail {
-        r.ad_compile = Status::Skip;
-        r.witgen_run = Status::Skip; r.witgen_correct = Status::Skip; r.witgen_noleak = Status::Skip;
-        r.ad_run = Status::Skip; r.ad_correct = Status::Skip; r.ad_noleak = Status::Skip;
-    } else if !seen_ad_compile { /* crash */ }
-    else if r.ad_compile == Status::Fail {
-        r.witgen_run = Status::Skip; r.witgen_correct = Status::Skip; r.witgen_noleak = Status::Skip;
-        r.ad_run = Status::Skip; r.ad_correct = Status::Skip; r.ad_noleak = Status::Skip;
-    } else {
-        // Witgen branch
-        if !seen_witgen_run { /* crash */ }
-        else if r.witgen_run == Status::Fail {
-            r.witgen_correct = Status::Skip; r.witgen_noleak = Status::Skip;
-        } else {
-            if !seen_witgen_correct { /* crash */ }
-            if !seen_witgen_noleak && r.witgen_correct != Status::Crash { /* crash at noleak */ }
-        }
-        // AD branch
-        if !seen_ad_run {
-            // Could be crash or skip depending on witgen noleak status
-            // If witgen branch completed, this is a crash
-        } else if r.ad_run == Status::Fail {
-            r.ad_correct = Status::Skip; r.ad_noleak = Status::Skip;
-        } else {
-            if !seen_ad_correct { /* crash */ }
-        }
-    }
+    // Resolve None entries: if a prerequisite failed or crashed, it's Skip; otherwise Crash.
+    let resolved: Vec<Status> = (0..STEPS.len())
+        .map(|i| {
+            if let Some(s) = steps[i] {
+                return s;
+            }
+            // Not reported — check prerequisite
+            if let Some(prereq) = STEPS[i].1 {
+                if let Some(s) = steps[prereq] {
+                    if s == Status::Fail {
+                        return Status::Skip;
+                    }
+                    // prereq passed but this wasn't reported => crash
+                } else {
+                    // prereq also wasn't reported => skip (cascading)
+                    return Status::Skip;
+                }
+            }
+            Status::Crash
+        })
+        .collect();
 
-    r
+    TestResult { name: name.to_string(), steps: resolved, rows, cols }
 }
 
 fn render_markdown(results: &[TestResult]) -> String {
@@ -340,16 +293,16 @@ fn render_markdown(results: &[TestResult]) -> String {
         md.push_str(&format!(
             "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             r.name,
-            r.compiled.emoji(),
-            r.r1cs.emoji(),
+            r.steps[0].emoji(), // COMPILED
+            r.steps[1].emoji(), // R1CS
             rows,
             cols,
-            r.witgen_run.emoji(),
-            r.witgen_correct.emoji(),
-            r.witgen_noleak.emoji(),
-            r.ad_run.emoji(),
-            r.ad_correct.emoji(),
-            r.ad_noleak.emoji(),
+            r.steps[4].emoji(), // WITGEN_RUN
+            r.steps[5].emoji(), // WITGEN_CORRECT
+            r.steps[6].emoji(), // WITGEN_NOLEAK
+            r.steps[7].emoji(), // AD_RUN
+            r.steps[8].emoji(), // AD_CORRECT
+            r.steps[9].emoji(), // AD_NOLEAK
         ));
     }
 
