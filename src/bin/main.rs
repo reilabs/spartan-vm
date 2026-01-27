@@ -17,15 +17,21 @@ pub struct ProgramOptions {
     #[arg(long, value_name = "PATH", default_value = DEFAULT_NOIR_PROJECT_PATH, value_parser = parse_path)]
     pub root: PathBuf,
 
-    #[arg(long, value_name = "PUBLIC WITNESS", default_value = "", num_args = 0..)]
-    pub public_witness: Vec<String>,
-
     /// Enable debugging mode which will generate graphs
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub draw_graphs: bool,
 
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub pprint_r1cs: bool,
+
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub emit_llvm: bool,
+
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub emit_wasm: bool,
+
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub skip_vm: bool,
 }
 
 /// The main function for the CLI utility, responsible for parsing program
@@ -68,6 +74,28 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
         for r1c in r1cs.constraints.iter() {
             writeln!(r1cs_file, "{}", r1c).unwrap();
         }
+    }
+
+    if args.emit_llvm || args.emit_wasm {
+        let wasm_config = if args.emit_wasm {
+            let wasm_path = driver.get_debug_output_dir().join("witgen.wasm");
+            info!(message = %"Generating WebAssembly", path = %wasm_path.display());
+            Some((wasm_path, &r1cs))
+        } else {
+            None
+        };
+
+        if args.emit_llvm {
+            info!(message = %"Generating LLVM IR");
+        }
+
+        driver.compile_llvm_targets(args.emit_llvm, wasm_config).unwrap();
+    }
+
+    // Skip VM execution if requested
+    if args.skip_vm {
+        info!(message = %"Skipping VM execution as requested");
+        return Ok(ExitCode::SUCCESS);
     }
 
     let file_path = args.root.join("Prover.toml");
