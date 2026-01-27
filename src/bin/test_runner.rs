@@ -28,6 +28,15 @@ fn main() {
         std::process::exit(check_regression(&baseline, &current));
     }
 
+    // Growth check mode: --check-growth <baseline> <current>
+    // Prints markdown to stdout if any rows/cols grew; exits 0 always.
+    if args.len() >= 4 && args[1] == "--check-growth" {
+        let baseline = PathBuf::from(&args[2]);
+        let current = PathBuf::from(&args[3]);
+        check_growth(&baseline, &current);
+        return;
+    }
+
     // Parent mode
     let output_path = parse_output_arg(&args);
     run_parent(&output_path);
@@ -310,52 +319,59 @@ fn parse_child_output(name: &str, lines: &[String]) -> TestResult {
     TestResult { name: name.to_string(), steps, rows, cols }
 }
 
-// ── Regression check ─────────────────────────────────────────────────
+// ── Regression & growth checks ───────────────────────────────────────
 
-fn parse_status_md(path: &Path) -> HashMap<(String, usize), &'static str> {
+struct ParsedRow {
+    name: String,
+    cells: Vec<String>,
+    rows: Option<usize>,
+    cols: Option<usize>,
+}
+
+fn parse_status_rows(path: &Path) -> Vec<ParsedRow> {
     let content = fs::read_to_string(path)
         .unwrap_or_else(|_| panic!("Cannot read {}", path.display()));
-    let content: &'static str = Box::leak(content.into_boxed_str());
-    let mut map = HashMap::new();
+    let mut result = Vec::new();
     for line in content.lines().skip(2) {
-        let cells: Vec<&str> = line.split('|')
-            .map(|s| s.trim())
+        let cells: Vec<String> = line.split('|')
+            .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
         if cells.len() < 11 { continue; }
-        let name = cells[0].to_string();
-        // cols 1..=10 map to the step columns (Compiled, R1CS, Rows, Cols, Witgen, ...)
-        // but Rows(3) and Cols(4) are numeric, skip them for regression
-        for (i, &cell) in cells[1..].iter().enumerate() {
-            map.insert((name.clone(), i), cell);
-        }
+        let rows = cells[3].parse().ok();
+        let cols = cells[4].parse().ok();
+        result.push(ParsedRow {
+            name: cells[0].clone(),
+            cells,
+            rows,
+            cols,
+        });
     }
-    map
+    result
 }
 
 const REGRESSION_COLS: &[(usize, &str)] = &[
-    (0, "Compiled"), (1, "R1CS"),
-    (4, "Witgen"), (5, "Witgen Correct"), (6, "Witgen No Leak"),
-    (7, "AD"), (8, "AD Correct"), (9, "AD No Leak"),
+    (1, "Compiled"), (2, "R1CS"),
+    (5, "Witgen"), (6, "Witgen Correct"), (7, "Witgen No Leak"),
+    (8, "AD"), (9, "AD Correct"), (10, "AD No Leak"),
 ];
 
 fn check_regression(baseline_path: &Path, current_path: &Path) -> i32 {
-    let baseline = parse_status_md(baseline_path);
-    let current = parse_status_md(current_path);
+    let baseline = parse_status_rows(baseline_path);
+    let current = parse_status_rows(current_path);
+
+    let base_map: HashMap<&str, &ParsedRow> = baseline.iter()
+        .map(|r| (r.name.as_str(), r))
+        .collect();
 
     let mut regressions = Vec::new();
-
-    for ((name, col), &cur_val) in &current {
-        let col_name = REGRESSION_COLS.iter().find(|(i, _)| i == col);
-        let col_name = match col_name {
-            Some((_, n)) => n,
-            None => continue, // skip Rows/Cols columns
-        };
-        let base_val = baseline.get(&(name.clone(), *col));
-        // Regression: baseline was ✅ and current is ❌ or 💥
-        if let Some(&"✅") = base_val {
-            if cur_val != "✅" {
-                regressions.push(format!("  {name} / {col_name}: ✅ → {cur_val}"));
+    for cur in &current {
+        let Some(base) = base_map.get(cur.name.as_str()) else { continue };
+        for &(col, col_name) in REGRESSION_COLS {
+            let base_val = &base.cells[col];
+            let cur_val = &cur.cells[col];
+            if base_val == "✅" && cur_val != "✅" {
+                regressions.push(format!("  {} / {}: ✅ → {}", cur.name, col_name, cur_val));
             }
         }
     }
@@ -369,6 +385,48 @@ fn check_regression(baseline_path: &Path, current_path: &Path) -> i32 {
             eprintln!("{r}");
         }
         1
+    }
+}
+
+fn check_growth(baseline_path: &Path, current_path: &Path) {
+    let baseline = parse_status_rows(baseline_path);
+    let current = parse_status_rows(current_path);
+
+    let base_map: HashMap<&str, &ParsedRow> = baseline.iter()
+        .map(|r| (r.name.as_str(), r))
+        .collect();
+
+    let mut warnings = Vec::new();
+    for cur in &current {
+        let Some(base) = base_map.get(cur.name.as_str()) else { continue };
+        if let (Some(br), Some(cr)) = (base.rows, cur.rows) {
+            if cr > br {
+                warnings.push(format!(
+                    "| {} | Constraints | {} | {} | +{} ({:+.1}%) |",
+                    cur.name, br, cr, cr - br, (cr as f64 - br as f64) / br as f64 * 100.0
+                ));
+            }
+        }
+        if let (Some(bc), Some(cc)) = (base.cols, cur.cols) {
+            if cc > bc {
+                warnings.push(format!(
+                    "| {} | Witnesses | {} | {} | +{} ({:+.1}%) |",
+                    cur.name, bc, cc, cc - bc, (cc as f64 - bc as f64) / bc as f64 * 100.0
+                ));
+            }
+        }
+    }
+
+    if warnings.is_empty() {
+        println!("No R1CS constraint or witness count growth detected.");
+        return;
+    }
+
+    println!("**R1CS constraint or witness count growth detected:**\n");
+    println!("| Test | Metric | Before | After | Change |");
+    println!("|------|--------|--------|-------|--------|");
+    for w in &warnings {
+        println!("{w}");
     }
 }
 
