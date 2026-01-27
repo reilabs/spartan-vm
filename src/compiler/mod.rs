@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod codegen;
 pub mod constraint_solver;
+pub mod defunctionalize;
 pub mod flow_analysis;
 pub mod ir;
 pub mod llvm_codegen;
