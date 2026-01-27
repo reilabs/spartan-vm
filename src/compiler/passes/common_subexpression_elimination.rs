@@ -418,6 +418,7 @@ impl CSE {
                     | OpCode::AssertR1C { .. }
                     | OpCode::Call { .. }
                     | OpCode::MkSeq { .. }
+                    | OpCode::MkTuple { .. }
                     | OpCode::ArraySet { .. }
                     | OpCode::SlicePush { .. }
                     | OpCode::SliceLen { .. }
@@ -449,13 +450,6 @@ impl CSE {
                         tuple: _,
                         idx: _,
                     } => {},
-                    OpCode::MkTuple { 
-                        result: _,
-                        elems: _,
-                        element_types: _,
-                    } => {
-                        panic!("MkTuple only appears after freshwitness")
-                    }
                 }
             }
         }

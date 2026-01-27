@@ -1,2 +1,2 @@
-fn main(x: [Field; 2]) {
+fn main(x: [Field; 2], y: u32) {
 }

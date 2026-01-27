@@ -595,7 +595,7 @@ impl ExplicitWitness {
                             elems: _,
                             element_types: _,
                         } => {
-                            panic!("MkTuple only appears after freshwitness")
+                            new_instructions.push(instruction);
                         }
                     }
                 }
