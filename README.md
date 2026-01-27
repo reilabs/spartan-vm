@@ -2,6 +2,10 @@ Spartan VM project
 
 Noir code -> R1CS and witness
 
+## Test status
+
+[Latest test status](https://github.com/reilabs/spartan-vm/blob/main/STATUS.md)
+
 ## How to install
  
 We currently need a custom Noir branch located in the shared parent folder (see Cargo.toml to see where exactly)
