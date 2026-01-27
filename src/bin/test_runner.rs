@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env,
     fs,
     io::{BufRead, BufReader, Write},
@@ -38,7 +39,7 @@ fn parse_output_arg(args: &[String]) -> PathBuf {
 
 // ── Child: run a single test ──────────────────────────────────────────
 
-fn status(line: &str) {
+fn emit(line: &str) {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let _ = writeln!(out, "{line}");
@@ -47,90 +48,126 @@ fn status(line: &str) {
 
 fn run_single(root: PathBuf) {
     // 1. Compile
-    let project = match Project::new(root.clone()) {
-        Ok(p) => p,
-        Err(_) => { status("COMPILED:fail"); return; }
+    emit("START:COMPILED");
+    let driver = (|| {
+        let project = Project::new(root.clone()).ok()?;
+        let mut driver = Driver::new(project, false);
+        driver.run_noir_compiler().ok()?;
+        driver.monomorphize().ok()?;
+        driver.explictize_witness().ok()?;
+        Some(driver)
+    })();
+    let mut driver = match driver {
+        Some(d) => { emit("END:COMPILED:ok"); d }
+        None => { emit("END:COMPILED:fail"); return; }
     };
-    let mut driver = Driver::new(project, false);
-    if driver.run_noir_compiler().is_err() { status("COMPILED:fail"); return; }
-    if driver.monomorphize().is_err() { status("COMPILED:fail"); return; }
-    if driver.explictize_witness().is_err() { status("COMPILED:fail"); return; }
-    status("COMPILED:ok");
 
     // 2. R1CS
+    emit("START:R1CS");
     let r1cs = match driver.generate_r1cs() {
-        Ok(r) => r,
-        Err(_) => { status("R1CS:fail"); return; }
-    };
-    let rows = r1cs.constraints.len();
-    let cols = r1cs.witness_layout.size();
-    status(&format!("R1CS:ok:{rows}:{cols}"));
-
-    // 3. Compile witgen
-    let mut witgen_binary = match driver.compile_witgen() {
-        Ok(b) => b,
-        Err(_) => { status("WITGEN_COMPILE:fail"); return; }
-    };
-    status("WITGEN_COMPILE:ok");
-
-    // 4. Compile AD
-    let mut ad_binary = match driver.compile_ad() {
-        Ok(b) => b,
-        Err(_) => { status("AD_COMPILE:fail"); return; }
-    };
-    status("AD_COMPILE:ok");
-
-    // 5. Load inputs & run witgen
-    let file_path = root.join("Prover.toml");
-    let ordered_params = match load_inputs(&file_path, &driver) {
-        Some(p) => p,
-        None => { status("WITGEN_RUN:fail"); return; }
+        Ok(r) => {
+            let rows = r.constraints.len();
+            let cols = r.witness_layout.size();
+            emit(&format!("END:R1CS:ok:{rows}:{cols}"));
+            Some(r)
+        }
+        Err(_) => { emit("END:R1CS:fail"); None }
     };
 
-    let witgen_result = interpreter::run(
-        &mut witgen_binary,
-        r1cs.witness_layout,
-        r1cs.constraints_layout,
-        &ordered_params,
-    );
-    status("WITGEN_RUN:ok");
+    // 3. Compile witgen  (depends on R1CS)
+    let witgen_binary = r1cs.as_ref().and_then(|_| {
+        emit("START:WITGEN_COMPILE");
+        match driver.compile_witgen() {
+            Ok(b) => { emit("END:WITGEN_COMPILE:ok"); Some(b) }
+            Err(_) => { emit("END:WITGEN_COMPILE:fail"); None }
+        }
+    });
 
-    // 6. Check witgen correctness
-    let correct = r1cs.check_witgen_output(
-        &witgen_result.out_wit_pre_comm,
-        &witgen_result.out_wit_post_comm,
-        &witgen_result.out_a,
-        &witgen_result.out_b,
-        &witgen_result.out_c,
-    );
-    status(if correct { "WITGEN_CORRECT:ok" } else { "WITGEN_CORRECT:fail" });
+    // 4. Compile AD  (depends on R1CS, independent of witgen)
+    let ad_binary = r1cs.as_ref().and_then(|_| {
+        emit("START:AD_COMPILE");
+        match driver.compile_ad() {
+            Ok(b) => { emit("END:AD_COMPILE:ok"); Some(b) }
+            Err(_) => { emit("END:AD_COMPILE:fail"); None }
+        }
+    });
 
-    // 7. Witgen leak check
-    let tmpdir = tempfile::tempdir().unwrap();
-    let leftover = witgen_result.instrumenter.plot(&tmpdir.path().join("wt.png"));
-    status(if leftover == 0 { "WITGEN_NOLEAK:ok" } else { "WITGEN_NOLEAK:fail" });
+    // Load inputs (needed for witgen run)
+    let ordered_params = load_inputs(&root.join("Prover.toml"), &driver);
 
-    // 8. Run AD
-    let mut rng = rand::rngs::StdRng::seed_from_u64(42);
-    let ad_coeffs: Vec<Field> = (0..r1cs.constraints.len())
-        .map(|_| ark_bn254::Fr::rand(&mut rng))
-        .collect();
+    // 5. Run witgen  (depends on WITGEN_COMPILE)
+    let had_witgen_binary = witgen_binary.is_some();
+    let witgen_result = witgen_binary.and_then(|mut binary| {
+        emit("START:WITGEN_RUN");
+        let r1cs = r1cs.as_ref().unwrap();
+        let params = ordered_params.as_ref()?;
+        let result = interpreter::run(
+            &mut binary,
+            r1cs.witness_layout,
+            r1cs.constraints_layout,
+            params,
+        );
+        emit("END:WITGEN_RUN:ok");
+        Some(result)
+    });
+    if had_witgen_binary && witgen_result.is_none() {
+        emit("START:WITGEN_RUN");
+        emit("END:WITGEN_RUN:fail");
+    }
 
-    let (ad_a, ad_b, ad_c, ad_instrumenter) = interpreter::run_ad(
-        &mut ad_binary,
-        &ad_coeffs,
-        r1cs.witness_layout,
-        r1cs.constraints_layout,
-    );
-    status("AD_RUN:ok");
+    // 6. Check witgen correctness  (depends on WITGEN_RUN)
+    if let (Some(result), Some(r1cs)) = (&witgen_result, &r1cs) {
+        emit("START:WITGEN_CORRECT");
+        let correct = r1cs.check_witgen_output(
+            &result.out_wit_pre_comm,
+            &result.out_wit_post_comm,
+            &result.out_a,
+            &result.out_b,
+            &result.out_c,
+        );
+        emit(if correct { "END:WITGEN_CORRECT:ok" } else { "END:WITGEN_CORRECT:fail" });
+    }
 
-    // 9. Check AD correctness
-    let ad_correct = r1cs.check_ad_output(&ad_coeffs, &ad_a, &ad_b, &ad_c);
-    status(if ad_correct { "AD_CORRECT:ok" } else { "AD_CORRECT:fail" });
+    // 7. Witgen leak check  (depends on WITGEN_RUN)
+    if let Some(result) = &witgen_result {
+        emit("START:WITGEN_NOLEAK");
+        let tmpdir = tempfile::tempdir().unwrap();
+        let leftover = result.instrumenter.plot(&tmpdir.path().join("wt.png"));
+        emit(if leftover == 0 { "END:WITGEN_NOLEAK:ok" } else { "END:WITGEN_NOLEAK:fail" });
+    }
 
-    // 10. AD leak check
-    let leftover = ad_instrumenter.plot(&tmpdir.path().join("ad.png"));
-    status(if leftover == 0 { "AD_NOLEAK:ok" } else { "AD_NOLEAK:fail" });
+    // 8. Run AD  (depends on AD_COMPILE, independent of witgen)
+    let ad_result = ad_binary.and_then(|mut binary| {
+        emit("START:AD_RUN");
+        let r1cs = r1cs.as_ref().unwrap();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        let ad_coeffs: Vec<Field> = (0..r1cs.constraints.len())
+            .map(|_| ark_bn254::Fr::rand(&mut rng))
+            .collect();
+        let (ad_a, ad_b, ad_c, ad_instrumenter) = interpreter::run_ad(
+            &mut binary,
+            &ad_coeffs,
+            r1cs.witness_layout,
+            r1cs.constraints_layout,
+        );
+        emit("END:AD_RUN:ok");
+        Some((ad_coeffs, ad_a, ad_b, ad_c, ad_instrumenter))
+    });
+
+    // 9. Check AD correctness  (depends on AD_RUN)
+    if let (Some((coeffs, ad_a, ad_b, ad_c, _)), Some(r1cs)) = (&ad_result, &r1cs) {
+        emit("START:AD_CORRECT");
+        let correct = r1cs.check_ad_output(coeffs, ad_a, ad_b, ad_c);
+        emit(if correct { "END:AD_CORRECT:ok" } else { "END:AD_CORRECT:fail" });
+    }
+
+    // 10. AD leak check  (depends on AD_RUN)
+    if let Some((_, _, _, _, instrumenter)) = &ad_result {
+        emit("START:AD_NOLEAK");
+        let tmpdir = tempfile::tempdir().unwrap();
+        let leftover = instrumenter.plot(&tmpdir.path().join("ad.png"));
+        emit(if leftover == 0 { "END:AD_NOLEAK:ok" } else { "END:AD_NOLEAK:fail" });
+    }
 }
 
 fn load_inputs(file_path: &Path, driver: &Driver) -> Option<Vec<InputValue>> {
@@ -148,28 +185,25 @@ fn load_inputs(file_path: &Path, driver: &Driver) -> Option<Vec<InputValue>> {
 
 // ── Parent: discover & run all tests ──────────────────────────────────
 
-/// The ordered pipeline steps as they appear in the child's stdout protocol.
-/// Each step lists its key and the index of its prerequisite (None = first step).
-const STEPS: &[(&str, Option<usize>)] = &[
-    ("COMPILED",        None),    // 0
-    ("R1CS",            Some(0)), // 1
-    ("WITGEN_COMPILE",  Some(1)), // 2
-    ("AD_COMPILE",      Some(2)), // 3
-    ("WITGEN_RUN",      Some(3)), // 4
-    ("WITGEN_CORRECT",  Some(4)), // 5
-    ("WITGEN_NOLEAK",   Some(5)), // 6
-    ("AD_RUN",          Some(6)), // 7
-    ("AD_CORRECT",      Some(7)), // 8
-    ("AD_NOLEAK",       Some(8)), // 9
+/// The step keys in display order.
+const STEP_KEYS: &[&str] = &[
+    "COMPILED", "R1CS", "WITGEN_COMPILE", "AD_COMPILE",
+    "WITGEN_RUN", "WITGEN_CORRECT", "WITGEN_NOLEAK",
+    "AD_RUN", "AD_CORRECT", "AD_NOLEAK",
 ];
 
 struct TestResult {
     name: String,
-    steps: Vec<Status>,
+    steps: HashMap<String, Status>,
     rows: Option<usize>,
     cols: Option<usize>,
 }
 
+/// Determined purely from child output:
+/// - `started && ended ok` → Pass
+/// - `started && ended fail` → Fail
+/// - `started && no end` → Crash
+/// - `never started` → Skip
 #[derive(Clone, Copy, PartialEq)]
 enum Status {
     Pass,
@@ -187,10 +221,6 @@ impl Status {
             Status::Skip => "➖",
         }
     }
-}
-
-fn step_index(key: &str) -> Option<usize> {
-    STEPS.iter().position(|(k, _)| *k == key)
 }
 
 fn run_parent(output_path: &Path) {
@@ -235,51 +265,42 @@ fn run_parent(output_path: &Path) {
 }
 
 fn parse_child_output(name: &str, lines: &[String]) -> TestResult {
-    let mut steps: Vec<Option<Status>> = vec![None; STEPS.len()];
+    let mut started = HashMap::<String, bool>::new();
+    let mut ended = HashMap::<String, bool>::new();
     let mut rows = None;
     let mut cols = None;
 
-    // Parse reported lines into the steps vec
     for line in lines {
         let parts: Vec<&str> = line.split(':').collect();
-        let (key, ok) = match parts.as_slice() {
-            [key, "ok", ..] => (*key, true),
-            [key, "fail"] => (*key, false),
-            _ => continue,
-        };
-        if let Some(idx) = step_index(key) {
-            steps[idx] = Some(if ok { Status::Pass } else { Status::Fail });
-            // R1CS carries extra fields
-            if key == "R1CS" && ok && parts.len() >= 4 {
-                rows = parts[2].parse().ok();
-                cols = parts[3].parse().ok();
+        match parts.as_slice() {
+            ["START", key] => { started.insert(key.to_string(), true); }
+            ["END", key, "ok", ..] => {
+                ended.insert(key.to_string(), true);
+                if *key == "R1CS" && parts.len() >= 5 {
+                    rows = parts[3].parse().ok();
+                    cols = parts[4].parse().ok();
+                }
             }
+            ["END", key, "fail"] => { ended.insert(key.to_string(), false); }
+            _ => {}
         }
     }
 
-    // Resolve None entries: if a prerequisite failed or crashed, it's Skip; otherwise Crash.
-    let resolved: Vec<Status> = (0..STEPS.len())
-        .map(|i| {
-            if let Some(s) = steps[i] {
-                return s;
-            }
-            // Not reported — check prerequisite
-            if let Some(prereq) = STEPS[i].1 {
-                if let Some(s) = steps[prereq] {
-                    if s == Status::Fail {
-                        return Status::Skip;
-                    }
-                    // prereq passed but this wasn't reported => crash
-                } else {
-                    // prereq also wasn't reported => skip (cascading)
-                    return Status::Skip;
-                }
-            }
-            Status::Crash
+    let steps = STEP_KEYS
+        .iter()
+        .map(|&key| {
+            let status = if let Some(&ok) = ended.get(key) {
+                if ok { Status::Pass } else { Status::Fail }
+            } else if started.contains_key(key) {
+                Status::Crash
+            } else {
+                Status::Skip
+            };
+            (key.to_string(), status)
         })
         .collect();
 
-    TestResult { name: name.to_string(), steps: resolved, rows, cols }
+    TestResult { name: name.to_string(), steps, rows, cols }
 }
 
 fn render_markdown(results: &[TestResult]) -> String {
@@ -288,21 +309,22 @@ fn render_markdown(results: &[TestResult]) -> String {
     md.push_str("|------|----------|------|------|------|--------|----------------|----------------|----|------------|------------|\n");
 
     for r in results {
+        let s = |key: &str| r.steps.get(key).copied().unwrap_or(Status::Skip).emoji();
         let rows = r.rows.map_or("-".to_string(), |v| v.to_string());
         let cols = r.cols.map_or("-".to_string(), |v| v.to_string());
         md.push_str(&format!(
             "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             r.name,
-            r.steps[0].emoji(), // COMPILED
-            r.steps[1].emoji(), // R1CS
+            s("COMPILED"),
+            s("R1CS"),
             rows,
             cols,
-            r.steps[4].emoji(), // WITGEN_RUN
-            r.steps[5].emoji(), // WITGEN_CORRECT
-            r.steps[6].emoji(), // WITGEN_NOLEAK
-            r.steps[7].emoji(), // AD_RUN
-            r.steps[8].emoji(), // AD_CORRECT
-            r.steps[9].emoji(), // AD_NOLEAK
+            s("WITGEN_RUN"),
+            s("WITGEN_CORRECT"),
+            s("WITGEN_NOLEAK"),
+            s("AD_RUN"),
+            s("AD_CORRECT"),
+            s("AD_NOLEAK"),
         ));
     }
 
