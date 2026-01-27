@@ -1,6 +1,6 @@
 use noirc_evaluator::ssa::interpreter::value;
 
-use crate::compiler::{analysis::value_definitions::ValueDefinitions, ir::r#type::{Empty, Type, TypeExpr}, pass_manager::{DataPoint, Pass, PassInfo}, passes::rebuild_main_params, ssa::{Function, LookupTarget, OpCode, SeqType, ValueId}};
+use crate::compiler::{analysis::value_definitions::ValueDefinitions, ir::r#type::{Empty, Type, TypeExpr}, pass_manager::{DataPoint, Pass, PassInfo}, passes::rebuild_main_params, ssa::{CastTarget, Function, LookupTarget, OpCode, SeqType, ValueId}};
 
 pub struct RebuildMainParams {}
 
@@ -75,13 +75,23 @@ impl RebuildMainParams {
                 new_parameters.push((*value_id, typ.clone()))
             } 
             TypeExpr::U(size) => {
-                new_parameters.push((*value_id, Type{expr: TypeExpr::Field, annotation: Empty}));
+                let new_field_id = function.fresh_value();
+                new_parameters.push((new_field_id, Type{expr: TypeExpr::Field, annotation: Empty}));
+                
                 new_instructions.push(
                     OpCode::Rangecheck {
-                        value: *value_id,
+                        value: new_field_id,
                         max_bits: *size,
                     }
-                )
+                );
+
+                new_instructions.push(
+                    OpCode::Cast {
+                        result: *value_id,
+                        value: new_field_id,
+                        target: CastTarget::U(*size),
+                    }
+                );
             }
             TypeExpr::Array(inner, size) => {
                 let mut elems = Vec::new();
