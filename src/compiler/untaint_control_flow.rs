@@ -343,12 +343,26 @@ impl UntaintControlFlow {
                             }
                         }
                     } 
-                    OpCode::MkTuple { 
-                        result: _,
-                        elems: _,
-                        element_types: _,
+                    OpCode::MkTuple {
+                        result: r,
+                        elems: l,
+                        element_types: tps,
                     } => {
-                        panic!("MkTuple only appears after freshwitness")
+                        let r_taint = function_taint.get_value_taint(r);
+                        let child_taints = if let TaintType::Tuple(_, children) = r_taint {
+                            children
+                        } else {
+                            panic!("MkTuple result should have Tuple taint type")
+                        };
+                        OpCode::MkTuple {
+                            result: r,
+                            elems: l,
+                            element_types: tps
+                                .iter()
+                                .zip(child_taints.iter())
+                                .map(|(tp, taint)| self.typify_taint(tp.clone(), taint))
+                                .collect(),
+                        }
                     }
                     OpCode::Todo { payload, results, result_types } => OpCode::Todo {
                         payload,

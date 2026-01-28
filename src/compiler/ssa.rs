@@ -2128,6 +2128,11 @@ impl<V> OpCode<V> {
                 seq_type: _,
                 elem_type: _,
             } => inputs.iter_mut().collect::<Vec<_>>().into_iter(),
+            Self::MkTuple {
+                result: _,
+                elems: inputs,
+                element_types: _,
+            } => inputs.iter_mut().collect::<Vec<_>>().into_iter(),
             Self::Select {
                 result: _,
                 cond: b,
@@ -2201,13 +2206,6 @@ impl<V> OpCode<V> {
                 tuple,
                 idx: _,
             } => vec![tuple].into_iter(),
-            OpCode::MkTuple { 
-                result: _, 
-                elems: _, 
-                element_types: _,
-            } => {
-                panic!("MkTuple only appears after freshwitness")
-            }
             Self::Todo { .. } => vec![].into_iter(),
         }
     }

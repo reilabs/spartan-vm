@@ -403,6 +403,9 @@ impl ExplicitWitness {
                         } => {
                             new_instructions.push(instruction);
                         }
+                        OpCode::MkTuple {..} => {
+                            new_instructions.push(instruction);
+                        }
                         OpCode::Cast {
                             result: _,
                             value: _,
@@ -590,13 +593,6 @@ impl ExplicitWitness {
                                 panic!("Dynamic tuple indexing should not appear here");
                             }
                         },
-                        OpCode::MkTuple { 
-                            result: _,
-                            elems: _,
-                            element_types: _,
-                        } => {
-                            panic!("MkTuple only appears after freshwitness")
-                        }
                     }
                 }
                 block.put_instructions(new_instructions);

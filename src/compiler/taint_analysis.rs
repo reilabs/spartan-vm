@@ -193,6 +193,14 @@ impl TaintType {
                 let inner_union = inner1.union(inner2);
                 TaintType::NestedMutable(t1.union(t2), Box::new(inner_union))
             }
+            (TaintType::Tuple(t1, children1), TaintType::Tuple(t2, children2)) => {
+                let children_union = children1
+                    .iter()
+                    .zip(children2.iter())
+                    .map(|(c1, c2)| c1.union(c2))
+                    .collect();
+                TaintType::Tuple(t1.union(t2), children_union)
+            }
             _ => panic!("Cannot union different taint types"),
         }
     }
@@ -933,12 +941,22 @@ impl TaintAnalysis {
                             panic!("Tuple index should be static at this stage")
                         }
                     },
-                    OpCode::MkTuple { 
-                        result: _, 
-                        elems: _, 
+                    OpCode::MkTuple {
+                        result,
+                        elems: inputs,
                         element_types: _,
                     } => {
-                        panic!("MkTuple only appears after freshwitness")
+                        let inputs_taint = inputs
+                            .iter()
+                            .map(|v| function_taint.value_taints.get(v).unwrap().clone())
+                            .collect::<Vec<_>>();
+                        function_taint.value_taints.insert(
+                            *result,
+                            TaintType::Tuple(
+                                Taint::Constant(ConstantTaint::Pure),
+                                inputs_taint,
+                            ),
+                        );
                     }
                 }
             }
@@ -1104,7 +1122,13 @@ impl TaintAnalysis {
             TypeExpr::BoxedField => {
                 panic!("ICE: WitnessVal should not be present at this stage");
             }
-            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
+            TypeExpr::Tuple(elements) => TaintType::Tuple(
+                Taint::Constant(ConstantTaint::Pure),
+                elements
+                    .iter()
+                    .map(|e| self.construct_pure_taint_for_type(e))
+                    .collect(),
+            )
         }
     }
 }
