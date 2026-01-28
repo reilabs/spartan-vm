@@ -7,6 +7,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+use cargo_metadata::MetadataCommand;
+
 use ark_ff::UniformRand as _;
 use noirc_abi::input_parser::{Format, InputValue};
 use rand::SeedableRng;
@@ -239,23 +241,85 @@ impl Status {
     }
 }
 
-fn run_parent(output_path: &Path) {
-    let tests_dir = PathBuf::from("noir_tests");
-    let mut entries: Vec<PathBuf> = fs::read_dir(&tests_dir)
-        .expect("Cannot read noir_tests/")
+/// Use `cargo metadata` to find the root of the noir git dependency, then
+/// return the path to `test_programs/execution_success` inside it.
+fn find_noir_execution_success_dir() -> Option<PathBuf> {
+    let metadata = MetadataCommand::new().exec().ok()?;
+    // Find any package from the noir git repo (e.g. "nargo").
+    let noir_pkg = metadata.packages.iter().find(|p| {
+        p.source
+            .as_ref()
+            .is_some_and(|s| s.repr.contains("reilabs/noir"))
+    })?;
+    // Walk up from the package manifest to find the repo root containing
+    // `test_programs/execution_success`.
+    let mut dir: &Path = noir_pkg.manifest_path.as_std_path();
+    loop {
+        dir = dir.parent()?;
+        let candidate = dir.join("test_programs").join("execution_success");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+}
+
+/// A test entry with its absolute path and display name.
+struct TestEntry {
+    path: PathBuf,
+    display_name: String,
+}
+
+fn collect_test_dirs(base: &Path, prefix: &str) -> Vec<TestEntry> {
+    let Ok(entries) = fs::read_dir(base) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<TestEntry> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.is_dir())
+        .map(|p| {
+            let test_name = p.file_name().unwrap().to_string_lossy().into_owned();
+            TestEntry {
+                path: p,
+                display_name: format!("{prefix}{test_name}"),
+            }
+        })
         .collect();
-    entries.sort();
+    dirs.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    dirs
+}
+
+fn run_parent(output_path: &Path) {
+    let mut entries: Vec<TestEntry> = Vec::new();
+
+    // 1. Local noir_tests/ directory
+    let local_tests = PathBuf::from("noir_tests");
+    if local_tests.is_dir() {
+        entries.extend(collect_test_dirs(&local_tests, "noir_tests/"));
+    }
+
+    // 2. Noir repo test_programs/execution_success (discovered via cargo-metadata)
+    if let Some(exec_success) = find_noir_execution_success_dir() {
+        eprintln!(
+            "Found noir execution_success tests at: {}",
+            exec_success.display()
+        );
+        entries.extend(collect_test_dirs(
+            &exec_success,
+            "noir/test_programs/execution_success/",
+        ));
+    } else {
+        eprintln!("Warning: could not locate noir test_programs/execution_success via cargo-metadata");
+    }
+
+    assert!(!entries.is_empty(), "No test directories found");
 
     let exe = env::current_exe().expect("Cannot determine own exe path");
     let mut results = Vec::new();
 
-    for dir in &entries {
-        let name = dir.file_name().unwrap().to_string_lossy().to_string();
-        let abs = fs::canonicalize(dir).unwrap();
-        eprintln!("Running: {name}");
+    for entry in &entries {
+        let abs = fs::canonicalize(&entry.path).unwrap();
+        eprintln!("Running: {}", entry.display_name);
 
         let mut child = Command::new(&exe)
             .args(["--run-single", abs.to_str().unwrap()])
@@ -271,7 +335,7 @@ fn run_parent(output_path: &Path) {
             .collect();
 
         let _ = child.wait();
-        results.push(parse_child_output(&name, &lines));
+        results.push(parse_child_output(&entry.display_name, &lines));
     }
 
     let md = render_markdown(&results);
@@ -337,7 +401,7 @@ fn parse_status_rows(path: &Path) -> Vec<ParsedRow> {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        if cells.len() < 11 { continue; }
+        if cells.len() < 13 { continue; }
         let rows = cells[3].parse().ok();
         let cols = cells[4].parse().ok();
         result.push(ParsedRow {
@@ -352,8 +416,8 @@ fn parse_status_rows(path: &Path) -> Vec<ParsedRow> {
 
 const REGRESSION_COLS: &[(usize, &str)] = &[
     (1, "Compiled"), (2, "R1CS"),
-    (5, "Witgen"), (6, "Witgen Correct"), (7, "Witgen No Leak"),
-    (8, "AD"), (9, "AD Correct"), (10, "AD No Leak"),
+    (5, "Witgen Compile"), (6, "Witgen Run VM"), (7, "Witgen Correct"), (8, "Witgen No Leak"),
+    (9, "AD Compile"), (10, "AD Run VM"), (11, "AD Correct"), (12, "AD No Leak"),
 ];
 
 fn check_regression(baseline_path: &Path, current_path: &Path) -> i32 {
@@ -432,23 +496,25 @@ fn check_growth(baseline_path: &Path, current_path: &Path) {
 
 fn render_markdown(results: &[TestResult]) -> String {
     let mut md = String::new();
-    md.push_str("| Test | Compiled | R1CS | Rows | Cols | Witgen | Witgen Correct | Witgen No Leak | AD | AD Correct | AD No Leak |\n");
-    md.push_str("|------|----------|------|------|------|--------|----------------|----------------|----|------------|------------|\n");
+    md.push_str("| Test | Compiled | R1CS | Rows | Cols | Witgen Compile | Witgen Run VM | Witgen Correct | Witgen No Leak | AD Compile | AD Run VM | AD Correct | AD No Leak |\n");
+    md.push_str("|------|----------|------|------|------|----------------|---------------|----------------|----------------|------------|-----------|------------|------------|\n");
 
     for r in results {
         let s = |key: &str| r.steps.get(key).copied().unwrap_or(Status::Skip).emoji();
         let rows = r.rows.map_or("-".to_string(), |v| v.to_string());
         let cols = r.cols.map_or("-".to_string(), |v| v.to_string());
         md.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             r.name,
             s("COMPILED"),
             s("R1CS"),
             rows,
             cols,
+            s("WITGEN_COMPILE"),
             s("WITGEN_RUN"),
             s("WITGEN_CORRECT"),
             s("WITGEN_NOLEAK"),
+            s("AD_COMPILE"),
             s("AD_RUN"),
             s("AD_CORRECT"),
             s("AD_NOLEAK"),
