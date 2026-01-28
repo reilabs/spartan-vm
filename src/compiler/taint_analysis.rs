@@ -219,7 +219,7 @@ impl TaintType {
             TaintType::NestedImmutable(_, inner) => Some(*inner.clone()),
             TaintType::NestedMutable(_, inner) => Some(*inner.clone()),
             TaintType::Primitive(_) => None,
-            TaintType::Tuple(_, _) => None, // TODO: return tuple child taint.
+            TaintType::Tuple(_, _) => panic!("Error: child_taint_type shouldn't be called for Tuple values")
         }
     }
 
@@ -247,7 +247,10 @@ impl TaintType {
                 t.gather_vars(result);
                 inner.gather_vars(result);
             }
-            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
+            TaintType::Tuple(t, field_taints) => {
+                t.gather_vars(result);
+                field_taints.iter().for_each(|inner| inner.gather_vars(result));
+            }
         }
     }
 
@@ -264,7 +267,10 @@ impl TaintType {
                 t.substitute(varmap);
                 inner.substitute(varmap);
             }
-            TaintType::Tuple(_taint, _) => {todo!("Tuple not supported yet")}
+            TaintType::Tuple(t, field_taints) => {
+                t.substitute(varmap);
+                field_taints.iter_mut().for_each(|inner| inner.substitute(varmap));
+            }
         }
     }
 

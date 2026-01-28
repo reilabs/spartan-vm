@@ -28,10 +28,17 @@ struct ArrayData {
 }
 
 #[derive(Clone, Debug)]
+struct TupleData {
+    table_id: Option<usize>,
+    data: Vec<Value>,
+}
+
+#[derive(Clone, Debug)]
 pub enum Value {
     Const(ark_bn254::Fr),
     LC(LC),
     Array(Rc<RefCell<ArrayData>>),
+    Tuple(Rc<RefCell<TupleData>>),
     Ptr(Rc<RefCell<Value>>),
     Invalid,
 }
@@ -149,9 +156,9 @@ impl Value {
         }
     }
 
-    pub fn expect_tuple(&self) -> Rc<RefCell<ArrayData>> {
+    pub fn expect_tuple(&self) -> Rc<RefCell<TupleData>> {
         match self {
-            Value::Array(array) => array.clone(),
+            Value::Tuple(fields) => fields.clone(),
             _ => panic!("expected tuple"),
         }
     }
@@ -178,6 +185,13 @@ impl Value {
         Value::Array(Rc::new(RefCell::new(ArrayData {
             table_id: None,
             data,
+        })))
+    }
+
+    pub fn mk_tuple(fields: Vec<Value>) -> Value {
+        Value::Tuple(Rc::new(RefCell::new(TupleData { 
+            table_id: None, // What is table_id here?
+            data: fields 
         })))
     }
 }
@@ -407,7 +421,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
     }
 
     fn tuple_get(&self, index: usize, _out_type: &Type<V>, _ctx: &mut R1CGen) -> Self {
-        let value = self.expect_array().borrow().data[index as usize].clone();
+        let value = self.expect_tuple().borrow().data[index as usize].clone();
         value
     }
 
@@ -526,7 +540,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
         _ctx: &mut R1CGen,
         _elem_types: &[Type<V>],
     ) -> Self {
-        Value::mk_array(elems)
+        Value::mk_tuple(elems)
     }
 
     fn alloc(_ctx: &mut R1CGen) -> Self {
