@@ -137,7 +137,9 @@ impl Driver {
             self.draw_cfg,
             vec![
                 Box::new(MakeStructAccessStatic::new()),
-                Box::new(DCE::new(dead_code_elimination::Config::pre_r1c())),
+                // Use preserve_blocks() to keep empty intermediate blocks intact.
+                // TODO: Remove once untaint_control_flow handles multiple jumps into merge blocks.
+                Box::new(DCE::new(dead_code_elimination::Config::preserve_blocks())),
             ],
         );
 
