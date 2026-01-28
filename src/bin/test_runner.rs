@@ -401,7 +401,7 @@ fn parse_status_rows(path: &Path) -> Vec<ParsedRow> {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        if cells.len() < 11 { continue; }
+        if cells.len() < 13 { continue; }
         let rows = cells[3].parse().ok();
         let cols = cells[4].parse().ok();
         result.push(ParsedRow {
@@ -416,8 +416,8 @@ fn parse_status_rows(path: &Path) -> Vec<ParsedRow> {
 
 const REGRESSION_COLS: &[(usize, &str)] = &[
     (1, "Compiled"), (2, "R1CS"),
-    (5, "Witgen"), (6, "Witgen Correct"), (7, "Witgen No Leak"),
-    (8, "AD"), (9, "AD Correct"), (10, "AD No Leak"),
+    (5, "Witgen Compile"), (6, "Witgen Run VM"), (7, "Witgen Correct"), (8, "Witgen No Leak"),
+    (9, "AD Compile"), (10, "AD Run VM"), (11, "AD Correct"), (12, "AD No Leak"),
 ];
 
 fn check_regression(baseline_path: &Path, current_path: &Path) -> i32 {
@@ -496,23 +496,25 @@ fn check_growth(baseline_path: &Path, current_path: &Path) {
 
 fn render_markdown(results: &[TestResult]) -> String {
     let mut md = String::new();
-    md.push_str("| Test | Compiled | R1CS | Rows | Cols | Witgen | Witgen Correct | Witgen No Leak | AD | AD Correct | AD No Leak |\n");
-    md.push_str("|------|----------|------|------|------|--------|----------------|----------------|----|------------|------------|\n");
+    md.push_str("| Test | Compiled | R1CS | Rows | Cols | Witgen Compile | Witgen Run VM | Witgen Correct | Witgen No Leak | AD Compile | AD Run VM | AD Correct | AD No Leak |\n");
+    md.push_str("|------|----------|------|------|------|----------------|---------------|----------------|----------------|------------|-----------|------------|------------|\n");
 
     for r in results {
         let s = |key: &str| r.steps.get(key).copied().unwrap_or(Status::Skip).emoji();
         let rows = r.rows.map_or("-".to_string(), |v| v.to_string());
         let cols = r.cols.map_or("-".to_string(), |v| v.to_string());
         md.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             r.name,
             s("COMPILED"),
             s("R1CS"),
             rows,
             cols,
+            s("WITGEN_COMPILE"),
             s("WITGEN_RUN"),
             s("WITGEN_CORRECT"),
             s("WITGEN_NOLEAK"),
+            s("AD_COMPILE"),
             s("AD_RUN"),
             s("AD_CORRECT"),
             s("AD_NOLEAK"),
