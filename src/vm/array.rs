@@ -47,12 +47,13 @@ impl BoxedLayout {
     }
 
     pub fn new_struct(field_sizes: Vec<usize>) -> Self {
+        assert!(field_sizes.len() <= 14);
         let mut size = 0;
         for field_size in &field_sizes {
             assert!(*field_size < 16);
+            assert!(0 < *field_size);
             size = (size << 4) | *field_size;
         }
-        size = (size << 8) | (field_sizes.len() as usize);
         assert!(size < (1 << 56));
         Self::new_sized(DataType::Struct, size)
     }
@@ -83,27 +84,20 @@ impl BoxedLayout {
     }
 
     pub fn struct_field_count(&self) -> usize {
-        let field_count = ((self.0 as usize) >> 8) & 0xFF;
-        field_count
+        self.child_sizes().len()
     }
 
     pub fn struct_size(&self) -> usize {
-        let field_sizes_combined = self.0 as usize >> 16;
-        let mut sum_of_field_sizes_in_8byte_chunks = 0;
-        for i in 0..12 {
-            let field_size = (field_sizes_combined >> (i * 4)) & 0xF;
-            sum_of_field_sizes_in_8byte_chunks += field_size;
-        }   
-        sum_of_field_sizes_in_8byte_chunks
+        self.child_sizes().iter().sum()
     }
 
     pub fn child_sizes(&self) -> Vec<usize> {
-        let field_count = self.struct_field_count();
-        let field_sizes_combined = self.0 as usize >> 16;
         let mut field_sizes = Vec::new();
-        for i in 0..field_count {
-            let field_size = (field_sizes_combined >> ((field_count - i - 1) * 4)) & 0xF;
-            field_sizes.push(field_size);
+        for field_index in 0..14 {
+            let field_size = (self.0 >> ((15 - field_index) * 4) & 0xF) as usize;
+            if field_size > 0 {
+                field_sizes.push(field_size);
+            }
         }   
         field_sizes
     }
