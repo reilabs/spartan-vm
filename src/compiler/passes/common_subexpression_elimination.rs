@@ -443,12 +443,13 @@ impl CSE {
                             *r,
                         ));
                     }
-                    // TODO: Implement expression logic
                     OpCode::TupleProj { 
                         result: _,
                         tuple: _,
                         idx: _,
-                    } => {},
+                    } => {
+                        todo!("Implement TupleProj expression handling")
+                    },
                     OpCode::MkTuple { 
                         result: _,
                         elems: _,
