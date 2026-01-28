@@ -50,12 +50,6 @@ impl MakeStructAccessStatic {
                             tuple, 
                             ref idx
                         } => { 
-                            // tuple_field_index_val_id = flat_array_index_value_id - flat_array_tuple_starting_index_value_id
-                                // flat_array_tuple_starting_index_value_id = tuple_array_index_value_id * stride
-                                    // tuple_array_index_value_id = flat_array_index_value_id / stride
-                                        // flat_array_index_value_id = tuple_array_index_value_id * stride_value_id
-                                        // flat_array_index_value_id = flat_array_tuple_starting_index_value_id_og + tuple_field_index_val_id_og
-                                
                             if let TupleIdx::Dynamic(tuple_field_index_val_id, _tp) = idx {
                                 let tuple_field_index_definition = value_definitions.get_definition(*tuple_field_index_val_id);
                                 if let ValueDefinition::Instruction(_, _, OpCode::BinaryArithOp { 
@@ -69,15 +63,28 @@ impl MakeStructAccessStatic {
                                         kind: BinaryArithOpKind::Mul,
                                         result: _,
                                         lhs: tuple_array_index_value_id,
-                                        rhs: _stride,
+                                        rhs: mul_stride,
                                     }) = tuple_starting_index_definition {
                                         let tuple_array_index_definition = value_definitions.get_definition(*tuple_array_index_value_id);
-                                        if let ValueDefinition::Instruction(_, _, OpCode::BinaryArithOp { 
-                                            kind: BinaryArithOpKind::Div, 
-                                            result: _, 
-                                            lhs: flat_array_index_value_id, 
-                                            rhs: _stride, 
+                                        if let ValueDefinition::Instruction(_, _, OpCode::BinaryArithOp {
+                                            kind: BinaryArithOpKind::Div,
+                                            result: _,
+                                            lhs: flat_array_index_value_id,
+                                            rhs: div_stride,
                                         }) = tuple_array_index_definition {
+                                            // Verify the mul and div use the same stride value
+                                            let mul_stride_def = value_definitions.get_definition(*mul_stride);
+                                            let div_stride_def = value_definitions.get_definition(*div_stride);
+                                            let strides_match = match (mul_stride_def, div_stride_def) {
+                                                (ValueDefinition::Const(mul_const), ValueDefinition::Const(div_const)) => {
+                                                    mul_const == div_const
+                                                }
+                                                _ => false
+                                            };
+                                            if !strides_match {
+                                                new_instructions.push(instruction);
+                                                continue;
+                                            }
                                             let flat_array_index_definition = value_definitions.get_definition(*flat_array_index_value_id);
                                             match flat_array_index_definition {
                                                 ValueDefinition::Instruction(_, _, OpCode::BinaryArithOp { 

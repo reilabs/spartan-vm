@@ -187,7 +187,7 @@ impl RCInsertion {
                             }
                         } else {
                             trace!(
-                                "ArrayGet: result={} of type {:?} does not need RC",
+                                "TupleProj: result={} of type {:?} does not need RC",
                                 result.0,
                                 type_info.get_value_type(*result)
                             );
