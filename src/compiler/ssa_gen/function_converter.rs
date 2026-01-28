@@ -531,7 +531,7 @@ impl FunctionConverter {
                         let converted_array_type = self.type_converter.convert_type(&array_type);
                         
                         match converted_array_type.expr {
-                            TypeExpr::Array(array_inner_type, _size) => {
+                            TypeExpr::Array(array_inner_type, _) | TypeExpr::Slice(array_inner_type) => {
                                 match array_inner_type.expr {
                                     TypeExpr::Tuple(_) => {
                                         let tuple_size = array_inner_type.calculate_type_size();
@@ -578,7 +578,7 @@ impl FunctionConverter {
                                                 index_converted,
                                                 tuple_starting_address,
                                             );
-                                            
+
                                             // Faulty: Fix type?
                                             let tuple_get_result = custom_function.push_tuple_proj(
                                                 custom_block_id,
@@ -587,7 +587,7 @@ impl FunctionConverter {
                                             );
 
                                             self.value_mapper.insert(result_id, tuple_get_result);
-                                        } 
+                                        }
                                     }
                                     _ => {
                                         let array_get_result = custom_function.push_array_get(
@@ -599,7 +599,7 @@ impl FunctionConverter {
                                     }
                                 }
                             }
-                            _ => {todo!("ArrayGet only implemented for TypeExpr::Array for now")}
+                            _ => panic!("ICE: Unexpected type of indexed collection")
                         }
 
                     }
