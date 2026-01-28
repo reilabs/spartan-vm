@@ -30,6 +30,7 @@ pub struct Driver {
     monomorphized_ssa: Option<SSA<ConstantTaint>>,
     explicit_witness_ssa: Option<SSA<ConstantTaint>>,
     r1cs_ssa: Option<SSA<ConstantTaint>>,
+    base_witgen_ssa: Option<SSA<ConstantTaint>>,
     abi: Option<noirc_abi::Abi>,
     draw_cfg: bool,
 }
@@ -53,6 +54,7 @@ impl Driver {
             monomorphized_ssa: None,
             explicit_witness_ssa: None,
             r1cs_ssa: None,
+            base_witgen_ssa: None,
             abi: None,
             draw_cfg,
         }
@@ -296,24 +298,12 @@ impl Driver {
         Ok(r1cs)
     }
 
-    pub fn compile_witgen(&self) -> Result<Vec<u64>, Error> {
-        let mut ssa = self.explicit_witness_ssa.clone().unwrap();
+    pub fn compile_witgen(&mut self) -> Result<Vec<u64>, Error> {
+        self.prepare_base_witgen_ssa();
+        let ssa = self.base_witgen_ssa.as_ref().unwrap();
 
-        let mut pass_manager = PassManager::<ConstantTaint>::new(
-            "witgen".to_string(),
-            self.draw_cfg,
-            vec![
-                Box::new(WitnessWriteToVoid::new()),
-                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
-                Box::new(RCInsertion::new()),
-                Box::new(FixDoubleJumps::new()),
-            ],
-        );
-        pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
-        pass_manager.run(&mut ssa);
-
-        let flow_analysis = FlowAnalysis::run(&ssa);
-        let type_info = Types::new().run(&ssa, &flow_analysis);
+        let flow_analysis = FlowAnalysis::run(ssa);
+        let type_info = Types::new().run(ssa, &flow_analysis);
 
         let codegen = CodeGen::new();
         let program = codegen.run(&ssa, &flow_analysis, &type_info);
@@ -362,5 +352,112 @@ impl Driver {
 
     pub fn abi(&self) -> &noirc_abi::Abi {
         self.abi.as_ref().unwrap()
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn prepare_base_witgen_ssa(&mut self) {
+        if self.base_witgen_ssa.is_some() {
+            return;
+        }
+
+        let mut ssa = self.explicit_witness_ssa.clone().unwrap();
+
+        let mut pass_manager = PassManager::<ConstantTaint>::new(
+            "base_witgen".to_string(),
+            self.draw_cfg,
+            vec![
+                Box::new(WitnessWriteToVoid::new()),
+                Box::new(DCE::new(dead_code_elimination::Config::post_r1c())),
+                Box::new(RCInsertion::new()),
+                Box::new(FixDoubleJumps::new()),
+            ],
+        );
+        pass_manager.set_debug_output_dir(self.get_debug_output_dir().clone());
+        pass_manager.run(&mut ssa);
+
+        self.base_witgen_ssa = Some(ssa);
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn compile_llvm_targets(
+        &mut self,
+        emit_llvm: bool,
+        wasm_config: Option<(std::path::PathBuf, &R1CS)>,
+    ) -> Result<Option<String>, Error> {
+        use crate::compiler::llvm_codegen::LLVMCodeGen;
+        use inkwell::context::Context;
+        use inkwell::OptimizationLevel;
+
+        self.prepare_base_witgen_ssa();
+        let ssa = self.base_witgen_ssa.as_ref().unwrap();
+
+        let flow_analysis = FlowAnalysis::run(ssa);
+        let type_info = Types::new().run(ssa, &flow_analysis);
+
+        let context = Context::create();
+        let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_module");
+        codegen.compile(ssa, &flow_analysis, &type_info);
+
+        let llvm_ir = if emit_llvm {
+            let ir = codegen.get_ir();
+            fs::write(self.get_debug_output_dir().join("witgen.ll"), &ir).unwrap();
+            info!(message = %"LLVM IR generated", ir_size = ir.len());
+            Some(ir)
+        } else {
+            None
+        };
+
+        if let Some((wasm_path, r1cs)) = wasm_config {
+            codegen.write_ir(&wasm_path.with_extension("ll"));
+            codegen.compile_to_wasm(&wasm_path, OptimizationLevel::Aggressive);
+            info!(message = %"WASM object generated", path = %wasm_path.display());
+            self.write_wasm_metadata(&wasm_path, r1cs)?;
+        }
+
+        Ok(llvm_ir)
+    }
+
+    /// Write WASM metadata JSON file
+    fn write_wasm_metadata(&self, wasm_path: &std::path::PathBuf, r1cs: &R1CS) -> Result<(), Error> {
+        let abi = self.abi.as_ref().unwrap();
+
+        // Build parameter info
+        let mut parameters = Vec::new();
+        for param in &abi.parameters {
+            let element_count = count_abi_type_elements(&param.typ);
+            parameters.push(serde_json::json!({
+                "name": param.name,
+                "elementCount": element_count
+            }));
+        }
+
+        let metadata = serde_json::json!({
+            "witnessCount": r1cs.witness_layout.size(),
+            "constraintCount": r1cs.constraints.len(),
+            "parameters": parameters
+        });
+
+        let metadata_path = format!("{}.meta.json", wasm_path.display());
+        fs::write(&metadata_path, serde_json::to_string_pretty(&metadata).unwrap()).unwrap();
+
+        info!(message = %"WASM metadata generated", path = %metadata_path);
+
+        Ok(())
+    }
+}
+
+/// Count the number of field elements in an ABI type
+fn count_abi_type_elements(typ: &noirc_abi::AbiType) -> usize {
+    use noirc_abi::AbiType;
+    match typ {
+        AbiType::Field => 1,
+        AbiType::Integer { .. } => 1,
+        AbiType::Boolean => 1,
+        AbiType::String { length } => *length as usize,
+        AbiType::Array { length, typ } => (*length as usize) * count_abi_type_elements(typ),
+        AbiType::Struct { fields, .. } => {
+            fields.iter().map(|(_, t)| count_abi_type_elements(t)).sum()
+        }
+        AbiType::Tuple { fields } => fields.iter().map(count_abi_type_elements).sum(),
     }
 }
