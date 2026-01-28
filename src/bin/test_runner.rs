@@ -460,32 +460,142 @@ fn check_growth(baseline_path: &Path, current_path: &Path) {
         .map(|r| (r.name.as_str(), r))
         .collect();
 
+    // Track stats for existing tests (tests in both baseline and current)
+    let mut new_checkmarks = 0usize;
+    let mut existing_baseline_checkmarks = 0usize;
+    let mut existing_current_checkmarks = 0usize;
+    let mut existing_total = 0usize;
+
+    // Track stats for all current tests (including new ones)
+    let mut total_current_checkmarks = 0usize;
+    let mut total_current_cells = 0usize;
+
+    // Track constraint/witness decreases (good news)
+    let mut improvements = Vec::new();
+
+    // Track constraint/witness increases (warnings)
     let mut warnings = Vec::new();
+
     for cur in &current {
+        // Count checkmarkable cells in current (all tests)
+        for &(col, _) in REGRESSION_COLS {
+            total_current_cells += 1;
+            if cur.cells[col] == "✅" {
+                total_current_checkmarks += 1;
+            }
+        }
+
         let Some(base) = base_map.get(cur.name.as_str()) else { continue };
+
+        // For existing tests: count baseline/current checkmarks and new checkmarks
+        for &(col, _) in REGRESSION_COLS {
+            existing_total += 1;
+            let base_pass = base.cells[col] == "✅";
+            let cur_pass = cur.cells[col] == "✅";
+            if base_pass {
+                existing_baseline_checkmarks += 1;
+            }
+            if cur_pass {
+                existing_current_checkmarks += 1;
+            }
+            if !base_pass && cur_pass {
+                new_checkmarks += 1;
+            }
+        }
+
+        // Check constraint changes
         if let (Some(br), Some(cr)) = (base.rows, cur.rows) {
             if cr > br {
                 warnings.push(format!(
                     "| {} | Constraints | {} | {} | +{} ({:+.1}%) |",
                     cur.name, br, cr, cr - br, (cr as f64 - br as f64) / br as f64 * 100.0
                 ));
+            } else if cr < br {
+                improvements.push(format!(
+                    "| {} | Constraints | {} | {} | {} ({:.1}%) |",
+                    cur.name, br, cr, cr as i64 - br as i64, (cr as f64 - br as f64) / br as f64 * 100.0
+                ));
             }
         }
+
+        // Check witness changes
         if let (Some(bc), Some(cc)) = (base.cols, cur.cols) {
             if cc > bc {
                 warnings.push(format!(
                     "| {} | Witnesses | {} | {} | +{} ({:+.1}%) |",
                     cur.name, bc, cc, cc - bc, (cc as f64 - bc as f64) / bc as f64 * 100.0
                 ));
+            } else if cc < bc {
+                improvements.push(format!(
+                    "| {} | Witnesses | {} | {} | {} ({:.1}%) |",
+                    cur.name, bc, cc, cc as i64 - bc as i64, (cc as f64 - bc as f64) / bc as f64 * 100.0
+                ));
             }
         }
     }
 
+    // Calculate completion percentages
+    let existing_baseline_pct = if existing_total > 0 {
+        existing_baseline_checkmarks as f64 / existing_total as f64 * 100.0
+    } else {
+        0.0
+    };
+    let existing_current_pct = if existing_total > 0 {
+        existing_current_checkmarks as f64 / existing_total as f64 * 100.0
+    } else {
+        0.0
+    };
+    let existing_pct_change = existing_current_pct - existing_baseline_pct;
+
+    let total_current_pct = if total_current_cells > 0 {
+        total_current_checkmarks as f64 / total_current_cells as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    // Always print overall success rate
+    println!("**Overall success rate on test cases: {:.1}%**\n", total_current_pct);
+
+    // Print positive news section
+    let has_positive_news = new_checkmarks > 0 || existing_pct_change > 0.0 || !improvements.is_empty();
+    if has_positive_news {
+        println!("### Positive Changes\n");
+
+        if new_checkmarks > 0 || existing_pct_change.abs() > 0.001 {
+            if new_checkmarks > 0 {
+                println!("- {} cell(s) turned into checkmarks ✅", new_checkmarks);
+            }
+            if existing_pct_change.abs() > 0.001 {
+                println!(
+                    "- Existing tests: {:.1}% → {:.1}% ({:+.1}%)",
+                    existing_baseline_pct, existing_current_pct, existing_pct_change
+                );
+            }
+            println!();
+        }
+
+        if !improvements.is_empty() {
+            println!("**R1CS constraint or witness count decreased:**\n");
+            println!("| Test | Metric | Before | After | Change |");
+            println!("|------|--------|--------|-------|--------|");
+            for imp in &improvements {
+                println!("{imp}");
+            }
+            println!();
+        }
+    }
+
     if warnings.is_empty() {
-        println!("No R1CS constraint or witness count growth detected.");
+        if !has_positive_news {
+            println!("No test improvements or R1CS constraint/witness count changes detected.");
+        } else {
+            println!("No R1CS constraint or witness count growth detected.");
+        }
         return;
     }
 
+    // Print warnings section
+    println!("### Warnings\n");
     println!("**R1CS constraint or witness count growth detected:**\n");
     println!("| Test | Metric | Before | After | Change |");
     println!("|------|--------|--------|-------|--------|");
