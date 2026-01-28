@@ -1,12 +1,54 @@
-use std::{fs, path::PathBuf};
+use std::{fmt::Display, fs, path::PathBuf};
 
 use crate::compiler::{
     analysis::{
         instrumenter::{self, CostEstimator},
         types::{TypeInfo, Types},
         value_definitions::ValueDefinitions,
-    }, flow_analysis::FlowAnalysis, ir::r#type::Empty, ssa::{DefaultSsaAnnotator, SSA}, taint_analysis::ConstantTaint
+    },
+    flow_analysis::FlowAnalysis,
+    ir::r#type::{CommutativeMonoid, Empty},
+    ssa::{DefaultSsaAnnotator, SSA},
+    taint_analysis::ConstantTaint,
 };
+
+/// Trait for type-specific pass manager behavior.
+/// This allows sharing the common pass manager logic while customizing
+/// constraint instrumentation support per type.
+pub trait PassManagerExt: CommutativeMonoid + Display + Eq + Clone {
+    fn initialize_constraint_instrumentation(
+        pm: &mut PassManager<Self>,
+        ssa: &mut SSA<Self>,
+        pass_info: &PassInfo,
+    );
+}
+
+impl PassManagerExt for ConstantTaint {
+    fn initialize_constraint_instrumentation(
+        pm: &mut PassManager<Self>,
+        ssa: &mut SSA<Self>,
+        pass_info: &PassInfo,
+    ) {
+        if pass_info
+            .needs
+            .contains(&DataPoint::ConstraintInstrumentation)
+        {
+            let cost_estimator = CostEstimator::new();
+            let cost_analysis = cost_estimator.run(ssa, pm.type_info.as_ref().unwrap());
+            pm.constraint_instrumentation = Some(cost_analysis.summarize());
+        }
+    }
+}
+
+impl PassManagerExt for Empty {
+    fn initialize_constraint_instrumentation(
+        _pm: &mut PassManager<Self>,
+        _ssa: &mut SSA<Self>,
+        _pass_info: &PassInfo,
+    ) {
+        // No constraint instrumentation support for Empty
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DataPoint {
@@ -51,11 +93,11 @@ pub struct PassManager<V> {
     phase_label: String,
 }
 
-impl PassManager<ConstantTaint> {
+impl<V: PassManagerExt> PassManager<V> {
     pub fn new(
         phase_label: String,
         draw_cfg: bool,
-        passes: Vec<Box<dyn Pass<ConstantTaint>>>,
+        passes: Vec<Box<dyn Pass<V>>>,
     ) -> Self {
         Self {
             passes,
@@ -79,7 +121,7 @@ impl PassManager<ConstantTaint> {
     }
 
     #[tracing::instrument(skip_all, name = "PassManager::run", fields(phase = %self.phase_label))]
-    pub fn run(&mut self, ssa: &mut SSA<ConstantTaint>) {
+    pub fn run(&mut self, ssa: &mut SSA<V>) {
         if let Some(debug_output_dir) = &self.debug_output_dir {
             if debug_output_dir.exists() {
                 fs::remove_dir_all(&debug_output_dir).unwrap();
@@ -98,8 +140,8 @@ impl PassManager<ConstantTaint> {
     #[tracing::instrument(skip_all, fields(pass = %pass.pass_info().name))]
     fn run_pass(
         &mut self,
-        ssa: &mut SSA<ConstantTaint>,
-        pass: &dyn Pass<ConstantTaint>,
+        ssa: &mut SSA<V>,
+        pass: &dyn Pass<V>,
         pass_index: usize,
     ) {
         self.initialize_pass_data(ssa, &pass.pass_info());
@@ -111,7 +153,7 @@ impl PassManager<ConstantTaint> {
 
     fn output_debug_info(
         &mut self,
-        ssa: &SSA<ConstantTaint>,
+        ssa: &SSA<V>,
         pass_index: usize,
         pass_info: &PassInfo,
     ) {
@@ -136,7 +178,7 @@ impl PassManager<ConstantTaint> {
         }
     }
 
-    fn output_final_debug_info(&mut self, ssa: &mut SSA<ConstantTaint>) {
+    fn output_final_debug_info(&mut self, ssa: &mut SSA<V>) {
         if self.cfg.is_none() {
             self.cfg = Some(FlowAnalysis::run(ssa));
         }
@@ -159,7 +201,7 @@ impl PassManager<ConstantTaint> {
         }
     }
 
-    fn initialize_pass_data(&mut self, ssa: &mut SSA<ConstantTaint>, pass_info: &PassInfo) {
+    fn initialize_pass_data(&mut self, ssa: &mut SSA<V>, pass_info: &PassInfo) {
         if (pass_info.needs.contains(&DataPoint::CFG)
             || pass_info.needs.contains(&DataPoint::Types)
             || pass_info
@@ -173,24 +215,17 @@ impl PassManager<ConstantTaint> {
             || pass_info
                 .needs
                 .contains(&DataPoint::ConstraintInstrumentation))
-            && !self.type_info.is_some()
+            && self.type_info.is_none()
         {
-            self.type_info = Some(Types::new().run(ssa, &self.cfg.as_ref().unwrap()));
+            self.type_info = Some(Types::new().run(ssa, self.cfg.as_ref().unwrap()));
         }
-        if pass_info
-            .needs
-            .contains(&DataPoint::ConstraintInstrumentation)
-        {
-            let cost_estimator = CostEstimator::new();
-            let cost_analysis = cost_estimator.run(ssa, self.type_info.as_ref().unwrap());
-            self.constraint_instrumentation = Some(cost_analysis.summarize());
-        }
+        V::initialize_constraint_instrumentation(self, ssa, pass_info);
         if pass_info.needs.contains(&DataPoint::ValueDefinitions) {
             self.value_definitions = Some(ValueDefinitions::from_ssa(ssa));
         }
     }
 
-    fn tear_down_pass_data(&mut self, pass: &dyn Pass<ConstantTaint>) {
+    fn tear_down_pass_data(&mut self, pass: &dyn Pass<V>) {
         if pass.invalidates_cfg() {
             self.cfg = None;
         }
@@ -268,153 +303,5 @@ impl<V> PassManager<V> {
             None => {}
         }
         self.value_definitions.as_ref().unwrap()
-    }
-}
-
-
-impl PassManager<Empty> {
-    pub fn new(
-        phase_label: String,
-        draw_cfg: bool,
-        passes: Vec<Box<dyn Pass<Empty>>>,
-    ) -> Self {
-        Self {
-            passes,
-            current_pass_info: None,
-            cfg: None,
-            draw_cfg,
-            type_info: None,
-            constraint_instrumentation: None,
-            value_definitions: None,
-            debug_output_dir: None,
-            phase_label,
-        }
-    }
-
-    pub fn set_debug_output_dir(&mut self, debug_output_dir: PathBuf) {
-        let specific_dir = debug_output_dir.join(self.phase_label.clone());
-        if !specific_dir.exists() {
-            fs::create_dir(&specific_dir).unwrap();
-        }
-        self.debug_output_dir = Some(specific_dir);
-    }
-
-    #[tracing::instrument(skip_all, name = "PassManager::run", fields(phase = %self.phase_label))]
-    pub fn run(&mut self, ssa: &mut SSA<Empty>) {
-        if let Some(debug_output_dir) = &self.debug_output_dir {
-            if debug_output_dir.exists() {
-                fs::remove_dir_all(&debug_output_dir).unwrap();
-            }
-            fs::create_dir(&debug_output_dir).unwrap();
-        }
-
-        let passes = std::mem::take(&mut self.passes);
-        for (i, pass) in passes.iter().enumerate() {
-            self.run_pass(ssa, pass.as_ref(), i);
-        }
-        self.passes = passes;
-        self.output_final_debug_info(ssa);
-    }
-
-    #[tracing::instrument(skip_all, fields(pass = %pass.pass_info().name))]
-    fn run_pass(
-        &mut self,
-        ssa: &mut SSA<Empty>,
-        pass: &dyn Pass<Empty>,
-        pass_index: usize,
-    ) {
-        self.initialize_pass_data(ssa, &pass.pass_info());
-        self.output_debug_info(ssa, pass_index, &pass.pass_info());
-        self.current_pass_info = Some(pass.pass_info());
-        pass.run(ssa, self);
-        self.tear_down_pass_data(pass);
-    }
-
-    fn output_debug_info(
-        &mut self,
-        ssa: &SSA<Empty>,
-        pass_index: usize,
-        pass_info: &PassInfo,
-    ) {
-        let Some(debug_output_dir) = &self.debug_output_dir else {
-            return;
-        };
-        if pass_info.needs.contains(&DataPoint::CFG) && self.draw_cfg {
-            if let Some(cfg) = &self.cfg {
-                cfg.generate_images(
-                    debug_output_dir.join(format!("before_pass_{}_{}", pass_index, pass_info.name)),
-                    ssa,
-                    format!("before {}: {}", pass_index, pass_info.name),
-                );
-                fs::write(
-                    debug_output_dir
-                        .join(format!("before_pass_{}_{}", pass_index, pass_info.name))
-                        .join("code.txt"),
-                    format!("{}", ssa.to_string(&DefaultSsaAnnotator)),
-                )
-                .unwrap();
-            }
-        }
-    }
-
-    fn output_final_debug_info(&mut self, ssa: &mut SSA<Empty>) {
-        if self.cfg.is_none() {
-            self.cfg = Some(FlowAnalysis::run(ssa));
-        }
-        let Some(debug_output_dir) = &self.debug_output_dir else {
-            return;
-        };
-        if self.draw_cfg {
-            if let Some(cfg) = &self.cfg {
-                cfg.generate_images(
-                    debug_output_dir.join("final_result"),
-                    ssa,
-                    "final result".to_string(),
-                );
-            }
-            fs::write(
-                debug_output_dir.join("final_result").join("code.txt"),
-                format!("{}", ssa.to_string(&DefaultSsaAnnotator)),
-            )
-            .unwrap();
-        }
-    }
-
-    fn initialize_pass_data(&mut self, ssa: &mut SSA<Empty>, pass_info: &PassInfo) {
-        if (pass_info.needs.contains(&DataPoint::CFG)
-            || pass_info.needs.contains(&DataPoint::Types)
-            || pass_info
-                .needs
-                .contains(&DataPoint::ConstraintInstrumentation))
-            && self.cfg.is_none()
-        {
-            self.cfg = Some(FlowAnalysis::run(ssa));
-        }
-        if (pass_info.needs.contains(&DataPoint::Types)
-            || pass_info
-                .needs
-                .contains(&DataPoint::ConstraintInstrumentation))
-            && !self.type_info.is_some()
-        {
-            self.type_info = Some(Types::new().run(ssa, &self.cfg.as_ref().unwrap()));
-        }
-        if pass_info.needs.contains(&DataPoint::ValueDefinitions) {
-            self.value_definitions = Some(ValueDefinitions::from_ssa(ssa));
-        }
-    }
-
-    fn tear_down_pass_data(&mut self, pass: &dyn Pass<Empty>) {
-        if pass.invalidates_cfg() {
-            self.cfg = None;
-        }
-        if pass.invalidates_types() {
-            self.type_info = None;
-        }
-        if pass.invalidates_constraint_instrumentation() {
-            self.constraint_instrumentation = None;
-        }
-        if pass.invalidates_value_definitions() {
-            self.value_definitions = None;
-        }
     }
 }
