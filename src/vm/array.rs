@@ -4,6 +4,8 @@ use std::{
     ptr,
 };
 
+use tracing::field;
+
 use crate::{
     compiler::Field,
     vm::{bytecode::{AllocationType, VM}, interpreter::InputValueOrdered},
@@ -46,13 +48,14 @@ impl BoxedLayout {
         }
     }
 
-    pub fn new_struct(field_sizes: Vec<usize>) -> Self {
+    pub fn new_struct(field_sizes: Vec<usize>, is_refcounted: Vec<bool>) -> Self {
         assert!(field_sizes.len() <= 14);
         let mut size = 0;
-        for field_size in &field_sizes {
-            assert!(*field_size < 16);
+        for (field_size, is_refcounted) in field_sizes.iter().zip(is_refcounted.iter()) {
+            assert!(*field_size < 8);
             assert!(0 < *field_size);
-            size = (size << 4) | *field_size;
+            let field_metadata = (*is_refcounted as usize) << 3 | *field_size;
+            size = (size << 4) | field_metadata;
         }
         assert!(size < (1 << 56));
         Self::new_sized(DataType::Struct, size)
@@ -91,15 +94,33 @@ impl BoxedLayout {
         self.child_sizes().iter().sum()
     }
 
+    /// Returns the size of each field in the struct.
+    /// Each field's 4-bit metadata encodes: [1 bit: refcounted][3 bits: size]
     pub fn child_sizes(&self) -> Vec<usize> {
-        let mut field_sizes = Vec::new();
+        let mut sizes = Vec::new();
         for field_index in 0..14 {
-            let field_size = (self.0 >> ((15 - field_index) * 4) & 0xF) as usize;
+            let field_metadata = (self.0 >> ((15 - field_index) * 4) & 0xF) as usize;
+            let field_size = field_metadata & 0x7;
             if field_size > 0 {
-                field_sizes.push(field_size);
+                sizes.push(field_size);
             }
-        }   
-        field_sizes
+        }
+        sizes
+    }
+
+    /// Returns a vector indicating which fields are reference-counted (heap-allocated).
+    /// Each field's 4-bit metadata encodes: [1 bit: refcounted][3 bits: size]
+    pub fn refcounted_flags(&self) -> Vec<bool> {
+        let mut flags = Vec::new();
+        for field_index in 0..14 {
+            let field_metadata = (self.0 >> ((15 - field_index) * 4) & 0xF) as usize;
+            let field_size = field_metadata & 0x7;
+            let is_refcounted = (field_metadata & 0x8) != 0;
+            if field_size > 0 {
+                flags.push(is_refcounted);
+            }
+        }
+        flags
     }
 
     pub fn is_boxed_array(&self) -> bool {

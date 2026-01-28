@@ -648,22 +648,42 @@ impl CodeGen {
                         items: args,
                     });
                 }
-                ssa::OpCode::MkTuple { 
-                    result, 
-                    elems, 
-                    element_types 
+                ssa::OpCode::MkTuple {
+                    result,
+                    elems,
+                    element_types
                 } => {
+                    assert!(
+                        element_types.len() <= 14,
+                        "Struct has {} fields, but maximum is 14",
+                        element_types.len()
+                    );
                     let res = layouter.alloc_value(*result, &type_info.get_value_type(*result));
                     let fields = elems
                         .iter()
                         .map(|a| layouter.get_value(*a))
                         .collect::<Vec<_>>();
+                    let field_sizes: Vec<usize> = element_types.iter().map(|elem_type| {
+                        let size = layouter.type_size(elem_type);
+                        assert!(
+                            size <= 8,
+                            "Struct field has {} bits, but maximum is 512",
+                            size * 64
+                        );
+                        size
+                    }).collect();
+                    let reference_counting = element_types.iter().map(
+                        |elem_type| elem_type.is_ref()
+                            || elem_type.is_slice()
+                            || elem_type.is_array()
+                            || elem_type.is_boxed_field()
+                            || elem_type.is_tuple()
+                    ).collect();
                     emitter.push_op(bytecode::OpCode::TupleAlloc {
                         res,
                         meta: vm::array::BoxedLayout::new_struct(
-                            element_types.iter().map(
-                                |elem_type| layouter.type_size(elem_type)    
-                            ).collect()
+                            field_sizes,
+                            reference_counting,
                         ),
                         fields,
                     });

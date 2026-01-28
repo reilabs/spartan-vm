@@ -197,6 +197,21 @@ impl InputValueOrdered {
             }
         }
     }
+
+    pub fn need_reference_counting(&self) -> Vec<bool> {
+        match self {
+            InputValueOrdered::Field(_) => vec![false],
+            InputValueOrdered::String(_) => panic!("Strings are not supported in need_reference_counting"),
+            InputValueOrdered::Vec(_) => vec![true], 
+            InputValueOrdered::Struct(fields) => {
+                let mut reference_counting = vec![];
+                for (_field_name, field_value) in fields {
+                    reference_counting.extend(field_value.need_reference_counting());
+                }
+                reference_counting
+            }
+        }
+    }
 }
 
 #[instrument(skip_all, name = "Interpreter::run")]
@@ -531,7 +546,8 @@ fn write_struct_array(ptr: *mut u64, vec: Vec<InputValueOrdered>, vm: &mut VM) {
     let array = BoxedValue::alloc(array_layout, vm);
 
     let field_sizes = vec[0].field_sizes();
-    let tuple_layout = BoxedLayout::new_struct(field_sizes.clone());
+    let reference_counting = vec[0].need_reference_counting();
+    let tuple_layout = BoxedLayout::new_struct(field_sizes.clone(), reference_counting);
 
     for (array_ind, tuple) in vec.into_iter().enumerate() {
         let array_ptr = array.array_idx(array_ind, 1);
