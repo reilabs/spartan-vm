@@ -2381,10 +2381,13 @@ impl<V> OpCode<V> {
                 tuple,
                 idx,
             } => {
-                if let TupleIdx::Static(_size) = idx {
-                    vec![tuple].into_iter()
-                } else {
-                    panic!("Tuple index must be static")
+                match idx {
+                    TupleIdx::Static(_size) => {
+                        vec![tuple].into_iter()
+                    }
+                    TupleIdx::Dynamic(idx, _tp) => {
+                        vec![tuple, idx].into_iter()
+                    }
                 }
             },
             OpCode::MkTuple { 

@@ -190,7 +190,7 @@ impl Value {
 
     pub fn mk_tuple(fields: Vec<Value>) -> Value {
         Value::Tuple(Rc::new(RefCell::new(TupleData { 
-            table_id: None, // What is table_id here?
+            table_id: None,
             data: fields 
         })))
     }
