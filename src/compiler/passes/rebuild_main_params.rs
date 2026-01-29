@@ -1,6 +1,6 @@
 use noirc_evaluator::ssa::interpreter::value;
 
-use crate::compiler::{analysis::value_definitions::ValueDefinitions, ir::r#type::{Empty, Type, TypeExpr}, pass_manager::{DataPoint, Pass, PassInfo}, passes::rebuild_main_params, ssa::{CastTarget, Function, LookupTarget, OpCode, SeqType, ValueId}};
+use crate::compiler::{analysis::value_definitions::ValueDefinitions, ir::r#type::{Empty, Type, TypeExpr}, pass_manager::{DataPoint, Pass, PassInfo}, passes::rebuild_main_params, ssa::{BinaryArithOpKind, CastTarget, Function, LookupTarget, OpCode, SeqType, ValueId}};
 
 pub struct RebuildMainParams {}
 
@@ -76,12 +76,31 @@ impl RebuildMainParams {
                 let new_field_id = function.fresh_value();
                 new_parameters.push((new_field_id, Type{expr: TypeExpr::Field, annotation: Empty}));
                 
-                new_instructions.push(
-                    OpCode::Rangecheck {
-                        value: new_field_id,
-                        max_bits: *size,
-                    }
-                );
+                if *size == 1 {
+                    // Boolean constraint: x * (x - 1) = 0
+                    let new_field_sq_id = function.fresh_value();
+                    new_instructions.push(
+                        OpCode::BinaryArithOp {
+                            kind: BinaryArithOpKind::Mul,
+                            result: new_field_sq_id,
+                            lhs: new_field_id,
+                            rhs: new_field_id,
+                        }
+                    );
+                    new_instructions.push(
+                        OpCode::AssertEq { 
+                            lhs: new_field_sq_id, 
+                            rhs: new_field_id, 
+                        } 
+                    );
+                } else {
+                    new_instructions.push(
+                        OpCode::Rangecheck {
+                            value: new_field_id,
+                            max_bits: *size,
+                        }
+                    );
+                }
 
                 new_instructions.push(
                     OpCode::Cast {
