@@ -19,7 +19,6 @@ pub trait PassManagerExt: CommutativeMonoid + Display + Eq + Clone {
     fn initialize_constraint_instrumentation(
         pm: &mut PassManager<Self>,
         ssa: &mut SSA<Self>,
-        pass_info: &PassInfo,
     );
 }
 
@@ -27,16 +26,10 @@ impl PassManagerExt for ConstantTaint {
     fn initialize_constraint_instrumentation(
         pm: &mut PassManager<Self>,
         ssa: &mut SSA<Self>,
-        pass_info: &PassInfo,
     ) {
-        if pass_info
-            .needs
-            .contains(&DataPoint::ConstraintInstrumentation)
-        {
-            let cost_estimator = CostEstimator::new();
-            let cost_analysis = cost_estimator.run(ssa, pm.type_info.as_ref().unwrap());
-            pm.constraint_instrumentation = Some(cost_analysis.summarize());
-        }
+        let cost_estimator = CostEstimator::new();
+        let cost_analysis = cost_estimator.run(ssa, pm.type_info.as_ref().unwrap());
+        pm.constraint_instrumentation = Some(cost_analysis.summarize());
     }
 }
 
@@ -44,9 +37,8 @@ impl PassManagerExt for Empty {
     fn initialize_constraint_instrumentation(
         _pm: &mut PassManager<Self>,
         _ssa: &mut SSA<Self>,
-        _pass_info: &PassInfo,
     ) {
-        // No constraint instrumentation support for Empty
+        panic!("Constraint instrumentation is not supported for Empty");
     }
 }
 
@@ -219,7 +211,12 @@ impl<V: PassManagerExt> PassManager<V> {
         {
             self.type_info = Some(Types::new().run(ssa, self.cfg.as_ref().unwrap()));
         }
-        V::initialize_constraint_instrumentation(self, ssa, pass_info);
+        if pass_info
+            .needs
+            .contains(&DataPoint::ConstraintInstrumentation)
+        {
+            V::initialize_constraint_instrumentation(self, ssa);
+        }
         if pass_info.needs.contains(&DataPoint::ValueDefinitions) {
             self.value_definitions = Some(ValueDefinitions::from_ssa(ssa));
         }
