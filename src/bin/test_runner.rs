@@ -9,11 +9,11 @@ use std::{
 
 use cargo_metadata::MetadataCommand;
 
-use ark_ff::UniformRand as _;
+use ark_ff::{Field as ArkField, UniformRand as _};
 use noirc_abi::input_parser::Format;
 use rand::SeedableRng;
-use spartan_vm::{Project, abi_helpers, compiler::Field, driver::Driver, r1cs::R1CS, vm::interpreter};
-use wasmtime::{Caller, Engine, Linker, Memory, Module, Store};
+use spartan_vm::{Project, abi_helpers, compiler::Field, compiler::r1cs_gen::R1CS, driver::Driver, vm::interpreter};
+use wasmtime::{Engine, Linker, Memory, Module, Store};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -226,6 +226,8 @@ fn run_single(root: PathBuf) {
     // 13. Check WASM correctness  (depends on WITGEN_WASM_RUN)
     if let (Some(result), Some(r1cs)) = (&wasm_result, &r1cs) {
         emit("START:WITGEN_WASM_CORRECT");
+
+
         let correct = r1cs.check_witgen_output(
             &result.out_wit_pre_comm,
             &result.out_wit_post_comm,
@@ -258,41 +260,51 @@ struct WasmResult {
     out_c: Vec<Field>,
 }
 
-/// State passed to WASM host functions
-struct WasmState {
-    witness_ptr: u32,
-    a_ptr: u32,
-    b_ptr: u32,
-    c_ptr: u32,
-}
-
-/// Convert 4 i64 limbs to a field element
-fn limbs_to_field(l0: i64, l1: i64, l2: i64, l3: i64) -> Field {
-    use ark_ff::BigInt;
-    ark_bn254::Fr::new_unchecked(BigInt::new([l0 as u64, l1 as u64, l2 as u64, l3 as u64]))
-}
-
-/// Write a field element to WASM memory
-fn write_field_to_memory(memory: &Memory, store: &mut Store<WasmState>, ptr: u32, field: &Field) {
-    let limbs = field.0 .0;
-    let data = memory.data_mut(store);
-    let offset = ptr as usize;
-    data[offset..offset + 8].copy_from_slice(&limbs[0].to_le_bytes());
-    data[offset + 8..offset + 16].copy_from_slice(&limbs[1].to_le_bytes());
-    data[offset + 16..offset + 24].copy_from_slice(&limbs[2].to_le_bytes());
-    data[offset + 24..offset + 32].copy_from_slice(&limbs[3].to_le_bytes());
-}
-
 /// Read a field element from WASM memory
-fn read_field_from_memory(memory: &Memory, store: &Store<WasmState>, ptr: u32) -> Field {
+fn read_field_from_memory(memory: &Memory, store: impl wasmtime::AsContext, ptr: u32) -> Field {
     use ark_ff::BigInt;
-    let data = memory.data(store);
+    let data = memory.data(&store);
     let offset = ptr as usize;
     let l0 = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
     let l1 = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
     let l2 = u64::from_le_bytes(data[offset + 16..offset + 24].try_into().unwrap());
     let l3 = u64::from_le_bytes(data[offset + 24..offset + 32].try_into().unwrap());
     ark_bn254::Fr::new_unchecked(BigInt::new([l0, l1, l2, l3]))
+}
+
+/// Write a field element to WASM memory (writes Montgomery form)
+fn write_field_to_memory(memory: &Memory, store: &mut Store<()>, ptr: u32, field: Field) {
+    // Access the internal Montgomery representation directly
+    // field.0 is the BigInt, field.0.0 is the [u64; 4] limbs in Montgomery form
+    let limbs = field.0.0;
+    let offset = ptr as usize;
+    let data = memory.data_mut(store);
+    data[offset..offset + 8].copy_from_slice(&limbs[0].to_le_bytes());
+    data[offset + 8..offset + 16].copy_from_slice(&limbs[1].to_le_bytes());
+    data[offset + 16..offset + 24].copy_from_slice(&limbs[2].to_le_bytes());
+    data[offset + 24..offset + 32].copy_from_slice(&limbs[3].to_le_bytes());
+}
+
+/// Flatten an InputValueOrdered into a list of Field elements
+fn flatten_input_value(value: &interpreter::InputValueOrdered) -> Vec<Field> {
+    let mut result = Vec::new();
+    match value {
+        interpreter::InputValueOrdered::Field(elem) => result.push(*elem),
+        interpreter::InputValueOrdered::Vec(vec_elements) => {
+            for elem in vec_elements {
+                result.extend(flatten_input_value(elem));
+            }
+        }
+        interpreter::InputValueOrdered::Struct(fields) => {
+            for (_field_name, field_value) in fields {
+                result.extend(flatten_input_value(field_value));
+            }
+        }
+        interpreter::InputValueOrdered::String(_) => {
+            panic!("Strings are not supported in WASM runner")
+        }
+    }
+    result
 }
 
 fn run_wasm(
@@ -304,11 +316,14 @@ fn run_wasm(
     let constraint_count = r1cs.constraints.len();
 
     // Calculate memory layout
+    // Reserve space at the start for the WASM module's stack (default 64KB from wasm-ld)
+    let data_offset: u32 = 65536; // Skip past WASM stack area
     let vm_struct_size: u32 = 16; // 4 x u32 pointers
     let witness_bytes = (witness_count * FIELD_SIZE) as u32;
     let constraint_bytes = (constraint_count * FIELD_SIZE) as u32;
 
-    let witness_ptr = vm_struct_size;
+    let vm_struct_ptr = data_offset;
+    let witness_ptr = vm_struct_ptr + vm_struct_size;
     let a_ptr = witness_ptr + witness_bytes;
     let b_ptr = a_ptr + constraint_bytes;
     let c_ptr = b_ptr + constraint_bytes;
@@ -316,102 +331,47 @@ fn run_wasm(
 
     // Create wasmtime engine and store
     let engine = Engine::default();
-    let mut store = Store::new(&engine, WasmState {
-        witness_ptr,
-        a_ptr,
-        b_ptr,
-        c_ptr,
-    });
+    let mut store = Store::new(&engine, ());
 
     // Create memory (enough pages for our data)
     let pages = ((total_bytes as usize + 65535) / 65536) as u32;
     let memory_type = wasmtime::MemoryType::new(pages, None);
     let memory = Memory::new(&mut store, memory_type)?;
 
-    // Initialize VM struct with buffer pointers
-    {
-        let data = memory.data_mut(&mut store);
-        data[0..4].copy_from_slice(&witness_ptr.to_le_bytes());
-        data[4..8].copy_from_slice(&a_ptr.to_le_bytes());
-        data[8..12].copy_from_slice(&b_ptr.to_le_bytes());
-        data[12..16].copy_from_slice(&c_ptr.to_le_bytes());
+    // Pre-initialize witness buffer like the VM interpreter does:
+    // - witness[0] = Field::ONE (the constant 1)
+    // - witness[1..1+num_inputs] = flattened input values
+    let flat_inputs: Vec<Field> = params.iter().flat_map(flatten_input_value).collect();
+    let num_pre_init = 1 + flat_inputs.len();
+
+    // Write constant ONE at witness[0]
+    write_field_to_memory(&memory, &mut store, witness_ptr, <Field as ArkField>::ONE);
+
+    // Write inputs at witness[1..]
+    for (i, &field) in flat_inputs.iter().enumerate() {
+        let ptr = witness_ptr + ((1 + i) * FIELD_SIZE) as u32;
+        write_field_to_memory(&memory, &mut store, ptr, field);
     }
 
-    // Create linker and add host functions
-    let mut linker = Linker::new(&engine);
+    // Compute the write pointer that skips the pre-initialized entries
+    let witness_write_ptr = witness_ptr + (num_pre_init * FIELD_SIZE) as u32;
 
-    // Register memory
+    // Initialize VM struct with buffer pointers
+    // Note: witness_ptr in struct points to where WASM should START writing (after pre-init)
+    {
+        let data = memory.data_mut(&mut store);
+        let off = vm_struct_ptr as usize;
+        data[off..off+4].copy_from_slice(&witness_write_ptr.to_le_bytes());
+        data[off+4..off+8].copy_from_slice(&a_ptr.to_le_bytes());
+        data[off+8..off+12].copy_from_slice(&b_ptr.to_le_bytes());
+        data[off+12..off+16].copy_from_slice(&c_ptr.to_le_bytes());
+    }
+
+    // Create linker and register imported memory
+    let mut linker = Linker::new(&engine);
     linker.define(&store, "env", "memory", memory)?;
 
-    // __field_mul(result_ptr, a0, a1, a2, a3, b0, b1, b2, b3)
-    let memory_for_mul = memory;
-    linker.func_wrap(
-        "env",
-        "__field_mul",
-        move |mut caller: Caller<'_, WasmState>,
-              result_ptr: u32,
-              a0: i64, a1: i64, a2: i64, a3: i64,
-              b0: i64, b1: i64, b2: i64, b3: i64| {
-            let a = limbs_to_field(a0, a1, a2, a3);
-            let b = limbs_to_field(b0, b1, b2, b3);
-            let result = a * b;
-            write_field_to_memory(&memory_for_mul, &mut caller, result_ptr, &result);
-        },
-    )?;
-
-    // __write_witness(vm_ptr, v0, v1, v2, v3)
-    let memory_for_wit = memory;
-    linker.func_wrap(
-        "env",
-        "__write_witness",
-        move |mut caller: Caller<'_, WasmState>, _vm_ptr: u32, v0: i64, v1: i64, v2: i64, v3: i64| {
-            let ptr = caller.data().witness_ptr;
-            let field = limbs_to_field(v0, v1, v2, v3);
-            write_field_to_memory(&memory_for_wit, &mut caller, ptr, &field);
-            caller.data_mut().witness_ptr = ptr + FIELD_SIZE as u32;
-        },
-    )?;
-
-    // __write_a(vm_ptr, v0, v1, v2, v3)
-    let memory_for_a = memory;
-    linker.func_wrap(
-        "env",
-        "__write_a",
-        move |mut caller: Caller<'_, WasmState>, _vm_ptr: u32, v0: i64, v1: i64, v2: i64, v3: i64| {
-            let ptr = caller.data().a_ptr;
-            let field = limbs_to_field(v0, v1, v2, v3);
-            write_field_to_memory(&memory_for_a, &mut caller, ptr, &field);
-            caller.data_mut().a_ptr = ptr + FIELD_SIZE as u32;
-        },
-    )?;
-
-    // __write_b(vm_ptr, v0, v1, v2, v3)
-    let memory_for_b = memory;
-    linker.func_wrap(
-        "env",
-        "__write_b",
-        move |mut caller: Caller<'_, WasmState>, _vm_ptr: u32, v0: i64, v1: i64, v2: i64, v3: i64| {
-            let ptr = caller.data().b_ptr;
-            let field = limbs_to_field(v0, v1, v2, v3);
-            write_field_to_memory(&memory_for_b, &mut caller, ptr, &field);
-            caller.data_mut().b_ptr = ptr + FIELD_SIZE as u32;
-        },
-    )?;
-
-    // __write_c(vm_ptr, v0, v1, v2, v3)
-    let memory_for_c = memory;
-    linker.func_wrap(
-        "env",
-        "__write_c",
-        move |mut caller: Caller<'_, WasmState>, _vm_ptr: u32, v0: i64, v1: i64, v2: i64, v3: i64| {
-            let ptr = caller.data().c_ptr;
-            let field = limbs_to_field(v0, v1, v2, v3);
-            write_field_to_memory(&memory_for_c, &mut caller, ptr, &field);
-            caller.data_mut().c_ptr = ptr + FIELD_SIZE as u32;
-        },
-    )?;
-
-    // Load the WASM module
+    // Load the WASM module (runtime functions are linked in, no host imports needed)
     let wasm_bytes = fs::read(wasm_path)?;
     let module = Module::new(&engine, &wasm_bytes)?;
 
@@ -423,12 +383,12 @@ fn run_wasm(
     let func = instance.get_func(&mut store, "spartan_main")
         .ok_or("spartan_main not found")?;
 
-    // Prepare arguments: vmPtr (0) followed by all input field element limbs
+    // Prepare arguments: vmPtr followed by all input field element limbs
     let mut args: Vec<wasmtime::Val> = Vec::new();
-    args.push(wasmtime::Val::I32(0)); // vmPtr
+    args.push(wasmtime::Val::I32(vm_struct_ptr as i32)); // vmPtr
 
     for param in params {
-        for field in &param.elements {
+        for field in flatten_input_value(param) {
             let limbs = field.0 .0;
             args.push(wasmtime::Val::I64(limbs[0] as i64));
             args.push(wasmtime::Val::I64(limbs[1] as i64));
@@ -458,7 +418,7 @@ fn run_wasm(
     }
 
     // Split witness into pre-commit and post-commit sections
-    let pre_comm_count = r1cs.witness_layout.pre_commitment_section_size();
+    let pre_comm_count = r1cs.witness_layout.pre_commitment_size();
     let out_wit_pre_comm = out_witness[..pre_comm_count].to_vec();
     let out_wit_post_comm = out_witness[pre_comm_count..].to_vec();
 
@@ -689,7 +649,7 @@ const REGRESSION_COLS: &[(usize, &str)] = &[
     (1, "Compiled"), (2, "R1CS"),
     (5, "Witgen Compile"), (6, "Witgen Run VM"), (7, "Witgen Correct"), (8, "Witgen No Leak"),
     (9, "AD Compile"), (10, "AD Run VM"), (11, "AD Correct"), (12, "AD No Leak"),
-    (13, "WASM Compile"), (14, "WASM Run"), (15, "WASM Correct"),
+    (13, "Witgen WASM Compile"), (14, "Witgen WASM Run"), (15, "Witgen WASM Correct"),
 ];
 
 fn check_regression(baseline_path: &Path, current_path: &Path) -> i32 {
@@ -878,8 +838,8 @@ fn check_growth(baseline_path: &Path, current_path: &Path) {
 
 fn render_markdown(results: &[TestResult]) -> String {
     let mut md = String::new();
-    md.push_str("| Test | Compiled | R1CS | Rows | Cols | Witgen Compile | Witgen Run VM | Witgen Correct | Witgen No Leak | AD Compile | AD Run VM | AD Correct | AD No Leak | WASM Compile | WASM Run | WASM Correct |\n");
-    md.push_str("|------|----------|------|------|------|----------------|---------------|----------------|----------------|------------|-----------|------------|------------|--------------|----------|---------------|\n");
+    md.push_str("| Test | Compiled | R1CS | Rows | Cols | Witgen Compile | Witgen Run VM | Witgen Correct | Witgen No Leak | AD Compile | AD Run VM | AD Correct | AD No Leak | Witgen WASM Compile | Witgen WASM Run | Witgen WASM Correct |\n");
+    md.push_str("|------|----------|------|------|------|----------------|---------------|----------------|----------------|------------|-----------|------------|------------|---------------------|-----------------|---------------------|\n");
 
     for r in results {
         let s = |key: &str| r.steps.get(key).copied().unwrap_or(Status::Skip).emoji();

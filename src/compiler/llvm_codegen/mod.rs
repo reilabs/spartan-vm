@@ -483,6 +483,9 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             .write_to_file(&self.module, FileType::Object, &obj_path)
             .unwrap();
 
+        // Build the wasm-runtime and get the path to the static library
+        let runtime_lib = Self::build_wasm_runtime();
+
         // Link with wasm-ld to produce final WASM module with exports
         // Find wasm-ld: try LLVM prefix from env, then fall back to PATH
         let wasm_ld = std::env::var("LLVM_SYS_180_PREFIX")
@@ -500,12 +503,15 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             .args([
                 "--no-entry",               // No entry point (we call main explicitly)
                 "--export=spartan_main",    // Export main function
-                "--import-memory",     // Import memory from host
-                "--allow-undefined",   // Allow undefined symbols (will be imported)
+                "--import-memory",          // Import memory from host
+                "--stack-first",            // Place stack at start of memory (before data)
+                "-z", "stack-size=65536",   // Explicit stack size (64KB)
+                "--export=__data_end",      // Export data end marker for host to place buffers after
                 "-o",
             ])
             .arg(path)
             .arg(&obj_path)
+            .arg(&runtime_lib)
             .status()
             .expect(&format!("Failed to run wasm-ld (tried: {}). Make sure LLVM with wasm-ld is installed and either in PATH or LLVM_SYS_180_PREFIX is set.", wasm_ld));
 
@@ -515,6 +521,41 @@ impl<'ctx> LLVMCodeGen<'ctx> {
 
         // Clean up object file
         std::fs::remove_file(&obj_path).ok();
+    }
+
+    /// Build the wasm-runtime crate for wasm32 and return path to the static library
+    fn build_wasm_runtime() -> std::path::PathBuf {
+        use std::process::Command;
+
+        // Find workspace root using cargo metadata
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .exec()
+            .expect("Failed to get cargo metadata");
+
+        let workspace_root = metadata.workspace_root.as_std_path();
+        let wasm_runtime_dir = workspace_root.join("wasm-runtime");
+
+        // Build the wasm-runtime for wasm32
+        let status = Command::new("cargo")
+            .current_dir(&wasm_runtime_dir)
+            .args([
+                "build",
+                "--target", "wasm32-unknown-unknown",
+                "--release",
+            ])
+            .status()
+            .expect("Failed to run cargo build for wasm-runtime");
+
+        if !status.success() {
+            panic!("Failed to build wasm-runtime for wasm32");
+        }
+
+        // Return path to the static library
+        workspace_root
+            .join("target")
+            .join("wasm32-unknown-unknown")
+            .join("release")
+            .join("libspartan_wasm_runtime.a")
     }
 
     /// Get the LLVM module

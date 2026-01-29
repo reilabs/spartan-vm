@@ -25,6 +25,7 @@
           buildInputs = with pkgs; [
             (rust-bin.nightly.latest.default.override {
               extensions = [ "rust-src" "rust-analyzer" ];
+              targets = [ "wasm32-unknown-unknown" ];
             })
             llvmPackages.llvm
             llvmPackages.libclang
