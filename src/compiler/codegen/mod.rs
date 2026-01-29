@@ -588,7 +588,6 @@ impl CodeGen {
                             child_sizes: type_info.get_value_type(*t).get_tuple_elements().iter().map(
                                 |elem_type| layouter.type_size(elem_type)    
                             ).collect(),
-                            dummy: 1,
                         });
                     } else {
                         panic!("Dynamic tuple indexing should not appear here");
@@ -635,11 +634,7 @@ impl CodeGen {
                         .iter()
                         .map(|a| layouter.get_value(*a))
                         .collect::<Vec<_>>();
-                    let is_ptr = eltype.is_ref()
-                        || eltype.is_slice()
-                        || eltype.is_array()
-                        || eltype.is_boxed_field()
-                        || eltype.is_tuple();
+                    let is_ptr = eltype.is_heap_allocated();
                     let stride = layouter.type_size(eltype);
                     emitter.push_op(bytecode::OpCode::ArrayAlloc {
                         res,
@@ -673,11 +668,7 @@ impl CodeGen {
                         size
                     }).collect();
                     let reference_counting = element_types.iter().map(
-                        |elem_type| elem_type.is_ref()
-                            || elem_type.is_slice()
-                            || elem_type.is_array()
-                            || elem_type.is_boxed_field()
-                            || elem_type.is_tuple()
+                        |elem_type| elem_type.is_heap_allocated()
                     ).collect();
                     emitter.push_op(bytecode::OpCode::TupleAlloc {
                         res,

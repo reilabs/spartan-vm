@@ -369,8 +369,9 @@ impl BoxedValue {
                     }
                     DataType::Struct => {
                         let child_sizes = layout.child_sizes();
+                        let refcounted_flags = layout.refcounted_flags();
                         for i in 0..layout.struct_field_count() {
-                            if child_sizes[i] == 1 {
+                            if refcounted_flags[i] {
                                 let elem = unsafe { *(item.tuple_idx(i, &child_sizes) as *mut BoxedValue) };
                                 queue.push_back(elem);
                             }
@@ -384,7 +385,6 @@ impl BoxedValue {
                         item.free(vm);
                     }
                     DataType::ADSum => {
-                        println!("freeing ad sum");
                         let ad_sum = unsafe { *item.as_ad_sum() };
                         ad_sum.a.bump_da(ad_sum.da, vm);
                         ad_sum.a.bump_db(ad_sum.db, vm);
@@ -417,7 +417,6 @@ impl BoxedValue {
                 }
             }
         }
-        
         // let rc = self.rc();
         // let rc_val = unsafe { *rc };
         // // println!("dec_array_rc from {} at {:?}", unsafe { *rc }, self.0);
