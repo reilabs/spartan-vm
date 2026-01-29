@@ -208,7 +208,7 @@
 | noir/test_programs/execution_success/regression_3051 | 💥 | ➖ | - | - | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ |
 | noir/test_programs/execution_success/regression_3394 | 💥 | ➖ | - | - | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ |
 | noir/test_programs/execution_success/regression_3607 | 💥 | ➖ | - | - | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ |
-| noir/test_programs/execution_success/regression_3889 | ✅ | ✅ | 0 | 4 | ✅ | ✅ | ✅ | 💥 | ✅ | ➖ | ➖ | ➖ |
+| noir/test_programs/execution_success/regression_3889 | ✅ | ✅ | 0 | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 💥 | ➖ | ➖ |
 | noir/test_programs/execution_success/regression_4088 | ✅ | ✅ | 1 | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | noir/test_programs/execution_success/regression_4124 | ✅ | ✅ | 1 | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | noir/test_programs/execution_success/regression_4202 | ✅ | 💥 | - | - | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ |
