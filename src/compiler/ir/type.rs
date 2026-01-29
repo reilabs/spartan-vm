@@ -277,6 +277,10 @@ impl<V> Type<V> {
         matches!(self.expr, TypeExpr::U(32))
     }
 
+    pub fn is_heap_allocated(&self) -> bool {
+        matches!(self.expr, TypeExpr::BoxedField | TypeExpr::Array(_, _) | TypeExpr::Slice(_) | TypeExpr::Ref(_) | TypeExpr::Tuple(_))
+    }
+
     pub fn has_eq(&self) -> bool {
         matches!(self.expr, TypeExpr::Field | TypeExpr::U(_))
     }

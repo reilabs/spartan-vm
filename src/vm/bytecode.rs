@@ -694,7 +694,6 @@ mod def {
         index: u64,
         child_sizes: &[usize],
         vm: &mut VM,
-        dummy: u64,
     ) {
         let src = tuple.tuple_idx(index as usize, child_sizes);
         unsafe {

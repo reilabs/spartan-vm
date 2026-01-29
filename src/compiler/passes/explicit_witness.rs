@@ -131,18 +131,6 @@ impl ExplicitWitness {
                                         } -> adjusted_diff_wit);
                                         self.gen_witness_rangecheck(function, &mut new_instructions, r.adjusted_diff_wit, s);
                                     }
-                                    // _ => {
-                                    //     new_instructions.push(OpCode::Todo {
-                                    //         payload: format!(
-                                    //             "witness cmp {} {} {:?}",
-                                    //             l_taint, r_taint, kind
-                                    //         ),
-                                    //         results: vec![result],
-                                    //         result_types: vec![
-                                    //             function_type_info.get_value_type(rhs).clone(),
-                                    //         ],
-                                    //     });
-                                    // }
                                 }
                             } else {
                                 new_instructions.push(instruction);
