@@ -267,11 +267,6 @@ pub fn run(
         &mut vm,
     );
 
-    let mut return_scratch = vec![0u64; program[1] as usize];
-    unsafe {
-        *frame.data = return_scratch.as_mut_ptr() as u64;
-    }
-
     for (input_index, el) in flat_inputs.iter().enumerate() {
         unsafe { *(frame.data.offset(2 + (4 * (input_index as isize))) as *mut Field) = el.clone(); }
     }
@@ -413,11 +408,6 @@ pub fn run_ad(
         &mut vm,
     );
 
-    let mut return_scratch = vec![0u64; program[1] as usize];
-    unsafe {
-        *frame.data = return_scratch.as_mut_ptr() as u64;
-    }
-
     // for (i, el) in bytecode::DISPATCH.iter().enumerate() {
     //     println!("{}: {:?}", i, el);
     // }
@@ -428,11 +418,6 @@ pub fn run_ad(
     let pc = unsafe { program.as_mut_ptr().offset(2) };
 
     dispatch(pc, frame, &mut vm);
-
-    let returned_ptr = return_scratch[0] as *mut u64;
-    if !returned_ptr.is_null() {
-        BoxedValue(returned_ptr).dec_rc(&mut vm);
-    }
 
     (out_da, out_db, out_dc, vm.allocation_instrumenter)
 }
