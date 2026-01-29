@@ -579,11 +579,12 @@ impl FunctionConverter {
                                                 tuple_starting_address,
                                             );
 
-                                            // Faulty: Fix type?
+                                            let result_type = noir_function.dfg.values[result_id].get_type();
+                                            let converted_result_type = self.type_converter.convert_type(&result_type);
                                             let tuple_get_result = custom_function.push_tuple_proj(
                                                 custom_block_id,
                                                 tuple_id,
-                                                TupleIdx::Dynamic(tuple_element_index, *array_inner_type),
+                                                TupleIdx::Dynamic(tuple_element_index, converted_result_type),
                                             );
 
                                             self.value_mapper.insert(result_id, tuple_get_result);
