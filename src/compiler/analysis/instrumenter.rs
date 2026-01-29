@@ -390,6 +390,7 @@ impl Value {
 
                 Value::U(*s, bigint.0[0] as u128 | ((bigint.0[1] as u128) << 64))
             }
+            (Value::FWitness, CastTarget::U(s)) => Value::UWitness(*s),
             _ => panic!("Cannot cast {:?} to {:?}", self, cast_target),
         }
     }
