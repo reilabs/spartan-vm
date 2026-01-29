@@ -22,7 +22,7 @@ export interface RunResult {
 // Path to the compiled WASM runtime
 const RUNTIME_WASM_PATH = path.join(
   path.dirname(new URL(import.meta.url).pathname),
-  '../../target/wasm32-unknown-unknown/release/spartan_wasm_runtime.wasm'
+  '../../target/wasm32-unknown-unknown/release/mavros_wasm_runtime.wasm'
 );
 
 let runtimeModule: WebAssembly.Module | null = null;
@@ -105,7 +105,7 @@ export async function run(
   const wasmBytes = fs.readFileSync(wasmPath);
   const module = await WebAssembly.compile(wasmBytes);
   const instance = await WebAssembly.instantiate(module, imports);
-  const exports = instance.exports as { spartan_main: (...args: (number | bigint)[]) => void };
+  const exports = instance.exports as { mavros_main: (...args: (number | bigint)[]) => void };
 
   // Prepare arguments: vmPtr, then flattened input limbs
   const args: (number | bigint)[] = [vmPtr];
@@ -115,7 +115,7 @@ export async function run(
 
   // Execute
   const execStart = performance.now();
-  exports.spartan_main(...args);
+  exports.mavros_main(...args);
   const executionTimeMs = performance.now() - execStart;
 
   // Read output buffers

@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the architecture of the Spartan VM project - a Noir-to-R1CS compiler and witness generation engine for the [Spartan proof system](https://eprint.iacr.org/2019/550).
+This document describes the architecture of Mavros - a Noir-to-R1CS compiler and witness generation engine for the [Spartan proof system](https://eprint.iacr.org/2019/550).
 
 ## Project Purpose
 

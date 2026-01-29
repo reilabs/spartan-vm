@@ -1,6 +1,6 @@
 target
 **/target/**
-spartan_vm_debug
+mavros_debug
 .DS_store
 settings.local.json
 dist
