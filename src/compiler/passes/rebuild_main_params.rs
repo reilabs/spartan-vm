@@ -78,8 +78,8 @@ impl RebuildMainParams {
                 
                 if *size == 1 {
                     // Boolean constraint: x * (x - 1) = 0
-                    let one = function.push_field_const(ark_bn254::Fr::from(0));
-                    let zero = function.push_field_const(ark_bn254::Fr::from(1));
+                    let zero = function.push_field_const(ark_bn254::Fr::from(0));
+                    let one = function.push_field_const(ark_bn254::Fr::from(1));
                     let x_sub_1 = function.fresh_value();
                     let x_times_x_sub_1 = function.fresh_value();
                     new_instructions.push(
