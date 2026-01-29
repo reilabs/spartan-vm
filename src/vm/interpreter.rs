@@ -7,7 +7,7 @@ use std::{
 
 use ark_ff::{AdditiveGroup, BigInt, Field as _, Fp, PrimeField as _};
 use noirc_abi::input_parser::InputValue;
-use tracing::instrument;
+use tracing::{field, instrument};
 
 use crate::{
     compiler::{
@@ -174,12 +174,52 @@ fn fix_multiplicities_section(wit: &mut [Field], witness_layout: WitnessLayout) 
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum InputValueOrdered {
+    Field(Field),
+    String(String),
+    Vec(Vec<InputValueOrdered>),
+    Struct(Vec<(String, InputValueOrdered)>),
+}
+
+impl InputValueOrdered {
+    pub fn field_sizes (&self) -> Vec<usize> {
+        match self {
+            InputValueOrdered::Field(_) => vec![4],
+            InputValueOrdered::String(_) => panic!("Strings are not supported in element_size"),
+            InputValueOrdered::Vec(_) => vec![1],
+            InputValueOrdered::Struct(fields) => {
+                let mut total_size = vec![];
+                for (_field_name, field_value) in fields {
+                    total_size.extend(field_value.field_sizes());
+                }
+                total_size
+            }
+        }
+    }
+
+    pub fn need_reference_counting(&self) -> Vec<bool> {
+        match self {
+            InputValueOrdered::Field(_) => vec![false],
+            InputValueOrdered::String(_) => panic!("Strings are not supported in need_reference_counting"),
+            InputValueOrdered::Vec(_) => vec![true], 
+            InputValueOrdered::Struct(fields) => {
+                let mut reference_counting = vec![];
+                for (_field_name, field_value) in fields {
+                    reference_counting.extend(field_value.need_reference_counting());
+                }
+                reference_counting
+            }
+        }
+    }
+}
+
 #[instrument(skip_all, name = "Interpreter::run")]
 pub fn run(
     program: &[u64],
     witness_layout: WitnessLayout,
     constraints_layout: ConstraintsLayout,
-    ordered_inputs: &[InputValue],
+    ordered_inputs: &[InputValueOrdered],
 ) -> WitgenResult {
     let mut out_a = vec![Field::ZERO; constraints_layout.size()];
     let mut out_b = vec![Field::ZERO; constraints_layout.size()];
@@ -229,7 +269,7 @@ pub fn run(
 
     let mut current_offset = 2 as isize ;
     for (_, el) in ordered_inputs.iter().enumerate() {
-        unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el, &mut vm)};
+        unsafe{current_offset += write_input_value(frame.data.offset(current_offset), el.clone(), &mut vm)};
     }
 
     let mut program = program.to_vec();
@@ -383,50 +423,150 @@ pub fn run_ad(
     (out_da, out_db, out_dc, vm.allocation_instrumenter)
 }
 
-
-fn write_input_value(ptr: *mut u64, el: &InputValue, vm: &mut VM) -> isize {
+fn dissolve_struct(el: InputValueOrdered) -> InputValueOrdered {
     match el {
-        InputValue::Field(field_element) => {
-            unsafe{*(ptr as *mut Field) = field_element.into_repr();}
-            return 4;
-        }
-        InputValue::Vec(vec) => {
-            if vec.len() == 0 {
-                let layout = BoxedLayout::array(0, false);
-                let array = BoxedValue::alloc(layout, vm);
-                unsafe{*(ptr as *mut BoxedValue) = array;}
-            } else {
-                match &vec[0] {
-                    InputValue::Field(_) => {
-                        let layout = BoxedLayout::array(vec.len() * 4, false);
-                        let array = BoxedValue::alloc(layout, vm);
-                        
-                        for (elem_ind, input) in vec.iter().enumerate() {
-                            let ptr = array.array_idx(elem_ind, 4);
-                            write_input_value(ptr, input, vm);
-                        }
-                        unsafe{*(ptr as *mut BoxedValue) = array;}
+        InputValueOrdered::Field(_) => el,
+        InputValueOrdered::String(_) => panic!("Strings are not supported in dissolve_struct"),
+        InputValueOrdered::Struct(fields) => {
+            let new_fields = fields
+                .into_iter()
+                .flat_map(|(field_name, field_value)| {
+                    let dissolved = dissolve_struct(field_value);
+                    match dissolved {
+                        InputValueOrdered::Struct(nested_fields) => nested_fields
+                            .into_iter()
+                            .map(|(nested_field_name, nested_value)| (field_name.clone()+"_"+&nested_field_name, nested_value))
+                            .collect::<Vec<_>>(),
+                        other => vec![(field_name, other)],
                     }
-                    InputValue::Vec(_) => {
-                        let layout = BoxedLayout::array(vec.len(), true);
-                        let array = BoxedValue::alloc(layout, vm);
-                        
-                        for (elem_ind, input) in vec.iter().enumerate() {
-                            let ptr = array.array_idx(elem_ind, 1);
-                            write_input_value(ptr, input, vm);
-                        }
-                        unsafe{*(ptr as *mut BoxedValue) = array;}
-                    }
-                    _ => panic!("Only field elements are supported in arrays for now"),
-                }
-            }
-            return 1;
+                })
+                .collect();
+            InputValueOrdered::Struct(new_fields)
         }
-        _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
+        InputValueOrdered::Vec(vec) => dissolve_vec(vec),
     }
 }
 
-fn flatten_param_vec(vec: &[InputValue]) -> Vec<Field> {
+fn dissolve_vec(vec: Vec<InputValueOrdered>) -> InputValueOrdered {
+    if vec.is_empty() {
+        return InputValueOrdered::Vec(vec![]);
+    }
+
+    let first_dissolved = dissolve_struct(vec[0].clone());
+    match first_dissolved {
+        InputValueOrdered::Struct(fields) if fields.len() == 1 => {
+            // Single-field struct array: unwrap to just the field values
+            let dissolved_vec = vec
+                .into_iter()
+                .map(|inner_struct| {
+                    let dissolved = dissolve_struct(inner_struct);
+                    match dissolved {
+                        InputValueOrdered::Struct(mut nested_fields) => nested_fields.remove(0).1,
+                        _ => panic!("Expected struct inside array of structs"),
+                    }
+                })
+                .collect();
+            InputValueOrdered::Vec(dissolved_vec)
+        }
+        InputValueOrdered::Struct(_) => {
+            // Multi-field struct array: dissolve each element
+            let dissolved_vec = vec.into_iter().map(dissolve_struct).collect();
+            InputValueOrdered::Vec(dissolved_vec)
+        }
+        _ => InputValueOrdered::Vec(vec),
+    }
+}
+
+fn write_input_value(ptr: *mut u64, el: InputValueOrdered, vm: &mut VM) -> isize {
+    let el = dissolve_struct(el);
+    match el {
+        InputValueOrdered::Field(field_element) => {
+            unsafe { *(ptr as *mut Field) = field_element; }
+            4
+        }
+        InputValueOrdered::Vec(vec) => {
+            write_vec_input(ptr, vec, vm);
+            1
+        }
+        InputValueOrdered::Struct(elements) => {
+            let mut accumulated_offset = 0;
+            for (_field_name, input) in elements {
+                unsafe {
+                    accumulated_offset += write_input_value(ptr.offset(accumulated_offset), input, vm);
+                }
+            }
+            accumulated_offset
+        }
+        InputValueOrdered::String(_) => panic!(
+            "Unsupported input value type. We only support Field and nested Vecs of Fields for now."
+        ),
+    }
+}
+
+fn write_vec_input(ptr: *mut u64, vec: Vec<InputValueOrdered>, vm: &mut VM) {
+    if vec.is_empty() {
+        let layout = BoxedLayout::array(0, false);
+        let array = BoxedValue::alloc(layout, vm);
+        unsafe { *(ptr as *mut BoxedValue) = array; }
+        return;
+    }
+
+    match &vec[0] {
+        InputValueOrdered::Field(_) => write_field_array(ptr, vec, vm),
+        InputValueOrdered::Vec(_) => write_nested_array(ptr, vec, vm),
+        InputValueOrdered::Struct(_) => write_struct_array(ptr, vec, vm),
+        InputValueOrdered::String(_) => panic!("Unexpected input value type in array"),
+    }
+}
+
+fn write_field_array(ptr: *mut u64, vec: Vec<InputValueOrdered>, vm: &mut VM) {
+    let layout = BoxedLayout::array(vec.len() * 4, false);
+    let array = BoxedValue::alloc(layout, vm);
+
+    for (elem_ind, input) in vec.into_iter().enumerate() {
+        let elem_ptr = array.array_idx(elem_ind, 4);
+        write_input_value(elem_ptr, input, vm);
+    }
+    unsafe { *(ptr as *mut BoxedValue) = array; }
+}
+
+fn write_nested_array(ptr: *mut u64, vec: Vec<InputValueOrdered>, vm: &mut VM) {
+    let layout = BoxedLayout::array(vec.len(), true);
+    let array = BoxedValue::alloc(layout, vm);
+
+    for (elem_ind, input) in vec.into_iter().enumerate() {
+        let elem_ptr = array.array_idx(elem_ind, 1);
+        write_input_value(elem_ptr, input, vm);
+    }
+    unsafe { *(ptr as *mut BoxedValue) = array; }
+}
+
+fn write_struct_array(ptr: *mut u64, vec: Vec<InputValueOrdered>, vm: &mut VM) {
+    let array_layout = BoxedLayout::array(vec.len(), true);
+    let array = BoxedValue::alloc(array_layout, vm);
+
+    let field_sizes = vec[0].field_sizes();
+    let reference_counting = vec[0].need_reference_counting();
+    let tuple_layout = BoxedLayout::new_struct(field_sizes.clone(), reference_counting);
+
+    for (array_ind, tuple) in vec.into_iter().enumerate() {
+        let array_ptr = array.array_idx(array_ind, 1);
+        let new_tuple = BoxedValue::alloc(tuple_layout, vm);
+
+        let tuple_fields = match tuple {
+            InputValueOrdered::Struct(f) => f,
+            _ => panic!("Expected struct inside array of structs"),
+        };
+
+        for (elem_ind, (_field_name, input)) in tuple_fields.into_iter().enumerate() {
+            write_input_value(new_tuple.tuple_idx(elem_ind, &field_sizes), input, vm);
+        }
+        unsafe { *(array_ptr as *mut BoxedValue) = new_tuple; }
+    }
+    unsafe { *(ptr as *mut BoxedValue) = array; }
+}
+
+fn flatten_param_vec(vec: &[InputValueOrdered]) -> Vec<Field> {
     let mut encoded_value = Vec::new();
     for elem in vec {
         encoded_value.extend(flatten_params(elem));
@@ -434,17 +574,25 @@ fn flatten_param_vec(vec: &[InputValue]) -> Vec<Field> {
     encoded_value
 }
 
-fn flatten_params(value: &InputValue) -> Vec<Field> {
+fn flatten_params(value: &InputValueOrdered) -> Vec<Field> {
     let mut encoded_value = Vec::new();
     match value {
-        InputValue::Field(elem) => encoded_value.push(elem.into_repr()),
+        InputValueOrdered::Field(elem) => encoded_value.push(*elem),
 
-        InputValue::Vec(vec_elements) => {
+        InputValueOrdered::Vec(vec_elements) => {
             for elem in vec_elements {
                 encoded_value.extend(flatten_params(elem));
             }
         }
-        _ => panic!("Unsupported input value type. We only support Field and nested Vecs of Fields for now."),
+
+        InputValueOrdered::Struct(fields) => {
+            for (_field_name, field_value) in fields {
+                encoded_value.extend(flatten_params(field_value));
+            }
+        }
+        _ => panic!(
+            "Unsupported input value type. We only support Field, Vecs, and Structs for now."
+        ),
     }
     encoded_value
 }

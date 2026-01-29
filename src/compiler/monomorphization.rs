@@ -157,6 +157,10 @@ impl Monomorphization {
                 Taint::Constant(ConstantTaint::Pure),
                 Box::new(self.monomorphize_main_taint(inner)),
             ),
+            TaintType::Tuple(_, child_taints) => TaintType::Tuple(
+                Taint::Constant(ConstantTaint::Pure), 
+                child_taints.iter().map(|child_taint| self.monomorphize_main_taint(child_taint)).collect()
+            ),
             _ => panic!("Pointer in main signature: {:?}", taint),
         }
     }

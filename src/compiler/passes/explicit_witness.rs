@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use ark_ff::{AdditiveGroup, Field as _};
-use ssa_builder::{ssa_append, ssa_snippet};
+use ssa_builder::{ssa_append};
 
 use crate::compiler::{
     Field,
@@ -130,18 +130,6 @@ impl ExplicitWitness {
                                             constrain(lr_diff, adjustment, adjusted_diff_wit);
                                         } -> adjusted_diff_wit);
                                         self.gen_witness_rangecheck(function, &mut new_instructions, r.adjusted_diff_wit, s);
-                                    }
-                                    _ => {
-                                        new_instructions.push(OpCode::Todo {
-                                            payload: format!(
-                                                "witness cmp {} {} {:?}",
-                                                l_taint, r_taint, kind
-                                            ),
-                                            results: vec![result],
-                                            result_types: vec![
-                                                function_type_info.get_value_type(rhs).clone(),
-                                            ],
-                                        });
                                     }
                                 }
                             } else {
@@ -291,6 +279,7 @@ impl ExplicitWitness {
                                         TypeExpr::Ref(_) => {
                                             todo!("ref types in witnessed array reads")
                                         }
+                                        TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
                                     };
 
                                     ssa_append!(function, new_instructions, {
@@ -400,6 +389,9 @@ impl ExplicitWitness {
                             seq_type: _,
                             elem_type: _,
                         } => {
+                            new_instructions.push(instruction);
+                        }
+                        OpCode::MkTuple {..} => {
                             new_instructions.push(instruction);
                         }
                         OpCode::Cast {
@@ -571,6 +563,24 @@ impl ExplicitWitness {
                                 result_types,
                             });
                         }
+                        OpCode::TupleProj {
+                            result,
+                            tuple,
+                            idx,
+                        } => {
+                            if let crate::compiler::ssa::TupleIdx::Static(index) = idx {
+                                let tuple_taint =
+                                    function_type_info.get_value_type(tuple).get_annotation();
+                                assert!(tuple_taint.is_pure());
+                                new_instructions.push(OpCode::TupleProj {
+                                    result,
+                                    tuple,
+                                    idx: crate::compiler::ssa::TupleIdx::Static(index),
+                                });
+                            } else {
+                                panic!("Dynamic tuple indexing should not appear here");
+                            }
+                        },
                     }
                 }
                 block.put_instructions(new_instructions);

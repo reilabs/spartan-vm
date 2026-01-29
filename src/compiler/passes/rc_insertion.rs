@@ -161,6 +161,40 @@ impl RCInsertion {
                         }
                         new_instructions.push(instruction.clone());
                     }
+                    OpCode::TupleProj { 
+                        result, tuple, idx: _,
+                    } => {
+                        if !currently_live.contains(tuple) {
+                            // The tuple dies here, so we drop it _after_ the read.
+                            new_instructions.push(OpCode::MemOp {
+                                kind: MemOp::Drop,
+                                value: *tuple
+                            });
+                        }
+                        if self.needs_rc(type_info, result) {
+                            if currently_live.contains(result) {
+                                // The result gets a bump to the RC counter, because
+                                // it's now both accessed here and in the array.
+                                new_instructions.push(OpCode::MemOp {
+                                    kind: MemOp::Bump(1),
+                                    value: *result
+                                });
+                            } else {
+                                panic!(
+                                    "ICE: Result of TupleProj (V{} in block {}) is not live. This is a bug.",
+                                    result.0, block_id.0
+                                )
+                            }
+                        } else {
+                            trace!(
+                                "TupleProj: result={} of type {:?} does not need RC",
+                                result.0,
+                                type_info.get_value_type(*result)
+                            );
+                        }
+                        new_instructions.push(instruction.clone());
+                        currently_live.insert(*tuple);
+                    }
                     // These need to mark their inputs as live, but do not need to bump RCs
                     OpCode::AssertEq { lhs: _, rhs: _ }
                     | OpCode::Cast { result: _, value: _, target: _ }
@@ -457,6 +491,42 @@ impl RCInsertion {
                     OpCode::Rangecheck { value: _, max_bits: _ } => {
                         new_instructions.push(instruction);
                     }
+                    OpCode::MkTuple { 
+                        result, 
+                        elems, 
+                        element_types, 
+                    } => {
+                        new_instructions.push(instruction.clone());
+                        for (input, group) in elems
+                            .iter()
+                            .zip(element_types)
+                            .sorted_by_key(|(v, _)| v.0)
+                            .chunk_by(|(v, _)| *v)
+                            .into_iter()
+                        {
+                            let items: Vec<_> = group.collect();
+                            let count = items.iter().count();
+                            let (_, elem_type) = items[0];
+                            
+                            if self.type_needs_rc(elem_type) {
+                                let mut count = count;
+                                if !currently_live.contains(input) {
+                                    count -= 1;
+                                }
+                                if count > 0 {
+                                    new_instructions.push(OpCode::MemOp {
+                                        kind: MemOp::Bump(count),
+                                        value: *input
+                                    });
+                                }
+                            }
+                        }
+                            
+                        if !currently_live.contains(result) {
+                            panic!("ICE: Result of MkTuple is immediately dropped. This is a bug.")
+                        }
+                        currently_live.extend(elems);
+                    }
                 }
             }
             for param in block.get_parameter_values() {
@@ -550,6 +620,7 @@ impl RCInsertion {
             TypeExpr::Field => false,
             TypeExpr::U(_) => false,
             TypeExpr::BoxedField => true,
+            TypeExpr::Tuple(_) => true,
         }
     }
 }

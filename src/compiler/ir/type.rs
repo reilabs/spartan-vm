@@ -32,6 +32,7 @@ pub enum TypeExpr<V> {
     Array(Box<Type<V>>, usize),
     Slice(Box<Type<V>>),
     Ref(Box<Type<V>>),
+    Tuple(Vec<Type<V>>),
 }
 
 impl<V> TypeExpr<V> {
@@ -59,6 +60,7 @@ impl<V> TypeExpr<V> {
             TypeExpr::Array(inner, size) => TypeExpr::Array(Box::new(inner.as_pure()), *size),
             TypeExpr::Slice(inner) => TypeExpr::Slice(Box::new(inner.as_pure())),
             TypeExpr::Ref(inner) => TypeExpr::Ref(Box::new(inner.as_pure())),
+            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
         }
     }
 }
@@ -97,6 +99,9 @@ impl<V: Display> Display for Type<V> {
                 write!(f, "Ref{}<{}>", format_annotation(&self.annotation), inner)
             }
             TypeExpr::BoxedField => write!(f, "BoxedField{}", format_annotation(&self.annotation)),
+            TypeExpr::Tuple(elements) => write!(
+                f, "Tuple{}<{}>", format_annotation(&self.annotation), elements.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join(", ")
+            ),
         }
     }
 }
@@ -132,6 +137,14 @@ impl<V: CommutativeMonoid + Display> Type<V> {
             TypeExpr::Field => false,
             TypeExpr::U(_) => false,
             TypeExpr::BoxedField => false,
+            TypeExpr::Tuple(elements) => {
+                for elem in elements {
+                    if elem.contains_ptrs() {
+                        return true;
+                    }
+                }
+                false
+            }
         }
     }
 }
@@ -149,6 +162,20 @@ impl<V: Clone> Type<V> {
         match &self.expr {
             TypeExpr::Ref(inner) => *inner.clone(),
             _ => panic!("Type is not a reference"),
+        }
+    }
+
+    pub fn get_tuple_element(&self, index: usize) -> Self {
+        match &self.expr {
+            TypeExpr::Tuple(elements) => elements[index].clone(),
+            _ => panic!("Type is not a tuple"),
+        }
+    }
+
+    pub fn get_tuple_elements(&self) -> &Vec<Self> {
+        match &self.expr {
+            TypeExpr::Tuple(elements) => elements,
+            _ => panic!("Type is not a tuple"),
         }
     }
 }
@@ -210,6 +237,13 @@ impl<V> Type<V> {
             annotation,
         }
     }
+    
+    pub fn tuple_of(types: Vec<Self>, annotation: V) -> Self {
+        Type {
+            expr: TypeExpr::Tuple(types),
+            annotation,
+        }
+    }
 
     pub fn is_numeric(&self) -> bool {
         matches!(self.expr, TypeExpr::U(_) | TypeExpr::Field)
@@ -243,12 +277,20 @@ impl<V> Type<V> {
         matches!(self.expr, TypeExpr::U(32))
     }
 
+    pub fn is_heap_allocated(&self) -> bool {
+        matches!(self.expr, TypeExpr::BoxedField | TypeExpr::Array(_, _) | TypeExpr::Slice(_) | TypeExpr::Ref(_) | TypeExpr::Tuple(_))
+    }
+
     pub fn has_eq(&self) -> bool {
         matches!(self.expr, TypeExpr::Field | TypeExpr::U(_))
     }
 
     pub fn is_ref(&self) -> bool {
         matches!(self.expr, TypeExpr::Ref(_))
+    }
+
+    pub fn is_tuple(&self) -> bool {
+        matches!(self.expr, TypeExpr::Tuple(_))
     }
 
     pub fn equal_up_to_annotation(&self, other: &Self) -> bool {
@@ -278,6 +320,17 @@ impl<V> Type<V> {
         Type {
             expr: self.expr.as_pure(),
             annotation: V2::empty(),
+        }
+    }
+
+    pub fn calculate_type_size(&self) -> usize {
+        match &self.expr {
+            TypeExpr::Field => 1,
+            TypeExpr::Array(inner, size) => 1,
+            TypeExpr::Tuple(inner_types) => {
+                inner_types.iter().map(|t| t.calculate_type_size()).sum()
+            }
+            _ => panic!("Cannot currently calculate size for types other than Field, Array, and Tuple"),
         }
     }
 }

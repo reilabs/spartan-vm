@@ -10,9 +10,9 @@ use std::{
 use cargo_metadata::MetadataCommand;
 
 use ark_ff::UniformRand as _;
-use noirc_abi::input_parser::{Format, InputValue};
+use noirc_abi::input_parser::Format;
 use rand::SeedableRng;
-use spartan_vm::{Project, compiler::Field, driver::Driver, vm::interpreter};
+use spartan_vm::{Project, abi_helpers, compiler::Field, driver::Driver, vm::interpreter};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -71,6 +71,7 @@ fn run_single(root: PathBuf) {
         let project = Project::new(root.clone()).ok()?;
         let mut driver = Driver::new(project, false);
         driver.run_noir_compiler().ok()?;
+        driver.make_struct_access_static().ok()?;
         driver.monomorphize().ok()?;
         driver.explictize_witness().ok()?;
         Some(driver)
@@ -188,17 +189,12 @@ fn run_single(root: PathBuf) {
     }
 }
 
-fn load_inputs(file_path: &Path, driver: &Driver) -> Option<Vec<InputValue>> {
+fn load_inputs(file_path: &Path, driver: &Driver) -> Option<Vec<interpreter::InputValueOrdered>> {
     let ext = file_path.extension().and_then(|e| e.to_str())?;
     let format = Format::from_ext(ext)?;
     let contents = fs::read_to_string(file_path).ok()?;
     let params = format.parse(&contents, driver.abi()).ok()?;
-    let abi = driver.abi();
-    let mut ordered = Vec::new();
-    for name in abi.parameter_names() {
-        ordered.push(params.get(name)?.clone());
-    }
-    Some(ordered)
+    Some(abi_helpers::ordered_params_from_btreemap(driver.abi(), &params))
 }
 
 // ── Parent: discover & run all tests ──────────────────────────────────

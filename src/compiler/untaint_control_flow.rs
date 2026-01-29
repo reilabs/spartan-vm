@@ -5,7 +5,7 @@ use tracing::{Level, instrument};
 use crate::compiler::{
     flow_analysis::FlowAnalysis,
     ir::r#type::{Empty, Type, TypeExpr},
-    ssa::{BinaryArithOpKind, Block, Function, FunctionId, OpCode, SSA, Terminator},
+    ssa::{BinaryArithOpKind, Block, Function, FunctionId, OpCode, SSA, Terminator, TupleIdx},
     taint_analysis::{ConstantTaint, FunctionTaint, Taint, TaintAnalysis, TaintType},
 };
 
@@ -325,6 +325,45 @@ impl UntaintControlFlow {
                         keys,
                         results,
                     },
+                    OpCode::TupleProj {
+                        result,
+                        tuple,
+                        idx,
+                    } => {
+                        match &idx {
+                            TupleIdx::Static(sz) => {
+                                OpCode::TupleProj { 
+                                    result, 
+                                    tuple, 
+                                    idx: TupleIdx::Static(*sz),
+                                }
+                            }
+                            TupleIdx::Dynamic{..} => {
+                                panic!("Dynamic TupleProj should not appear here")
+                            }
+                        }
+                    } 
+                    OpCode::MkTuple {
+                        result: r,
+                        elems: l,
+                        element_types: tps,
+                    } => {
+                        let r_taint = function_taint.get_value_taint(r);
+                        let child_taints = if let TaintType::Tuple(_, children) = r_taint {
+                            children
+                        } else {
+                            panic!("MkTuple result should have Tuple taint type")
+                        };
+                        OpCode::MkTuple {
+                            result: r,
+                            elems: l,
+                            element_types: tps
+                                .iter()
+                                .zip(child_taints.iter())
+                                .map(|(tp, taint)| self.typify_taint(tp.clone(), taint))
+                                .collect(),
+                        }
+                    }
                     OpCode::Todo { payload, results, result_types } => OpCode::Todo {
                         payload,
                         results,
@@ -577,6 +616,10 @@ impl UntaintControlFlow {
                             result_types 
                         });
                     }
+                    
+                    OpCode::TupleProj {..} => {
+                        new_instructions.push(instruction);
+                    } 
                     _ => {
                         panic!("Unhandled instruction {:?}", instruction);
                     }
@@ -754,6 +797,12 @@ impl UntaintControlFlow {
                 expr: TypeExpr::Ref(Box::new(self.typify_taint(*inner, inner_taint.as_ref()))),
                 annotation: top.expect_constant(),
             },
+            (TypeExpr::Tuple(child_types), TaintType::Tuple(top, child_taints)) => Type {
+                expr: TypeExpr::Tuple(
+                    child_types.iter().zip(child_taints.iter()).map(|(child_type, child_taint)| self.typify_taint(child_type.clone(), child_taint)).collect()
+                ),
+                annotation: top.expect_constant(),
+            },
             (tp, taint) => panic!("Unexpected type {:?} with taint {:?}", tp, taint),
         }
     }
@@ -784,6 +833,7 @@ impl UntaintControlFlow {
                 expr: TypeExpr::BoxedField,
                 annotation: ConstantTaint::Pure,
             },
+            TypeExpr::Tuple(_elements) => {todo!("Tuples not supported yet")}
         }
     }
 }

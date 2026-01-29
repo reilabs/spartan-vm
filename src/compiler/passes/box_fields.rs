@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use noirc_evaluator::ssa::ir::dfg;
+
 use crate::compiler::{
     ir::r#type::{Type, TypeExpr},
     pass_manager::{DataPoint, Pass},
@@ -441,7 +443,24 @@ impl BoxFields {
                         | OpCode::MulConst { .. }
                         | OpCode::BumpD { .. }
                         | OpCode::DLookup { .. }
+                        | OpCode::TupleProj { .. }
                         | OpCode::Todo { .. } => new_instructions.push(instruction),
+                        OpCode::MkTuple { 
+                            result,
+                            elems,
+                            element_types,
+                        } => {
+                            let boxed_element_types: Vec<Type<ConstantTaint>> = element_types
+                                .iter()
+                                .map(|tp| self.box_fields_in_type(tp))
+                                .collect();
+                            let i = OpCode::MkTuple {
+                                result,
+                                elems: elems.clone(),
+                                element_types: boxed_element_types,
+                            };
+                            new_instructions.push(i);    
+                        }
                     };
                 }
                 block.put_instructions(new_instructions);
@@ -465,6 +484,13 @@ impl BoxFields {
                 Type::ref_of(self.box_fields_in_type(inner), tp.annotation.clone())
             }
             TypeExpr::BoxedField => tp.clone(),
+            TypeExpr::Tuple(elements) => {
+                let boxed_elements = elements
+                    .iter()
+                    .map(|elem| self.box_fields_in_type(elem))
+                    .collect();
+                Type::tuple_of(boxed_elements, tp.annotation.clone())
+            }
         }
     }
 }

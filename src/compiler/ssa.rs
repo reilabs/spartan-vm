@@ -3,7 +3,7 @@ use crate::compiler::{
     ssa_gen::SsaConverter,
 };
 use itertools::Itertools;
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, vec};
 use crate::compiler::taint_analysis::ConstantTaint;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -184,6 +184,13 @@ pub enum Const {
     U(usize, u128),
     Field(ark_bn254::Fr),
     BoxedField(ark_bn254::Fr),
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum TupleIdx<V>
+{
+  Static(usize),
+  Dynamic(ValueId, Type<V>),
 }
 
 #[derive(Clone)]
@@ -604,6 +611,26 @@ impl<V: Clone> Function<V> {
         value_id
     }
 
+    pub fn push_tuple_proj(
+        &mut self,
+        block_id: BlockId,
+        tuple: ValueId,
+        index: TupleIdx<V>,
+    ) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::TupleProj {
+                result: value_id,
+                tuple: tuple,
+                idx: index,
+            });
+        value_id
+    }
+
     pub fn push_array_set(
         &mut self,
         block_id: BlockId,
@@ -684,6 +711,26 @@ impl<V: Clone> Function<V> {
                 elems: elements,
                 seq_type: stp,
                 elem_type: typ,
+            });
+        value_id
+    }
+
+    pub fn push_mk_tuple(
+        &mut self,
+        block_id: BlockId,
+        elements: Vec<ValueId>,
+        types: Vec<Type<V>>,
+    ) -> ValueId {
+        let value_id = ValueId(self.next_value);
+        self.next_value += 1;
+        self.blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .instructions
+            .push(OpCode::MkTuple {
+                result: value_id,
+                elems: elements,
+                element_types: types,
             });
         value_id
     }
@@ -1064,6 +1111,7 @@ pub enum CmpKind {
 pub enum SeqType {
     Array(usize),
     Slice,
+    Tuple,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1107,6 +1155,7 @@ impl Display for SeqType {
         match self {
             SeqType::Array(len) => write!(f, "Array[{}]", len),
             SeqType::Slice => write!(f, "Slice"),
+            SeqType::Tuple => write!(f, "Tuple"),
         }
     }
 }
@@ -1116,6 +1165,7 @@ impl SeqType {
         match self {
             SeqType::Array(len) => Type::array_of(t, *len, V::empty()),
             SeqType::Slice => Type::slice_of(t, V::empty()),
+            SeqType::Tuple => panic!("Tuple type requires multiple element types"),
         }
     }
 }
@@ -1306,6 +1356,16 @@ pub enum OpCode<V> {
         result: ValueId,
         offset: u64,
         result_type: Type<V>,
+    },
+    TupleProj {
+        result: ValueId, 
+        tuple: ValueId, 
+        idx: TupleIdx<V>,
+    },
+    MkTuple {
+        result: ValueId,
+        elems: Vec<ValueId>,
+        element_types: Vec<Type<V>>,
     },
     Todo {
         payload: String,
@@ -1718,6 +1778,45 @@ impl<V: Display + Clone> OpCode<V> {
                     typ
                 )
             }
+            OpCode::TupleProj { 
+                result,
+                tuple,
+                idx,
+            } => {
+                match idx {
+                    TupleIdx::Dynamic(idx, _tp) => {
+                        format!(
+                            "v{}{} = v{}.v{}",
+                            result.0,
+                            annotate(value_annotator, *result),
+                            tuple.0,
+                            idx.0
+                        )
+                    }
+                    TupleIdx::Static(val) => {
+                        format!(
+                            "v{}{} = v{}.{}",
+                            result.0,
+                            annotate(value_annotator, *result),
+                            tuple.0,
+                            val
+                        )
+                    }
+                }
+            },
+            OpCode::MkTuple { 
+                result, 
+                elems, 
+                element_types: _, 
+            } => {
+                let elems_str = elems.iter().map(|v| format!("v{}", v.0)).join(", ");
+                format!(
+                    "v{}{} = ({})",
+                    result.0,
+                    annotate(value_annotator, *result),
+                    elems_str
+                )
+            }
             OpCode::Todo { payload, results, result_types } => {
                 let results_str = results.iter()
                     .zip(result_types.iter())
@@ -1909,6 +2008,20 @@ impl<V> OpCode<V> {
                 offset: _,
                 result_type: _,
             } => vec![r].into_iter(),
+            Self::TupleProj { 
+                result: r,
+                tuple: t,
+                idx: _,
+            } => vec![r, t].into_iter(),
+            OpCode::MkTuple { 
+                result: r, 
+                elems: e, 
+                element_types: _,
+            } => {
+                let mut ret_vec = vec![r];
+                ret_vec.extend(e);
+                ret_vec.into_iter()
+            }
             Self::Todo { results, .. } => {
                 let ret_vec: Vec<&mut ValueId> = results.iter_mut().collect();
                 ret_vec.into_iter()
@@ -2015,6 +2128,11 @@ impl<V> OpCode<V> {
                 seq_type: _,
                 elem_type: _,
             } => inputs.iter_mut().collect::<Vec<_>>().into_iter(),
+            Self::MkTuple {
+                result: _,
+                elems: inputs,
+                element_types: _,
+            } => inputs.iter_mut().collect::<Vec<_>>().into_iter(),
             Self::Select {
                 result: _,
                 cond: b,
@@ -2083,6 +2201,11 @@ impl<V> OpCode<V> {
                 ret_vec.extend(results);
                 ret_vec.into_iter()
             }
+            Self::TupleProj {
+                result: _,
+                tuple,
+                idx: _,
+            } => vec![tuple].into_iter(),
             Self::Todo { .. } => vec![].into_iter(),
         }
     }
@@ -2253,6 +2376,25 @@ impl<V> OpCode<V> {
                 ret_vec.extend(results);
                 ret_vec.into_iter()
             }
+            Self::TupleProj {
+                result: _,
+                tuple,
+                idx,
+            } => {
+                match idx {
+                    TupleIdx::Static(_size) => {
+                        vec![tuple].into_iter()
+                    }
+                    TupleIdx::Dynamic(idx, _tp) => {
+                        vec![tuple, idx].into_iter()
+                    }
+                }
+            },
+            OpCode::MkTuple { 
+                result: _, 
+                elems: e, 
+                element_types: _,
+            } => e.iter().collect::<Vec<_>>().into_iter(),
             Self::Todo { .. } => vec![].into_iter(),
         }
     }
@@ -2339,7 +2481,19 @@ impl<V> OpCode<V> {
                 result: r,
                 value: _,
             }
-            | Self::NextDCoeff { result: r } => vec![r].into_iter(),
+            |  Self::NextDCoeff { 
+                result: r 
+            } 
+            | Self::TupleProj { 
+                result: r,
+                tuple: _,
+                idx: _,
+            }
+            | Self::MkTuple { 
+                result: r, 
+                elems: _, 
+                element_types: _,
+            } => vec![r].into_iter(),
             Self::WriteWitness {
                 result: r,
                 value: _,

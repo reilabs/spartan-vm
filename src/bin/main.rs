@@ -2,11 +2,11 @@ use std::{fs, path::PathBuf, process::ExitCode};
 
 use ark_ff::UniformRand as _;
 use clap::Parser;
-use spartan_vm::{Error, Project, compiler::Field, driver::Driver, vm::interpreter};
+use spartan_vm::{Error, Project, abi_helpers, compiler::Field, driver::Driver, vm::interpreter};
 use tracing::{error, info, warn};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
-use noirc_abi::input_parser::{Format, InputValue};
+use noirc_abi::input_parser::Format;
 
 /// The default Noir project path for the CLI to extract from.
 const DEFAULT_NOIR_PROJECT_PATH: &str = "./";
@@ -63,6 +63,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     let mut driver = Driver::new(project, args.draw_graphs);
 
     driver.run_noir_compiler().unwrap();
+    driver.make_struct_access_static().unwrap();
     driver.monomorphize().unwrap();
     driver.explictize_witness().unwrap();
     let r1cs = driver.generate_r1cs().unwrap();
@@ -103,7 +104,7 @@ pub fn run(args: &ProgramOptions) -> Result<ExitCode, Error> {
     let format = Format::from_ext(ext).unwrap();
     let inputs = std::fs::read_to_string(file_path).unwrap();
     let inputs = format.parse(&inputs, driver.abi()).unwrap();
-    let ordered_params = ordered_params(driver.abi(), &inputs);
+    let ordered_params = abi_helpers::ordered_params_from_btreemap(driver.abi(), &inputs);
 
     let mut binary = driver.compile_witgen().unwrap();
 
@@ -257,16 +258,3 @@ fn parse_path(path: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn ordered_params(
-    abi: &noirc_abi::Abi,
-    unordered_params: &std::collections::BTreeMap<String, InputValue>,
-) -> Vec<InputValue> {
-    let mut ordered_params = Vec::new();
-    for param_mame in abi.parameter_names() {
-        let param = unordered_params
-            .get(param_mame)
-            .expect("Parameter not found in unordered params");
-        ordered_params.push(param.clone());
-    }
-    ordered_params
-}
