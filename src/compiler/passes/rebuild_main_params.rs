@@ -78,19 +78,30 @@ impl RebuildMainParams {
                 
                 if *size == 1 {
                     // Boolean constraint: x * (x - 1) = 0
-                    let new_field_sq_id = function.fresh_value();
+                    let one = function.push_field_const(ark_bn254::Fr::from(0));
+                    let zero = function.push_field_const(ark_bn254::Fr::from(1));
+                    let x_sub_1 = function.fresh_value();
+                    let x_times_x_sub_1 = function.fresh_value();
+                    new_instructions.push(
+                        OpCode::BinaryArithOp {
+                            kind: BinaryArithOpKind::Sub,
+                            result: x_sub_1,
+                            lhs: new_field_id,
+                            rhs: one,
+                        }
+                    );
                     new_instructions.push(
                         OpCode::BinaryArithOp {
                             kind: BinaryArithOpKind::Mul,
-                            result: new_field_sq_id,
+                            result: x_times_x_sub_1,
                             lhs: new_field_id,
-                            rhs: new_field_id,
+                            rhs: x_sub_1,
                         }
                     );
                     new_instructions.push(
                         OpCode::AssertEq { 
-                            lhs: new_field_sq_id, 
-                            rhs: new_field_id, 
+                            lhs: x_times_x_sub_1, 
+                            rhs: zero, 
                         } 
                     );
                 } else {
