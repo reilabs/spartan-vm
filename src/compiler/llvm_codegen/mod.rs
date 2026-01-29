@@ -1,6 +1,6 @@
-//! LLVM Code Generation for Spartan VM SSA
+//! LLVM Code Generation for Mavros SSA
 //!
-//! This module translates Spartan VM's SSA representation into LLVM IR,
+//! This module translates Mavros SSA representation into LLVM IR,
 //! which can then be compiled to native code or WebAssembly.
 
 mod runtime;
@@ -35,7 +35,7 @@ use crate::compiler::taint_analysis::ConstantTaint;
 use self::runtime::Runtime;
 use self::types::TypeConverter;
 
-/// LLVM Code Generator for Spartan VM SSA
+/// LLVM Code Generator for Mavros SSA
 pub struct LLVMCodeGen<'ctx> {
     context: &'ctx Context,
     module: Module<'ctx>,
@@ -125,9 +125,9 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             return_struct.fn_type(&param_types, false)
         };
 
-        // Rename "main" to "spartan_main" to avoid conflicts with C main()
+        // Rename "main" to "mavros_main" to avoid conflicts with C main()
         let name = if function.get_name() == "main" {
-            "spartan_main"
+            "mavros_main"
         } else {
             function.get_name()
         };
@@ -499,7 +499,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         let status = Command::new(&wasm_ld)
             .args([
                 "--no-entry",               // No entry point (we call main explicitly)
-                "--export=spartan_main",    // Export main function
+                "--export=mavros_main",     // Export main function
                 "--import-memory",     // Import memory from host
                 "--allow-undefined",   // Allow undefined symbols (will be imported)
                 "-o",

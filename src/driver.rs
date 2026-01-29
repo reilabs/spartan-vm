@@ -42,7 +42,7 @@ pub enum Error {
 
 impl Driver {
     pub fn new(project: Project, draw_cfg: bool) -> Self {
-        let dir = project.get_only_crate().root_dir.join("spartan_vm_debug");
+        let dir = project.get_only_crate().root_dir.join("mavros_debug");
         if dir.exists() {
             fs::remove_dir_all(&dir).unwrap();
         }
@@ -65,7 +65,7 @@ impl Driver {
             .project
             .get_only_crate()
             .root_dir
-            .join("spartan_vm_debug");
+            .join("mavros_debug");
         dir
     }
 
@@ -397,7 +397,7 @@ impl Driver {
         let type_info = Types::new().run(ssa, &flow_analysis);
 
         let context = Context::create();
-        let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_module");
+        let mut codegen = LLVMCodeGen::new(&context, "mavros_module");
         codegen.compile(ssa, &flow_analysis, &type_info);
 
         let llvm_ir = if emit_llvm {

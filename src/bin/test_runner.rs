@@ -12,7 +12,7 @@ use cargo_metadata::MetadataCommand;
 use ark_ff::UniformRand as _;
 use noirc_abi::input_parser::Format;
 use rand::SeedableRng;
-use spartan_vm::{Project, abi_helpers, compiler::Field, driver::Driver, vm::interpreter};
+use mavros::{Project, abi_helpers, compiler::Field, driver::Driver, vm::interpreter};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

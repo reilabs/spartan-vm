@@ -1,4 +1,4 @@
-//! Type conversion from Spartan VM types to LLVM types
+//! Type conversion from Mavros types to LLVM types
 //!
 //! Currently only supports types needed for the `power` example:
 //! - Field (BN254 field elements as [4 x i64])
@@ -15,7 +15,7 @@ use crate::compiler::taint_analysis::ConstantTaint;
 /// Number of 64-bit limbs used to represent a BN254 field element
 pub const FIELD_LIMBS: u32 = 4;
 
-/// Converts Spartan VM types to LLVM types
+/// Converts Mavros types to LLVM types
 pub struct TypeConverter<'ctx> {
     context: &'ctx Context,
 }
@@ -25,7 +25,7 @@ impl<'ctx> TypeConverter<'ctx> {
         Self { context }
     }
 
-    /// Convert a Spartan type to an LLVM type
+    /// Convert a Mavros type to an LLVM type
     pub fn convert_type(&self, ty: &Type<ConstantTaint>) -> BasicTypeEnum<'ctx> {
         match &ty.expr {
             TypeExpr::Field => {
