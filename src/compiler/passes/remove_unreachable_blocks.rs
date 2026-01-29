@@ -24,9 +24,10 @@ impl<V: Clone> Pass<V> for RemoveUnreachableBlocks {
         for (function_id, function) in ssa.iter_functions_mut() {
             let function_cfg = cfg.get_function_cfg(*function_id);
             let reachable: HashSet<BlockId> = function_cfg.get_domination_pre_order().collect();
-            for (block_id, _) in function.get_blocks() {
+            let all_blocks: Vec<BlockId> = function.get_blocks().map(|(id, _)| *id).collect();
+            for block_id in all_blocks {
                 if !reachable.contains(&block_id) {
-                    _ = function.take_block(*block_id);
+                    _ = function.take_block(block_id);
                 }
             }
         }
