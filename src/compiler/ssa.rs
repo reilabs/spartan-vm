@@ -160,6 +160,44 @@ where
     pub fn get_globals(&self) -> &[GlobalDef] {
         &self.globals
     }
+
+    pub fn wrap_main(&mut self) {
+        let original_main_id = self.main_id;
+        let original_main = self.get_main();
+        let param_types = original_main.get_param_types();
+        let return_types = original_main.get_returns().to_vec();
+
+        self.get_main_mut().set_name("original_main".to_string());
+
+        let wrapper_id = self.add_function("wrapper_main".to_string());
+        let wrapper = self.get_function_mut(wrapper_id);
+
+        let entry_block = wrapper.get_entry_id();
+        let mut arg_values = Vec::new();
+        for typ in &param_types {
+            let val = wrapper.add_parameter(entry_block, typ.clone());
+            arg_values.push(val);
+        }
+
+        let mut return_input_values = Vec::new();
+        for typ in &return_types {
+            let val = wrapper.add_parameter(entry_block, typ.clone());
+            return_input_values.push(val);
+        }
+
+        let results = wrapper.push_call(
+            entry_block,
+            original_main_id,
+            arg_values,
+            return_types.len(),
+        );
+        for (result, public_input) in results.iter().zip(return_input_values.iter()) {
+            wrapper.push_assert_eq(entry_block, *result, *public_input);
+        }
+        wrapper.terminate_block_with_return(entry_block, vec![]);
+        
+        self.set_entry_point(wrapper_id);
+    }
 }
 
 impl SSA<Empty> {

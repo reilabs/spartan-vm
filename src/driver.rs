@@ -116,7 +116,9 @@ impl Driver {
 
         let ssa = ssa.run_passes(&&passes).unwrap();
 
-        self.initial_ssa = Some(SSA::from_noir(&ssa.ssa));
+        let mut initial_ssa = SSA::from_noir(&ssa.ssa);
+        initial_ssa.wrap_main();
+        self.initial_ssa = Some(initial_ssa);
 
         fs::write(
             self.get_debug_output_dir().join("initial_ssa.txt"),
