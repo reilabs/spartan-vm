@@ -3,7 +3,7 @@ resolver = "3"
 members = ["opcode-gen", "ssa-builder", "wasm-runtime"]
 
 [package]
-name = "spartan-vm"
+name = "mavros"
 version = "0.1.0"
 edition = "2024"
 
@@ -51,7 +51,7 @@ tempfile = "3.8.1"
 walkdir = "2.5.0"
 
 [[bin]]
-name = "spartan-vm"
+name = "mavros"
 path = "src/bin/main.rs"
 
 [[bin]]

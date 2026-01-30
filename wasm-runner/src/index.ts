@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Spartan WASM Runner CLI
+ * Mavros WASM Runner CLI
  */
 
 import * as fs from 'fs';
@@ -10,7 +10,7 @@ import { run, writeResult } from './runner.js';
 
 function printUsage(): void {
   console.log(`
-Usage: spartan-wasm-runner <project-root>
+Usage: mavros-wasm-runner <project-root>
 
 Arguments:
   project-root    Path to Noir project (default: ./)
@@ -18,11 +18,11 @@ Arguments:
 Expected project structure:
   <project-root>/
     Prover.toml                      # Input values
-    spartan_vm_debug/
+    mavros_debug/
       witgen.wasm                    # Generated WASM artifact
       witgen.wasm.meta.json          # Metadata
 
-Output is written to: <project-root>/spartan_vm_debug/output.json
+Output is written to: <project-root>/mavros_debug/output.json
 `);
 }
 
@@ -36,8 +36,8 @@ async function main(): Promise<void> {
 
   const projectRoot = args[0] || './';
   const inputPath = path.join(projectRoot, 'Prover.toml');
-  const wasmPath = path.join(projectRoot, 'spartan_vm_debug', 'witgen.wasm');
-  const outputPath = path.join(projectRoot, 'spartan_vm_debug', 'output.json');
+  const wasmPath = path.join(projectRoot, 'mavros_debug', 'witgen.wasm');
+  const outputPath = path.join(projectRoot, 'mavros_debug', 'output.json');
 
   // Validate paths
   if (!fs.existsSync(projectRoot)) {
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   }
   if (!fs.existsSync(wasmPath)) {
     console.error(`Error: WASM file not found: ${wasmPath}`);
-    console.error(`Run spartan-vm --emit-wasm on the project first.`);
+    console.error(`Run mavros --emit-wasm on the project first.`);
     process.exit(1);
   }
   if (!fs.existsSync(`${wasmPath}.meta.json`)) {

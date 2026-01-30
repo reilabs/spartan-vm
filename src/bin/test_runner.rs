@@ -12,7 +12,7 @@ use cargo_metadata::MetadataCommand;
 use ark_ff::{Field as ArkField, UniformRand as _};
 use noirc_abi::input_parser::Format;
 use rand::SeedableRng;
-use spartan_vm::{Project, abi_helpers, compiler::Field, compiler::r1cs_gen::R1CS, driver::Driver, vm::interpreter};
+use mavros::{Project, abi_helpers, compiler::Field, compiler::r1cs_gen::R1CS, driver::Driver, vm::interpreter};
 use wasmtime::{Engine, Linker, Memory, Module, Store};
 
 fn main() {
@@ -380,8 +380,8 @@ fn run_wasm(
 
     // Build the call arguments: vmPtr followed by flattened input limbs
     // The function signature varies based on inputs, so we need dynamic dispatch
-    let func = instance.get_func(&mut store, "spartan_main")
-        .ok_or("spartan_main not found")?;
+    let func = instance.get_func(&mut store, "mavros_main")
+        .ok_or("mavros_main not found")?;
 
     // Prepare arguments: vmPtr followed by all input field element limbs
     let mut args: Vec<wasmtime::Val> = Vec::new();

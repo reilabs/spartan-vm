@@ -618,9 +618,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.54"
+version = "1.2.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6354c81bbfd62d9cfa9cb3c773c2b7b2a3a482d569de977fd0e961f6e7c00583"
+checksum = "47b26a0954ae34af09b50f0de26458fa95369a0d478d8236d3f93082b219bd29"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1392,9 +1392,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8591b0bcc8a98a64310a2fae1bb3e9b8564dd10e381e6e28010fde8e8e8568db"
+checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fixedbitset"
@@ -2239,6 +2239,54 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8263075bb86c5a1b1427b5ae862e8889656f126e9f77c484496e8b47cf5c5558"
 dependencies = [
  "regex-automata 0.1.10",
+]
+
+[[package]]
+name = "mavros"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ark-bn254",
+ "ark-ff",
+ "cargo_metadata",
+ "clap",
+ "convert_case",
+ "derivative",
+ "fm",
+ "graphviz-rust",
+ "indoc",
+ "inkwell",
+ "itertools 0.14.0",
+ "nargo",
+ "nargo_toml",
+ "noirc_abi",
+ "noirc_driver",
+ "noirc_errors",
+ "noirc_evaluator",
+ "noirc_frontend",
+ "opcode-gen",
+ "petgraph 0.6.5",
+ "plotters",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "ssa-builder",
+ "tempfile",
+ "thiserror 2.0.12",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-forest",
+ "tracing-subscriber",
+ "walkdir",
+ "wasmtime",
+]
+
+[[package]]
+name = "mavros-wasm-runtime"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff",
 ]
 
 [[package]]
@@ -3718,54 +3766,6 @@ name = "sorted-iter"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bceb57dc07c92cdae60f5b27b3fa92ecaaa42fe36c55e22dbfb0b44893e0b1f7"
-
-[[package]]
-name = "spartan-vm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ark-bn254",
- "ark-ff",
- "cargo_metadata",
- "clap",
- "convert_case",
- "derivative",
- "fm",
- "graphviz-rust",
- "indoc",
- "inkwell",
- "itertools 0.14.0",
- "nargo",
- "nargo_toml",
- "noirc_abi",
- "noirc_driver",
- "noirc_errors",
- "noirc_evaluator",
- "noirc_frontend",
- "opcode-gen",
- "petgraph 0.6.5",
- "plotters",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "ssa-builder",
- "tempfile",
- "thiserror 2.0.12",
- "toml 0.8.23",
- "tracing",
- "tracing-forest",
- "tracing-subscriber",
- "walkdir",
- "wasmtime",
-]
-
-[[package]]
-name = "spartan-wasm-runtime"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-ff",
-]
 
 [[package]]
 name = "spki"

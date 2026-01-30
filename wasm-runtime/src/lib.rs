@@ -1,4 +1,4 @@
-//! Runtime Library for Spartan VM WASM
+//! Runtime Library for Mavros WASM
 //!
 //! Provides BN254 field arithmetic and VM write functions called by LLVM-generated WASM.
 //! Field elements are 4 x i64 limbs in Montgomery form.
