@@ -414,12 +414,24 @@ impl ExplicitWitness {
                         OpCode::Not { result, value } => {
                             match &function_type_info.get_value_type(value).expr {
                                 TypeExpr::U(s) => {
-                                    let ones = function.push_u_const(*s, (1u128 << *s) - 1);
+                                    let ones = function.push_field_const(Field::from((1u128 << *s) - 1));
+                                    let casted = function.fresh_value();
+                                    new_instructions.push(OpCode::Cast {
+                                        result: casted,
+                                        value: value,
+                                        target: CastTarget::Field,
+                                    });
+                                    let subbed = function.fresh_value();
                                     new_instructions.push(OpCode::BinaryArithOp {
                                         kind: BinaryArithOpKind::Sub,
-                                        result,
+                                        result: subbed,
                                         lhs: ones,
-                                        rhs: value,
+                                        rhs: casted,
+                                    });
+                                    new_instructions.push(OpCode::Cast {
+                                        result: result,
+                                        value: subbed,
+                                        target: CastTarget::U(*s),
                                     });
                                 }
                                 e => todo!("Unsupported type for negation: {:?}", e),
