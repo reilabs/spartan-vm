@@ -14,7 +14,7 @@ use crate::{
         monomorphization::Monomorphization,
         pass_manager::PassManager,
         passes::{
-            arithmetic_simplifier::ArithmeticSimplifier, box_fields::BoxFields, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, rebuild_main_params::RebuildMainParams, specializer::Specializer, struct_access_simplifier::MakeStructAccessStatic, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
+            arithmetic_simplifier::ArithmeticSimplifier, box_fields::BoxFields, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, prepare_entry_point::PrepareEntryPoint, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, specializer::Specializer, struct_access_simplifier::MakeStructAccessStatic, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
         },
         r1cs_gen::{R1CGen, R1CS},
         ssa::{DefaultSsaAnnotator, SSA},
@@ -116,9 +116,7 @@ impl Driver {
 
         let ssa = ssa.run_passes(&&passes).unwrap();
 
-        let mut initial_ssa = SSA::from_noir(&ssa.ssa);
-        initial_ssa.wrap_main();
-        self.initial_ssa = Some(initial_ssa);
+        self.initial_ssa = Some(SSA::from_noir(&ssa.ssa));
 
         fs::write(
             self.get_debug_output_dir().join("initial_ssa.txt"),
@@ -138,11 +136,11 @@ impl Driver {
             "make_struct_access_static".to_string(),
             self.draw_cfg,
             vec![
+                Box::new(PrepareEntryPoint::new()),
                 Box::new(MakeStructAccessStatic::new()),
                 // Use preserve_blocks() to keep empty intermediate blocks intact.
                 // TODO: Remove once untaint_control_flow handles multiple jumps into merge blocks.
                 Box::new(DCE::new(dead_code_elimination::Config::preserve_blocks())),
-                Box::new(RebuildMainParams::new()),
             ],
         );
 

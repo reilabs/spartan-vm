@@ -13,4 +13,4 @@ pub mod specializer;
 pub mod witness_write_to_fresh;
 pub mod witness_write_to_void;
 pub mod struct_access_simplifier;
-pub mod rebuild_main_params;
+pub mod prepare_entry_point;

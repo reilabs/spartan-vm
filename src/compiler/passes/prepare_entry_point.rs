@@ -1,42 +1,104 @@
-use noirc_evaluator::ssa::interpreter::value;
+use crate::compiler::{ir::r#type::{Empty, Type, TypeExpr}, pass_manager::{Pass, PassInfo}, ssa::{BinaryArithOpKind, BlockId, CastTarget, Function, OpCode, SeqType, TupleIdx, ValueId, SSA}};
 
-use crate::compiler::{analysis::value_definitions::ValueDefinitions, ir::r#type::{Empty, Type, TypeExpr}, pass_manager::{DataPoint, Pass, PassInfo}, passes::rebuild_main_params, ssa::{BinaryArithOpKind, CastTarget, Function, LookupTarget, OpCode, SeqType, ValueId}};
+pub struct PrepareEntryPoint {}
 
-pub struct RebuildMainParams {}
-
-impl Pass<Empty> for RebuildMainParams {
+impl Pass<Empty> for PrepareEntryPoint {
     fn run(
         &self,
-        ssa: &mut crate::compiler::ssa::SSA<Empty>,
-        pass_manager: &crate::compiler::pass_manager::PassManager<Empty>,
+        ssa: &mut SSA<Empty>,
+        _pass_manager: &crate::compiler::pass_manager::PassManager<Empty>,
     ) {
-        self.do_run(ssa, pass_manager.get_value_definitions());
+        Self::wrap_main(ssa);
+        self.rebuild_main_params(ssa);
     }
 
     fn pass_info(&self) -> PassInfo {
         PassInfo {
-            name: "rebuild_main_params",
-            needs: vec![DataPoint::ValueDefinitions],
+            name: "prepare_entry_point",
+            needs: vec![],
         }
-    }
-
-    fn invalidates_cfg(&self) -> bool {
-        false
     }
 }
 
-impl RebuildMainParams {
+impl PrepareEntryPoint {
     pub fn new() -> Self {
         Self {}
     }
 
-    pub fn do_run(
-        &self,
-        ssa: &mut crate::compiler::ssa::SSA<Empty>,
-        value_definitions: &ValueDefinitions<Empty>,
+    fn wrap_main(ssa: &mut SSA<Empty>) {
+        let original_main_id = ssa.get_main_id();
+        let original_main = ssa.get_main();
+        let param_types = original_main.get_param_types();
+        let return_types = original_main.get_returns().to_vec();
+
+        ssa.get_main_mut().set_name("original_main".to_string());
+
+        let wrapper_id = ssa.add_function("wrapper_main".to_string());
+        let wrapper = ssa.get_function_mut(wrapper_id);
+
+        let entry_block = wrapper.get_entry_id();
+        let mut arg_values = Vec::new();
+        for typ in &param_types {
+            let val = wrapper.add_parameter(entry_block, typ.clone());
+            arg_values.push(val);
+        }
+
+        let mut return_input_values = Vec::new();
+        for typ in &return_types {
+            let val = wrapper.add_parameter(entry_block, typ.clone());
+            return_input_values.push(val);
+        }
+
+        let results = wrapper.push_call(
+            entry_block,
+            original_main_id,
+            arg_values,
+            return_types.len(),
+        );
+        for ((result, public_input), return_type) in results.iter().zip(return_input_values.iter()).zip(return_types.iter()) {
+            Self::assert_eq_deep(wrapper, entry_block, *result, *public_input, return_type);
+        }
+        wrapper.terminate_block_with_return(entry_block, vec![]);
+
+        ssa.set_entry_point(wrapper_id);
+    }
+
+    fn assert_eq_deep(
+        wrapper: &mut Function<Empty>,
+        block: BlockId,
+        result: ValueId,
+        public_input: ValueId,
+        typ: &Type<Empty>,
     ) {
-        let main_id = ssa.get_main_id();
-        let _value_definitions = value_definitions.get_function(main_id);
+        match &typ.expr {
+            TypeExpr::Field | TypeExpr::U(_) => {
+                wrapper.push_assert_eq(block, result, public_input);
+            }
+            TypeExpr::Array(inner, size) => {
+                for i in 0..*size {
+                    let index = wrapper.push_u_const(32, i as u128);
+                    let result_elem = wrapper.push_array_get(block, result, index);
+                    let input_elem = wrapper.push_array_get(block, public_input, index);
+                    Self::assert_eq_deep(wrapper, block, result_elem, input_elem, inner);
+                }
+            }
+            TypeExpr::Tuple(element_types) => {
+                for (i, elem_type) in element_types.iter().enumerate() {
+                    let result_elem = wrapper.push_tuple_proj(block, result, TupleIdx::Static(i));
+                    let input_elem = wrapper.push_tuple_proj(block, public_input, TupleIdx::Static(i));
+                    Self::assert_eq_deep(wrapper, block, result_elem, input_elem, elem_type);
+                }
+            }
+            _ => {
+                wrapper.push_assert_eq(block, result, public_input);
+            }
+        }
+    }
+
+    fn rebuild_main_params(
+        &self,
+        ssa: &mut SSA<Empty>,
+    ) {
         let function = ssa.get_main_mut();
 
         let params: Vec<_> = function.get_entry().get_parameters().cloned().collect();
@@ -53,7 +115,7 @@ impl RebuildMainParams {
         let entry_id = function.get_entry_id();
         let entry_block = function.get_block_mut(entry_id);
         new_instructions.extend(entry_block.take_instructions());
-        
+
         entry_block.put_parameters(new_parameters);
         entry_block.put_instructions(new_instructions);
     }
@@ -71,11 +133,11 @@ impl RebuildMainParams {
         match &typ.expr {
             TypeExpr::Field => {
                 new_parameters.push((*value_id, typ.clone()))
-            } 
+            }
             TypeExpr::U(size) => {
                 let new_field_id = function.fresh_value();
                 new_parameters.push((new_field_id, Type{expr: TypeExpr::Field, annotation: Empty}));
-                
+
                 if *size == 1 {
                     // Boolean constraint: x * (x - 1) = 0
                     let zero = function.push_field_const(ark_bn254::Fr::from(0));
@@ -99,10 +161,10 @@ impl RebuildMainParams {
                         }
                     );
                     new_instructions.push(
-                        OpCode::AssertEq { 
-                            lhs: x_times_x_sub_1, 
-                            rhs: zero, 
-                        } 
+                        OpCode::AssertEq {
+                            lhs: x_times_x_sub_1,
+                            rhs: zero,
+                        }
                     );
                 } else {
                     new_instructions.push(
