@@ -5,7 +5,7 @@ use crate::compiler::{
         symbolic_executor::{self, SymbolicExecutor},
         types::TypeInfo,
     },
-    ir::r#type::{CommutativeMonoid, Type},
+    ir::r#type::{CommutativeMonoid, Type, TypeExpr},
     ssa::{BinaryArithOpKind, BlockId, CmpKind, FunctionId, MemOp, Radix, SSA, SliceOpDir},
 };
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField};
@@ -110,7 +110,10 @@ impl Value {
 
     pub fn expect_u32(&self) -> u32 {
         match self {
-            Value::Const(c) => c.into_bigint().to_string().parse().unwrap(),
+            Value::Const(c) => {
+                let s = c.into_bigint().to_string();
+                s.parse().unwrap_or_else(|e| panic!("expected u32, but field value is {s}: {e}"))
+            }
             r => panic!("expected u32, got {:?}", r),
         }
     }
@@ -387,19 +390,35 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
         &self,
         b: &Self,
         binary_arith_op_kind: BinaryArithOpKind,
-        _out_type: &Type<V>,
+        out_type: &Type<V>,
         _ctx: &mut R1CGen,
     ) -> Self {
-        match binary_arith_op_kind {
-            BinaryArithOpKind::Add => self.add(b),
-            BinaryArithOpKind::Sub => self.sub(b),
-            BinaryArithOpKind::Mul => self.mul(b),
-            BinaryArithOpKind::Div => self.div(b),
-            BinaryArithOpKind::And => {
+        match &out_type.expr {
+            TypeExpr::U(32) => {
                 let a = self.expect_u32();
                 let b = b.expect_u32();
-                Value::Const(ark_bn254::Fr::from(a & b))
+                let result = match binary_arith_op_kind {
+                    BinaryArithOpKind::Add => a + b,
+                    BinaryArithOpKind::Sub => a - b,
+                    BinaryArithOpKind::Mul => a * b,
+                    BinaryArithOpKind::Div => a / b,
+                    BinaryArithOpKind::And => a & b,
+                };
+                Value::Const(ark_bn254::Fr::from(result))
             }
+            TypeExpr::U(size) => {
+                panic!("Unsupported unsigned integer size in R1CS arith: u{size}")
+            }
+            TypeExpr::Field | TypeExpr::BoxedField => match binary_arith_op_kind {
+                BinaryArithOpKind::Add => self.add(b),
+                BinaryArithOpKind::Sub => self.sub(b),
+                BinaryArithOpKind::Mul => self.mul(b),
+                BinaryArithOpKind::Div => self.div(b),
+                BinaryArithOpKind::And => {
+                    panic!("Bitwise AND is not supported on field elements")
+                }
+            },
+            _ => panic!("Unsupported type in R1CS arith"),
         }
     }
 
