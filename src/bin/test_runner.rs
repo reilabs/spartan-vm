@@ -243,6 +243,36 @@ fn run_single(root: PathBuf) {
         );
         emit(if correct { "END:WITGEN_WASM_CORRECT:ok" } else { "END:WITGEN_WASM_CORRECT:fail" });
     }
+
+    // 14. AD WASM Compile  (depends on R1CS, not yet implemented)
+    let ad_wasm_path: Option<std::path::PathBuf> = r1cs.as_ref().and_then(|_r1cs| {
+        emit("START:AD_WASM_COMPILE");
+        panic!("AD WASM Compile is not yet implemented");
+        #[allow(unreachable_code)]
+        {
+            emit("END:AD_WASM_COMPILE:fail");
+            None
+        }
+    });
+
+    // 15. AD WASM Run  (depends on AD_WASM_COMPILE, not yet implemented)
+    let ad_wasm_result: Option<()> = ad_wasm_path.as_ref().and_then(|_wasm_path| {
+        emit("START:AD_WASM_RUN");
+        panic!("AD WASM Run is not yet implemented");
+        #[allow(unreachable_code)]
+        {
+            emit("END:AD_WASM_RUN:fail");
+            None
+        }
+    });
+
+    // 16. AD WASM Correct  (depends on AD_WASM_RUN, not yet implemented)
+    if let (Some(_result), Some(_r1cs)) = (&ad_wasm_result, &r1cs) {
+        emit("START:AD_WASM_CORRECT");
+        panic!("AD WASM Correct is not yet implemented");
+        #[allow(unreachable_code)]
+        emit("END:AD_WASM_CORRECT:fail");
+    }
 }
 
 fn load_inputs(file_path: &Path, driver: &Driver) -> Option<Vec<interpreter::InputValueOrdered>> {
@@ -445,6 +475,7 @@ const STEP_KEYS: &[&str] = &[
     "WITGEN_RUN", "WITGEN_CORRECT", "WITGEN_NOLEAK",
     "AD_RUN", "AD_CORRECT", "AD_NOLEAK",
     "WITGEN_WASM_COMPILE", "WITGEN_WASM_RUN", "WITGEN_WASM_CORRECT",
+    "AD_WASM_COMPILE", "AD_WASM_RUN", "AD_WASM_CORRECT",
 ];
 
 struct TestResult {
@@ -656,6 +687,7 @@ const REGRESSION_COLS: &[(usize, &str)] = &[
     (5, "Witgen Compile"), (6, "Witgen Run VM"), (7, "Witgen Correct"), (8, "Witgen No Leak"),
     (9, "AD Compile"), (10, "AD Run VM"), (11, "AD Correct"), (12, "AD No Leak"),
     (13, "Witgen WASM Compile"), (14, "Witgen WASM Run"), (15, "Witgen WASM Correct"),
+    (16, "AD WASM Compile"), (17, "AD WASM Run"), (18, "AD WASM Correct"),
 ];
 
 fn check_regression(baseline_path: &Path, current_path: &Path) -> i32 {
@@ -844,15 +876,15 @@ fn check_growth(baseline_path: &Path, current_path: &Path) {
 
 fn render_markdown(results: &[TestResult]) -> String {
     let mut md = String::new();
-    md.push_str("| Test | Compiled | R1CS | Rows | Cols | Witgen Compile | Witgen Run VM | Witgen Correct | Witgen No Leak | AD Compile | AD Run VM | AD Correct | AD No Leak | Witgen WASM Compile | Witgen WASM Run | Witgen WASM Correct |\n");
-    md.push_str("|------|----------|------|------|------|----------------|---------------|----------------|----------------|------------|-----------|------------|------------|---------------------|-----------------|---------------------|\n");
+    md.push_str("| Test | Compiled | R1CS | Rows | Cols | Witgen Compile | Witgen Run VM | Witgen Correct | Witgen No Leak | AD Compile | AD Run VM | AD Correct | AD No Leak | Witgen WASM Compile | Witgen WASM Run | Witgen WASM Correct | AD WASM Compile | AD WASM Run | AD WASM Correct |\n");
+    md.push_str("|------|----------|------|------|------|----------------|---------------|----------------|----------------|------------|-----------|------------|------------|---------------------|-----------------|---------------------|-----------------|-------------|---------------------|\n");
 
     for r in results {
         let s = |key: &str| r.steps.get(key).copied().unwrap_or(Status::Skip).emoji();
         let rows = r.rows.map_or("-".to_string(), |v| v.to_string());
         let cols = r.cols.map_or("-".to_string(), |v| v.to_string());
         md.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             r.name,
             s("COMPILED"),
             s("R1CS"),
@@ -869,6 +901,9 @@ fn render_markdown(results: &[TestResult]) -> String {
             s("WITGEN_WASM_COMPILE"),
             s("WITGEN_WASM_RUN"),
             s("WITGEN_WASM_CORRECT"),
+            s("AD_WASM_COMPILE"),
+            s("AD_WASM_RUN"),
+            s("AD_WASM_CORRECT"),
         ));
     }
 
