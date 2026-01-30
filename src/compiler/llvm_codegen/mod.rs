@@ -76,8 +76,9 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         type_info: &TypeInfo<ConstantTaint>,
     ) {
         // First pass: declare all functions
+        let main_id = ssa.get_main_id();
         for (fn_id, function) in ssa.iter_functions() {
-            self.declare_function(*fn_id, function, type_info);
+            self.declare_function(*fn_id, function, type_info, main_id);
         }
 
         // Second pass: generate function bodies
@@ -94,6 +95,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         fn_id: FunctionId,
         function: &Function<ConstantTaint>,
         type_info: &TypeInfo<ConstantTaint>,
+        main_id: FunctionId,
     ) {
         let fn_type_info = type_info.get_function(fn_id);
         let entry = function.get_entry();
@@ -125,8 +127,8 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             return_struct.fn_type(&param_types, false)
         };
 
-        // Rename "main" to "mavros_main" to avoid conflicts with C main()
-        let name = if function.get_name() == "main" {
+        // Export the entry point function as "mavros_main"
+        let name = if fn_id == main_id {
             "mavros_main"
         } else {
             function.get_name()
@@ -355,6 +357,38 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                 }
             }
 
+            OpCode::Call { results, function, args } => {
+                let callee = self.function_map[function];
+                let vm_ptr = self.vm_ptr.unwrap();
+
+                // Build call args: VM* first, then mapped args
+                let mut call_args: Vec<BasicMetadataValueEnum> = Vec::new();
+                call_args.push(vm_ptr.into());
+                for arg in args {
+                    call_args.push(self.value_map[arg].into());
+                }
+
+                let call_result = self.builder
+                    .build_call(callee, &call_args, &format!("call_f{}", function.0))
+                    .unwrap();
+
+                // Map return values
+                if results.len() == 1 {
+                    if let Some(val) = call_result.try_as_basic_value().left() {
+                        self.value_map.insert(results[0], val);
+                    }
+                } else if results.len() > 1 {
+                    let ret_struct = call_result.try_as_basic_value().left()
+                        .expect("Expected return value from multi-return call");
+                    for (i, result_id) in results.iter().enumerate() {
+                        let val = self.builder
+                            .build_extract_value(ret_struct.into_struct_value(), i as u32, &format!("v{}", result_id.0))
+                            .unwrap();
+                        self.value_map.insert(*result_id, val.into());
+                    }
+                }
+            }
+
             // All other opcodes are not yet supported
             _ => {
                 panic!("Unsupported opcode in LLVM codegen: {:?}", instruction);
@@ -499,7 +533,6 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             })
             .unwrap_or_else(|_| "wasm-ld".to_string());
 
-        eprintln!("wasm-ld: using {:?}, linking {:?} + {:?} -> {:?}", wasm_ld, obj_path, runtime_lib, path);
 
         let output = Command::new(&wasm_ld)
             .args([
