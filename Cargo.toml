@@ -43,6 +43,7 @@ rand = "0.8"
 opcode-gen = { path = "opcode-gen" }
 ssa-builder = { path = "ssa-builder" }
 cargo_metadata = "0.23.1"
+wasmtime = "31"
 
 [dev-dependencies]
 anyhow = "1.0.87"

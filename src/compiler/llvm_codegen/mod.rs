@@ -76,8 +76,9 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         type_info: &TypeInfo<ConstantTaint>,
     ) {
         // First pass: declare all functions
+        let main_id = ssa.get_main_id();
         for (fn_id, function) in ssa.iter_functions() {
-            self.declare_function(*fn_id, function, type_info);
+            self.declare_function(*fn_id, function, type_info, main_id);
         }
 
         // Second pass: generate function bodies
@@ -94,6 +95,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         fn_id: FunctionId,
         function: &Function<ConstantTaint>,
         type_info: &TypeInfo<ConstantTaint>,
+        main_id: FunctionId,
     ) {
         let fn_type_info = type_info.get_function(fn_id);
         let entry = function.get_entry();
@@ -125,8 +127,8 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             return_struct.fn_type(&param_types, false)
         };
 
-        // Rename "main" to "mavros_main" to avoid conflicts with C main()
-        let name = if function.get_name() == "main" {
+        // Export the entry point function as "mavros_main"
+        let name = if fn_id == main_id {
             "mavros_main"
         } else {
             function.get_name()
@@ -355,6 +357,38 @@ impl<'ctx> LLVMCodeGen<'ctx> {
                 }
             }
 
+            OpCode::Call { results, function, args } => {
+                let callee = self.function_map[function];
+                let vm_ptr = self.vm_ptr.unwrap();
+
+                // Build call args: VM* first, then mapped args
+                let mut call_args: Vec<BasicMetadataValueEnum> = Vec::new();
+                call_args.push(vm_ptr.into());
+                for arg in args {
+                    call_args.push(self.value_map[arg].into());
+                }
+
+                let call_result = self.builder
+                    .build_call(callee, &call_args, &format!("call_f{}", function.0))
+                    .unwrap();
+
+                // Map return values
+                if results.len() == 1 {
+                    if let Some(val) = call_result.try_as_basic_value().left() {
+                        self.value_map.insert(results[0], val);
+                    }
+                } else if results.len() > 1 {
+                    let ret_struct = call_result.try_as_basic_value().left()
+                        .expect("Expected return value from multi-return call");
+                    for (i, result_id) in results.iter().enumerate() {
+                        let val = self.builder
+                            .build_extract_value(ret_struct.into_struct_value(), i as u32, &format!("v{}", result_id.0))
+                            .unwrap();
+                        self.value_map.insert(*result_id, val.into());
+                    }
+                }
+            }
+
             // All other opcodes are not yet supported
             _ => {
                 panic!("Unsupported opcode in LLVM codegen: {:?}", instruction);
@@ -483,6 +517,9 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             .write_to_file(&self.module, FileType::Object, &obj_path)
             .unwrap();
 
+        // Build the wasm-runtime and get the path to the static library
+        let runtime_lib = Self::build_wasm_runtime();
+
         // Link with wasm-ld to produce final WASM module with exports
         // Find wasm-ld: try LLVM prefix from env, then fall back to PATH
         let wasm_ld = std::env::var("LLVM_SYS_180_PREFIX")
@@ -496,25 +533,88 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             })
             .unwrap_or_else(|_| "wasm-ld".to_string());
 
-        let status = Command::new(&wasm_ld)
+
+        let output = Command::new(&wasm_ld)
             .args([
                 "--no-entry",               // No entry point (we call main explicitly)
                 "--export=mavros_main",     // Export main function
-                "--import-memory",     // Import memory from host
-                "--allow-undefined",   // Allow undefined symbols (will be imported)
+                "--import-memory",          // Import memory from host
+                "--allow-undefined",        // Allow undefined symbols (will be imported)
+                "--stack-first",            // Place stack at start of memory (before data)
+                "-z", "stack-size=65536",   // Explicit stack size (64KB)
+                "--export=__data_end",      // Export data end marker for host to place buffers after
                 "-o",
             ])
             .arg(path)
             .arg(&obj_path)
-            .status()
+            .arg(&runtime_lib)
+            .output()
             .expect(&format!("Failed to run wasm-ld (tried: {}). Make sure LLVM with wasm-ld is installed and either in PATH or LLVM_SYS_180_PREFIX is set.", wasm_ld));
 
-        if !status.success() {
-            panic!("wasm-ld failed with status: {}", status);
+        if !output.status.success() {
+            eprintln!("wasm-ld stdout: {}", String::from_utf8_lossy(&output.stdout));
+            eprintln!("wasm-ld stderr: {}", String::from_utf8_lossy(&output.stderr));
+            panic!("wasm-ld failed with status: {}", output.status);
         }
 
         // Clean up object file
         std::fs::remove_file(&obj_path).ok();
+    }
+
+    /// Build the wasm-runtime crate for wasm32 and return path to the static library
+    fn build_wasm_runtime() -> std::path::PathBuf {
+        use std::process::Command;
+
+        // Find workspace root using cargo metadata
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .exec()
+            .expect("Failed to get cargo metadata");
+
+        let workspace_root = metadata.workspace_root.as_std_path();
+        let wasm_runtime_dir = workspace_root.join("wasm-runtime");
+
+        // Build the wasm-runtime for wasm32
+        let output = Command::new("cargo")
+            .current_dir(&wasm_runtime_dir)
+            .args([
+                "build",
+                "--target", "wasm32-unknown-unknown",
+                "--release",
+            ])
+            .output()
+            .expect("Failed to run cargo build for wasm-runtime");
+
+        if !output.status.success() {
+            eprintln!("wasm-runtime cargo build stdout: {}", String::from_utf8_lossy(&output.stdout));
+            eprintln!("wasm-runtime cargo build stderr: {}", String::from_utf8_lossy(&output.stderr));
+            panic!("Failed to build wasm-runtime for wasm32");
+        }
+
+        // Return path to the static library
+        let lib_path = workspace_root
+            .join("target")
+            .join("wasm32-unknown-unknown")
+            .join("release")
+            .join("libmavros_wasm_runtime.a");
+
+        if !lib_path.exists() {
+            eprintln!("wasm-runtime library not found at {:?}", lib_path);
+            // List what's actually in the directory
+            let dir = lib_path.parent().unwrap();
+            if dir.exists() {
+                eprintln!("Contents of {:?}:", dir);
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        eprintln!("  {:?}", entry.file_name());
+                    }
+                }
+            } else {
+                eprintln!("Directory {:?} does not exist", dir);
+            }
+            panic!("wasm-runtime library not found");
+        }
+
+        lib_path
     }
 
     /// Get the LLVM module

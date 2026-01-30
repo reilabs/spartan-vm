@@ -25,6 +25,7 @@
           buildInputs = with pkgs; [
             (rust-bin.nightly.latest.default.override {
               extensions = [ "rust-src" "rust-analyzer" ];
+              targets = [ "wasm32-unknown-unknown" ];
             })
             llvmPackages.llvm
             llvmPackages.libclang
@@ -43,6 +44,7 @@
 
           LLVM_SYS_180_PREFIX = "${llvmPackages.llvm.dev}";
           LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.fontconfig.lib ];
         };
       }
     );
