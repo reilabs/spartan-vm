@@ -294,6 +294,63 @@ impl WitnessToRef {
                             slice,
                             values,
                         } => todo!(),
+                        OpCode::Select {
+                            result: r,
+                            cond,
+                            if_t,
+                            if_f,
+                        } => {
+                            let result_type = type_info.get_value_type(r);
+                            let converted_result_type = self.witness_to_ref_in_type(result_type);
+                            let if_t_type = type_info.get_value_type(if_t);
+                            let converted_if_t_type = self.witness_to_ref_in_type(if_t_type);
+                            let if_f_type = type_info.get_value_type(if_f);
+                            let converted_if_f_type = self.witness_to_ref_in_type(if_f_type);
+                            let if_t = if converted_if_t_type != converted_result_type {
+                                let refed = function.fresh_value();
+                                match &if_t_type.expr {
+                                    TypeExpr::Field | TypeExpr::U(_) => {
+                                        new_instructions.push(OpCode::PureToWitnessRef {
+                                            result: refed,
+                                            value: if_t,
+                                            result_annotation: if_t_type.annotation.clone(),
+                                        });
+                                    }
+                                    other => panic!(
+                                        "witness_to_ref Select branch conversion not supported for {:?}",
+                                        other
+                                    ),
+                                }
+                                refed
+                            } else {
+                                if_t
+                            };
+                            let if_f = if converted_if_f_type != converted_result_type {
+                                let refed = function.fresh_value();
+                                match &if_f_type.expr {
+                                    TypeExpr::Field | TypeExpr::U(_) => {
+                                        new_instructions.push(OpCode::PureToWitnessRef {
+                                            result: refed,
+                                            value: if_f,
+                                            result_annotation: if_f_type.annotation.clone(),
+                                        });
+                                    }
+                                    other => panic!(
+                                        "witness_to_ref Select branch conversion not supported for {:?}",
+                                        other
+                                    ),
+                                }
+                                refed
+                            } else {
+                                if_f
+                            };
+                            new_instructions.push(OpCode::Select {
+                                result: r,
+                                cond,
+                                if_t,
+                                if_f,
+                            });
+                        }
                         OpCode::Not { .. }
                         | OpCode::Cmp { .. }
                         | OpCode::Truncate { .. }
@@ -303,7 +360,6 @@ impl WitnessToRef {
                         | OpCode::Call { .. }
                         | OpCode::ArrayGet { .. }
                         | OpCode::SliceLen { .. }
-                        | OpCode::Select { .. }
                         | OpCode::ToBits { .. }
                         | OpCode::ToRadix { .. }
                         | OpCode::MemOp { .. }
@@ -317,9 +373,23 @@ impl WitnessToRef {
                         | OpCode::Rangecheck { .. }
                         | OpCode::ReadGlobal { .. }
                         | OpCode::TupleProj { .. }
-                        | OpCode::MkTuple { .. }
                         | OpCode::Todo { .. } => {
                             new_instructions.push(instruction);
+                        }
+                        OpCode::MkTuple {
+                            result,
+                            elems,
+                            element_types,
+                        } => {
+                            let new_element_types = element_types
+                                .iter()
+                                .map(|tp| self.witness_to_ref_in_type(tp))
+                                .collect();
+                            new_instructions.push(OpCode::MkTuple {
+                                result,
+                                elems,
+                                element_types: new_element_types,
+                            });
                         }
                     };
                 }
