@@ -556,7 +556,7 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             .join("target")
             .join("wasm32-unknown-unknown")
             .join("release")
-            .join("libspartan_wasm_runtime.a")
+            .join("libmavros_wasm_runtime.a")
     }
 
     /// Get the LLVM module
