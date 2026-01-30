@@ -269,7 +269,7 @@ impl ExplicitWitness {
                                     let back_cast_target = match &idx_type.expr {
                                         TypeExpr::U(s) => CastTarget::U(*s),
                                         TypeExpr::Field => CastTarget::Field,
-                                        TypeExpr::BoxedField => CastTarget::Field,
+                                        TypeExpr::WitnessRef => CastTarget::Field,
                                         TypeExpr::Array(_, _) => {
                                             todo!("array types in witnessed array reads")
                                         }
@@ -518,7 +518,7 @@ impl ExplicitWitness {
                         OpCode::MemOp { kind: _, value: _ } => {
                             new_instructions.push(instruction);
                         }
-                        OpCode::BoxField {
+                        OpCode::PureToWitnessRef {
                             result: _,
                             value: _,
                             result_annotation: _,

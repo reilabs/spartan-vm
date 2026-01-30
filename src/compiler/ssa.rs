@@ -184,7 +184,7 @@ impl<V: Display + Clone> SSA<V> {
 pub enum Const {
     U(usize, u128),
     Field(ark_bn254::Fr),
-    BoxedField(ark_bn254::Fr),
+    WitnessRef(ark_bn254::Fr),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -1335,7 +1335,7 @@ pub enum OpCode<V> {
         keys: Vec<ValueId>,
         results: Vec<ValueId>,
     },
-    BoxField {
+    PureToWitnessRef {
         result: ValueId,
         value: ValueId,
         result_annotation: V,
@@ -1726,7 +1726,7 @@ impl<V: Display + Clone> OpCode<V> {
                 };
                 format!("{}(v{})", name, value.0)
             }
-            OpCode::BoxField {
+            OpCode::PureToWitnessRef {
                 result,
                 value,
                 result_annotation: annotation,
@@ -1870,7 +1870,7 @@ impl<V> OpCode<V> {
                 value: b,
                 target: _,
             }
-            | Self::BoxField {
+            | Self::PureToWitnessRef {
                 result: a,
                 value: b,
                 result_annotation: _,
@@ -2103,7 +2103,7 @@ impl<V> OpCode<V> {
                 value: c,
                 target: _,
             }
-            | Self::BoxField {
+            | Self::PureToWitnessRef {
                 result: _,
                 value: c,
                 result_annotation: _,
@@ -2283,7 +2283,7 @@ impl<V> OpCode<V> {
                 value: c,
                 target: _,
             }
-            | Self::BoxField {
+            | Self::PureToWitnessRef {
                 result: _,
                 value: c,
                 result_annotation: _,
@@ -2473,7 +2473,7 @@ impl<V> OpCode<V> {
                 const_val: _,
                 var: _,
             }
-            | Self::BoxField {
+            | Self::PureToWitnessRef {
                 result: r,
                 value: _,
                 result_annotation: _,

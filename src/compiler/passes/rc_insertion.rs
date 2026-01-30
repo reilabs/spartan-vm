@@ -155,9 +155,9 @@ impl RCInsertion {
                         new_instructions.push(instruction.clone());
                         currently_live.insert(*v);
                     }
-                    OpCode::BoxField { result: r, value: _, result_annotation: _ } => {
+                    OpCode::PureToWitnessRef { result: r, value: _, result_annotation: _ } => {
                         if !currently_live.contains(r) {
-                            panic!("ICE: Result of BoxField is immediately dropped. This is a bug.")
+                            panic!("ICE: Result of PureToWitnessRef is immediately dropped. This is a bug.")
                         }
                         new_instructions.push(instruction.clone());
                     }
@@ -619,7 +619,7 @@ impl RCInsertion {
             TypeExpr::Slice(_) => true,
             TypeExpr::Field => false,
             TypeExpr::U(_) => false,
-            TypeExpr::BoxedField => true,
+            TypeExpr::WitnessRef => true,
             TypeExpr::Tuple(_) => true,
         }
     }

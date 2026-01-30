@@ -499,7 +499,7 @@ impl<V: Clone> symbolic_executor::Value<R1CGen, V> for Value {
             TypeExpr::U(size) => {
                 panic!("Unsupported unsigned integer size in R1CS arith: u{size}")
             }
-            TypeExpr::Field | TypeExpr::BoxedField => match binary_arith_op_kind {
+            TypeExpr::Field | TypeExpr::WitnessRef => match binary_arith_op_kind {
                 BinaryArithOpKind::Add => self.add(b),
                 BinaryArithOpKind::Sub => self.sub(b),
                 BinaryArithOpKind::Mul => self.mul(b),

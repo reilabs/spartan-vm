@@ -9,9 +9,9 @@ use crate::compiler::{
     taint_analysis::ConstantTaint,
 };
 
-pub struct BoxFields {}
+pub struct WitnessToRef {}
 
-impl Pass<ConstantTaint> for BoxFields {
+impl Pass<ConstantTaint> for WitnessToRef {
     fn run(
         &self,
         ssa: &mut crate::compiler::ssa::SSA<ConstantTaint>,
@@ -22,7 +22,7 @@ impl Pass<ConstantTaint> for BoxFields {
 
     fn pass_info(&self) -> crate::compiler::pass_manager::PassInfo {
         crate::compiler::pass_manager::PassInfo {
-            name: "box_fields",
+            name: "witness_to_ref",
             needs: vec![DataPoint::Types],
         }
     }
@@ -32,7 +32,7 @@ impl Pass<ConstantTaint> for BoxFields {
     }
 }
 
-impl BoxFields {
+impl WitnessToRef {
     pub fn new() -> Self {
         Self {}
     }
@@ -45,13 +45,13 @@ impl BoxFields {
         for (function_id, function) in ssa.iter_functions_mut() {
             let type_info = type_info.get_function(*function_id);
             for rtp in function.iter_returns_mut() {
-                *rtp = self.box_fields_in_type(rtp);
+                *rtp = self.witness_to_ref_in_type(rtp);
             }
             for (_, constant) in function.iter_consts_mut() {
                 let new = match constant {
                     Const::U(s, value) => Const::U(*s, *value),
-                    Const::Field(value) => Const::BoxedField(*value),
-                    Const::BoxedField(value) => Const::BoxedField(*value),
+                    Const::Field(value) => Const::WitnessRef(*value),
+                    Const::WitnessRef(value) => Const::WitnessRef(*value),
                 };
                 *constant = new;
             }
@@ -60,7 +60,7 @@ impl BoxFields {
                 let old_params = block.take_parameters();
                 let new_params = old_params
                     .into_iter()
-                    .map(|(r, tp)| (r, self.box_fields_in_type(&tp)))
+                    .map(|(r, tp)| (r, self.witness_to_ref_in_type(&tp)))
                     .collect();
                 block.put_parameters(new_params);
                 let mut new_instructions = vec![];
@@ -90,7 +90,7 @@ impl BoxFields {
                                     value: v,
                                     target: CastTarget::Field,
                                 });
-                                new_instructions.push(OpCode::BoxField {
+                                new_instructions.push(OpCode::PureToWitnessRef {
                                     result: r,
                                     value: new_r,
                                     result_annotation: type_info.get_value_type(r).annotation,
@@ -110,7 +110,7 @@ impl BoxFields {
                             assert!(matches!(tp.expr, TypeExpr::Field));
                             let i = OpCode::FreshWitness {
                                 result: r,
-                                result_type: self.box_fields_in_type(&tp),
+                                result_type: self.witness_to_ref_in_type(&tp),
                             };
                             new_instructions.push(i);
                         }
@@ -124,7 +124,7 @@ impl BoxFields {
                                 result: r,
                                 elems: vs.clone(),
                                 seq_type: s,
-                                elem_type: self.box_fields_in_type(&tp),
+                                elem_type: self.witness_to_ref_in_type(&tp),
                             };
                             new_instructions.push(i);
                         }
@@ -135,7 +135,7 @@ impl BoxFields {
                         } => {
                             let i = OpCode::Alloc {
                                 result: r,
-                                elem_type: self.box_fields_in_type(&tp),
+                                elem_type: self.witness_to_ref_in_type(&tp),
                                 result_annotation: v,
                             };
                             new_instructions.push(i);
@@ -258,7 +258,7 @@ impl BoxFields {
                                             lhs: new_a,
                                             rhs: new_b,
                                         });
-                                        new_instructions.push(OpCode::BoxField {
+                                        new_instructions.push(OpCode::PureToWitnessRef {
                                             result: r,
                                             value: new_r,
                                             result_annotation: ConstantTaint::Witness,
@@ -352,7 +352,7 @@ impl BoxFields {
                                     to_bits: f,
                                     from_bits: t,
                                 });
-                                new_instructions.push(OpCode::BoxField {
+                                new_instructions.push(OpCode::PureToWitnessRef {
                                     result: r,
                                     value: new_r,
                                     result_annotation: v_type.annotation.clone(),
@@ -420,7 +420,7 @@ impl BoxFields {
                             new_instructions.push(OpCode::ReadGlobal {
                                 result: r,
                                 offset: index,
-                                result_type: self.box_fields_in_type(&tp),
+                                result_type: self.witness_to_ref_in_type(&tp),
                             });
                         }
                         OpCode::Not { .. }
@@ -438,7 +438,7 @@ impl BoxFields {
                         | OpCode::MemOp { .. }
                         | OpCode::WriteWitness { .. }
                         | OpCode::NextDCoeff { .. }
-                        | OpCode::BoxField { .. }
+                        | OpCode::PureToWitnessRef { .. }
                         | OpCode::UnboxField { .. }
                         | OpCode::MulConst { .. }
                         | OpCode::BumpD { .. }
@@ -452,7 +452,7 @@ impl BoxFields {
                         } => {
                             let boxed_element_types: Vec<Type<ConstantTaint>> = element_types
                                 .iter()
-                                .map(|tp| self.box_fields_in_type(tp))
+                                .map(|tp| self.witness_to_ref_in_type(tp))
                                 .collect();
                             let i = OpCode::MkTuple {
                                 result,
@@ -470,24 +470,24 @@ impl BoxFields {
         }
     }
 
-    fn box_fields_in_type(&self, tp: &Type<ConstantTaint>) -> Type<ConstantTaint> {
+    fn witness_to_ref_in_type(&self, tp: &Type<ConstantTaint>) -> Type<ConstantTaint> {
         match &tp.expr {
             TypeExpr::Field => Type::boxed_field(tp.annotation.clone()),
             TypeExpr::U(_) => tp.clone(),
             TypeExpr::Array(inner, size) => {
-                Type::array_of(self.box_fields_in_type(inner), *size, tp.annotation.clone())
+                Type::array_of(self.witness_to_ref_in_type(inner), *size, tp.annotation.clone())
             }
             TypeExpr::Slice(inner) => {
-                Type::slice_of(self.box_fields_in_type(inner), tp.annotation.clone())
+                Type::slice_of(self.witness_to_ref_in_type(inner), tp.annotation.clone())
             }
             TypeExpr::Ref(inner) => {
-                Type::ref_of(self.box_fields_in_type(inner), tp.annotation.clone())
+                Type::ref_of(self.witness_to_ref_in_type(inner), tp.annotation.clone())
             }
-            TypeExpr::BoxedField => tp.clone(),
+            TypeExpr::WitnessRef => tp.clone(),
             TypeExpr::Tuple(elements) => {
                 let boxed_elements = elements
                     .iter()
-                    .map(|elem| self.box_fields_in_type(elem))
+                    .map(|elem| self.witness_to_ref_in_type(elem))
                     .collect();
                 Type::tuple_of(boxed_elements, tp.annotation.clone())
             }

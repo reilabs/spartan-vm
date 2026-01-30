@@ -77,7 +77,7 @@ impl Types {
                 Const::Field(_) => function_info
                     .values
                     .insert(*value_id, Type::field(V::empty())),
-                Const::BoxedField(_) => function_info
+                Const::WitnessRef(_) => function_info
                     .values
                     .insert(*value_id, Type::boxed_field(V::empty())),
             };
@@ -333,7 +333,7 @@ impl Types {
                 Ok(())
             }
             OpCode::DLookup { target: _, keys: _, results: _ } => Ok(()),
-            OpCode::BoxField { result, value: _, result_annotation: annotation } => {
+            OpCode::PureToWitnessRef { result, value: _, result_annotation: annotation } => {
                 function_info
                     .values
                     .insert(*result, Type::boxed_field(annotation.clone()));
