@@ -199,7 +199,13 @@ fn run_single(root: PathBuf) {
                 emit("END:WITGEN_WASM_COMPILE:ok");
                 Some(wasm_path)
             }
-            _ => {
+            Ok(_) => {
+                eprintln!("WASM compile succeeded but output file not found at {:?}", wasm_path);
+                emit("END:WITGEN_WASM_COMPILE:fail");
+                None
+            }
+            Err(e) => {
+                eprintln!("WASM compile error: {:?}", e);
                 emit("END:WITGEN_WASM_COMPILE:fail");
                 None
             }
@@ -555,7 +561,7 @@ fn run_parent(output_path: &Path) {
         let mut child = Command::new(&exe)
             .args(["--run-single", abs.to_str().unwrap()])
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .expect("Failed to spawn child");
 

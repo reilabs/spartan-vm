@@ -499,7 +499,9 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             })
             .unwrap_or_else(|_| "wasm-ld".to_string());
 
-        let status = Command::new(&wasm_ld)
+        eprintln!("wasm-ld: using {:?}, linking {:?} + {:?} -> {:?}", wasm_ld, obj_path, runtime_lib, path);
+
+        let output = Command::new(&wasm_ld)
             .args([
                 "--no-entry",               // No entry point (we call main explicitly)
                 "--export=mavros_main",     // Export main function
@@ -513,11 +515,13 @@ impl<'ctx> LLVMCodeGen<'ctx> {
             .arg(path)
             .arg(&obj_path)
             .arg(&runtime_lib)
-            .status()
+            .output()
             .expect(&format!("Failed to run wasm-ld (tried: {}). Make sure LLVM with wasm-ld is installed and either in PATH or LLVM_SYS_180_PREFIX is set.", wasm_ld));
 
-        if !status.success() {
-            panic!("wasm-ld failed with status: {}", status);
+        if !output.status.success() {
+            eprintln!("wasm-ld stdout: {}", String::from_utf8_lossy(&output.stdout));
+            eprintln!("wasm-ld stderr: {}", String::from_utf8_lossy(&output.stderr));
+            panic!("wasm-ld failed with status: {}", output.status);
         }
 
         // Clean up object file
@@ -537,26 +541,47 @@ impl<'ctx> LLVMCodeGen<'ctx> {
         let wasm_runtime_dir = workspace_root.join("wasm-runtime");
 
         // Build the wasm-runtime for wasm32
-        let status = Command::new("cargo")
+        let output = Command::new("cargo")
             .current_dir(&wasm_runtime_dir)
             .args([
                 "build",
                 "--target", "wasm32-unknown-unknown",
                 "--release",
             ])
-            .status()
+            .output()
             .expect("Failed to run cargo build for wasm-runtime");
 
-        if !status.success() {
+        if !output.status.success() {
+            eprintln!("wasm-runtime cargo build stdout: {}", String::from_utf8_lossy(&output.stdout));
+            eprintln!("wasm-runtime cargo build stderr: {}", String::from_utf8_lossy(&output.stderr));
             panic!("Failed to build wasm-runtime for wasm32");
         }
 
         // Return path to the static library
-        workspace_root
+        let lib_path = workspace_root
             .join("target")
             .join("wasm32-unknown-unknown")
             .join("release")
-            .join("libmavros_wasm_runtime.a")
+            .join("libmavros_wasm_runtime.a");
+
+        if !lib_path.exists() {
+            eprintln!("wasm-runtime library not found at {:?}", lib_path);
+            // List what's actually in the directory
+            let dir = lib_path.parent().unwrap();
+            if dir.exists() {
+                eprintln!("Contents of {:?}:", dir);
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        eprintln!("  {:?}", entry.file_name());
+                    }
+                }
+            } else {
+                eprintln!("Directory {:?} does not exist", dir);
+            }
+            panic!("wasm-runtime library not found");
+        }
+
+        lib_path
     }
 
     /// Get the LLVM module
