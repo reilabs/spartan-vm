@@ -44,6 +44,7 @@
 
           LLVM_SYS_180_PREFIX = "${llvmPackages.llvm.dev}";
           LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.fontconfig.lib ];
         };
       }
     );
