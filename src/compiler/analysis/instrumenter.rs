@@ -167,6 +167,14 @@ impl Value {
                 }
                 _ => todo!("{:?}", binary_arith_op_kind),
             },
+            (Value::UWitness(s), _) | (_, Value::UWitness(s)) => match binary_arith_op_kind {
+                BinaryArithOpKind::Mul => {
+                    instrumenter.record_constraints(2); // compute result && check the digital decomposition
+                    instrumenter.record_rangechecks(*s as u8, 2);
+                    Value::UWitness(*s)
+                }
+                _ => todo!("{:?}", binary_arith_op_kind),
+            },
             (_, _) => panic!("Cannot perform binary arithmetic on {:?} and {:?}", self, b),
         }
     }
