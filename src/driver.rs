@@ -14,7 +14,7 @@ use crate::{
         monomorphization::Monomorphization,
         pass_manager::PassManager,
         passes::{
-            arithmetic_simplifier::ArithmeticSimplifier, box_fields::BoxFields, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, remove_unreachable_blocks::RemoveUnreachableBlocks, specializer::Specializer, struct_access_simplifier::MakeStructAccessStatic, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
+            arithmetic_simplifier::ArithmeticSimplifier, box_fields::BoxFields, common_subexpression_elimination::CSE, condition_propagation::ConditionPropagation, dead_code_elimination::{self, DCE}, deduplicate_phis::DeduplicatePhis, explicit_witness::ExplicitWitness, fix_double_jumps::FixDoubleJumps, mem2reg::Mem2Reg, prepare_entry_point::PrepareEntryPoint, pull_into_assert::PullIntoAssert, rc_insertion::RCInsertion, remove_unreachable_blocks::RemoveUnreachableBlocks, specializer::Specializer, struct_access_simplifier::MakeStructAccessStatic, witness_write_to_fresh::WitnessWriteToFresh, witness_write_to_void::WitnessWriteToVoid
         },
         r1cs_gen::{R1CGen, R1CS},
         ssa::{DefaultSsaAnnotator, SSA},
@@ -42,7 +42,7 @@ pub enum Error {
 
 impl Driver {
     pub fn new(project: Project, draw_cfg: bool) -> Self {
-        let dir = project.get_only_crate().root_dir.join("spartan_vm_debug");
+        let dir = project.get_only_crate().root_dir.join("mavros_debug");
         if dir.exists() {
             fs::remove_dir_all(&dir).unwrap();
         }
@@ -65,7 +65,7 @@ impl Driver {
             .project
             .get_only_crate()
             .root_dir
-            .join("spartan_vm_debug");
+            .join("mavros_debug");
         dir
     }
 
@@ -136,6 +136,7 @@ impl Driver {
             "make_struct_access_static".to_string(),
             self.draw_cfg,
             vec![
+                Box::new(PrepareEntryPoint::new()),
                 Box::new(RemoveUnreachableBlocks::new()),
                 Box::new(MakeStructAccessStatic::new()),
                 // Use preserve_blocks() to keep empty intermediate blocks intact.
@@ -398,7 +399,7 @@ impl Driver {
         let type_info = Types::new().run(ssa, &flow_analysis);
 
         let context = Context::create();
-        let mut codegen = LLVMCodeGen::new(&context, "spartan_vm_module");
+        let mut codegen = LLVMCodeGen::new(&context, "mavros_module");
         codegen.compile(ssa, &flow_analysis, &type_info);
 
         let llvm_ir = if emit_llvm {

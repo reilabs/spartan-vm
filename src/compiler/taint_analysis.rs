@@ -1068,7 +1068,18 @@ impl TaintAnalysis {
                 judgements.push(Judgement::Le(lhs.clone(), rhs.clone()));
                 self.deep_le(inner_lhs, inner_rhs, judgements);
             }
-            _ => panic!("Cannot compare different taint types"),
+            (
+                TaintType::Tuple(lhs, inner_lhs),
+                TaintType::Tuple(rhs, inner_rhs),
+            ) => {
+                judgements.push(Judgement::Le(lhs.clone(), rhs.clone()));
+                for (l, r) in inner_lhs.iter().zip(inner_rhs.iter()) {
+                    self.deep_le(l, r, judgements);
+                }
+            }
+            _ => {
+                panic!("Cannot compare different taint types: {:?} vs {:?}", lhs, rhs)
+            }
         }
     }
 

@@ -1,11 +1,11 @@
 {
-  "name": "spartan-wasm-runner",
+  "name": "mavros-wasm-runner",
   "version": "0.1.0",
-  "description": "Node.js runner for Spartan VM WASM outputs",
+  "description": "Node.js runner for Mavros WASM outputs",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "spartan-wasm-runner": "dist/index.js"
+    "mavros-wasm-runner": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",

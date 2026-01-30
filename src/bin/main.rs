@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf, process::ExitCode};
 
 use ark_ff::UniformRand as _;
 use clap::Parser;
-use spartan_vm::{Error, Project, abi_helpers, compiler::Field, driver::Driver, vm::interpreter};
+use mavros::{Error, Project, abi_helpers, compiler::Field, driver::Driver, vm::interpreter};
 use tracing::{error, info, warn};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};

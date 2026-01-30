@@ -1,10 +1,11 @@
-use noirc_abi::{AbiType, input_parser::InputValue};
+use noirc_abi::{AbiType, MAIN_RETURN_NAME, input_parser::InputValue};
 use std::collections::BTreeMap;
 
 use crate::vm::interpreter::InputValueOrdered;
 
 /// Converts a BTreeMap of input values (keyed by parameter name) into a Vec of
 /// InputValueOrdered, ordered according to the ABI parameter order.
+/// Return values (keyed by "return") are appended after the regular parameters.
 pub fn ordered_params_from_btreemap(
     abi: &noirc_abi::Abi,
     unordered_params: &BTreeMap<String, InputValue>,
@@ -17,6 +18,13 @@ pub fn ordered_params_from_btreemap(
 
         ordered_params.push(ordered_param(&param.typ, param_value));
     }
+
+    if let Some(return_type) = &abi.return_type {
+        if let Some(return_value) = unordered_params.get(MAIN_RETURN_NAME) {
+            ordered_params.push(ordered_param(&return_type.abi_type, return_value));
+        }
+    }
+
     ordered_params
 }
 
