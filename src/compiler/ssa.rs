@@ -1,5 +1,5 @@
 use crate::compiler::{
-    ir::r#type::{CommutativeMonoid, Empty, Type},
+    ir::r#type::{CommutativeMonoid, Empty, Type, TypeExpr},
     ssa_gen::SsaConverter,
 };
 use itertools::Itertools;
@@ -191,12 +191,44 @@ where
             arg_values,
             return_types.len(),
         );
-        for (result, public_input) in results.iter().zip(return_input_values.iter()) {
-            wrapper.push_assert_eq(entry_block, *result, *public_input);
+        for ((result, public_input), return_type) in results.iter().zip(return_input_values.iter()).zip(return_types.iter()) {
+            Self::assert_eq_deep(wrapper, entry_block, *result, *public_input, return_type);
         }
         wrapper.terminate_block_with_return(entry_block, vec![]);
-        
+
         self.set_entry_point(wrapper_id);
+    }
+
+    fn assert_eq_deep(
+        wrapper: &mut Function<V>,
+        block: BlockId,
+        result: ValueId,
+        public_input: ValueId,
+        typ: &Type<V>,
+    ) {
+        match &typ.expr {
+            TypeExpr::Field | TypeExpr::U(_) => {
+                wrapper.push_assert_eq(block, result, public_input);
+            }
+            TypeExpr::Array(inner, size) => {
+                for i in 0..*size {
+                    let index = wrapper.push_u_const(32, i as u128);
+                    let result_elem = wrapper.push_array_get(block, result, index);
+                    let input_elem = wrapper.push_array_get(block, public_input, index);
+                    Self::assert_eq_deep(wrapper, block, result_elem, input_elem, inner);
+                }
+            }
+            TypeExpr::Tuple(element_types) => {
+                for (i, elem_type) in element_types.iter().enumerate() {
+                    let result_elem = wrapper.push_tuple_proj(block, result, TupleIdx::Static(i));
+                    let input_elem = wrapper.push_tuple_proj(block, public_input, TupleIdx::Static(i));
+                    Self::assert_eq_deep(wrapper, block, result_elem, input_elem, elem_type);
+                }
+            }
+            _ => {
+                wrapper.push_assert_eq(block, result, public_input);
+            }
+        }
     }
 }
 
