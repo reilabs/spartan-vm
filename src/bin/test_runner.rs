@@ -669,7 +669,7 @@ fn parse_status_rows(path: &Path) -> Vec<ParsedRow> {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        if cells.len() < 16 { continue; }
+        if cells.len() < 19 { continue; }
         let rows = cells[3].parse().ok();
         let cols = cells[4].parse().ok();
         result.push(ParsedRow {
