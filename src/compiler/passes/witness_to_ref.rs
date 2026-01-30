@@ -47,6 +47,18 @@ impl WitnessToRef {
             for rtp in function.iter_returns_mut() {
                 *rtp = self.witness_to_ref_in_type(rtp);
             }
+            // Collect converted block parameter types before taking blocks
+            let block_param_types: HashMap<crate::compiler::ssa::BlockId, Vec<Type<ConstantTaint>>> = function
+                .get_blocks()
+                .map(|(bid, block)| {
+                    let types = block
+                        .get_parameters()
+                        .map(|(_, tp)| self.witness_to_ref_in_type(tp))
+                        .collect();
+                    (*bid, types)
+                })
+                .collect();
+
             let mut new_blocks = HashMap::new();
             for (bid, mut block) in function.take_blocks().into_iter() {
                 let old_params = block.take_parameters();
@@ -127,6 +139,9 @@ impl WitnessToRef {
                             new_instructions.push(i);
                         }
                         OpCode::Constrain { a, b, c } => {
+                            let a = self.ensure_witness_ref(a, type_info, &mut new_instructions, function);
+                            let b = self.ensure_witness_ref(b, type_info, &mut new_instructions, function);
+                            let c = self.ensure_witness_ref(c, type_info, &mut new_instructions, function);
                             let new_val = function.fresh_value();
                             new_instructions.push(OpCode::NextDCoeff { result: new_val });
                             new_instructions.push(OpCode::BumpD {
@@ -308,10 +323,64 @@ impl WitnessToRef {
                         }
                     };
                 }
-                block.put_instructions(new_instructions);
+                if let Some(mut terminator) = block.take_terminator() {
+                    match &mut terminator {
+                        crate::compiler::ssa::Terminator::Jmp(target, args) => {
+                            let param_types = &block_param_types[target];
+                            for (arg, expected_type) in args.iter_mut().zip(param_types.iter()) {
+                                let arg_type = type_info.get_value_type(*arg);
+                                let converted_arg_type = self.witness_to_ref_in_type(arg_type);
+                                if converted_arg_type != *expected_type {
+                                    let refed = function.fresh_value();
+                                    match &arg_type.expr {
+                                        TypeExpr::Field | TypeExpr::U(_) => {
+                                            new_instructions.push(OpCode::PureToWitnessRef {
+                                                result: refed,
+                                                value: *arg,
+                                                result_annotation: arg_type.annotation.clone(),
+                                            });
+                                        }
+                                        other => panic!(
+                                            "witness_to_ref Jmp arg conversion not supported for {:?}",
+                                            other
+                                        ),
+                                    }
+                                    *arg = refed;
+                                }
+                            }
+                        }
+                        crate::compiler::ssa::Terminator::JmpIf(_, _, _) => {}
+                        crate::compiler::ssa::Terminator::Return(_) => {}
+                    }
+                    block.put_instructions(new_instructions);
+                    block.set_terminator(terminator);
+                } else {
+                    block.put_instructions(new_instructions);
+                }
                 new_blocks.insert(bid, block);
             }
             function.put_blocks(new_blocks);
+        }
+    }
+
+    fn ensure_witness_ref(
+        &self,
+        val: crate::compiler::ssa::ValueId,
+        type_info: &crate::compiler::analysis::types::FunctionTypeInfo<ConstantTaint>,
+        new_instructions: &mut Vec<OpCode<ConstantTaint>>,
+        function: &mut crate::compiler::ssa::Function<ConstantTaint>,
+    ) -> crate::compiler::ssa::ValueId {
+        let val_type = type_info.get_value_type(val);
+        if val_type.get_annotation().is_witness() {
+            val
+        } else {
+            let refed = function.fresh_value();
+            new_instructions.push(OpCode::PureToWitnessRef {
+                result: refed,
+                value: val,
+                result_annotation: val_type.annotation.clone(),
+            });
+            refed
         }
     }
 
