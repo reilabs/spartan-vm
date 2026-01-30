@@ -47,14 +47,6 @@ impl WitnessToRef {
             for rtp in function.iter_returns_mut() {
                 *rtp = self.witness_to_ref_in_type(rtp);
             }
-            for (_, constant) in function.iter_consts_mut() {
-                let new = match constant {
-                    Const::U(s, value) => Const::U(*s, *value),
-                    Const::Field(value) => Const::WitnessRef(*value),
-                    Const::WitnessRef(value) => Const::WitnessRef(*value),
-                };
-                *constant = new;
-            }
             let mut new_blocks = HashMap::new();
             for (bid, mut block) in function.take_blocks().into_iter() {
                 let old_params = block.take_parameters();
@@ -72,45 +64,24 @@ impl WitnessToRef {
                             target: t,
                         } => {
                             let v_type = type_info.get_value_type(v);
-                            let v = if v_type.is_field() {
-                                let new_v = function.fresh_value();
-                                new_instructions.push(OpCode::UnboxField {
-                                    result: new_v,
-                                    value: v,
-                                });
-                                new_v
-                            } else {
-                                v
-                            };
-
-                            if matches!(t, CastTarget::Field) {
-                                let new_r = function.fresh_value();
-                                new_instructions.push(OpCode::Cast {
-                                    result: new_r,
-                                    value: v,
-                                    target: CastTarget::Field,
-                                });
-                                new_instructions.push(OpCode::PureToWitnessRef {
-                                    result: r,
-                                    value: new_r,
-                                    result_annotation: type_info.get_value_type(r).annotation,
-                                });
-                            } else {
+                            // Otherwise becomes witness ref -> witness ref cast, so we can skip it
+                            if v_type.get_annotation().is_witness() {
                                 new_instructions.push(OpCode::Cast {
                                     result: r,
                                     value: v,
-                                    target: t,
+                                    target: CastTarget::Nop,
                                 });
-                            };
+                            } else {
+                                new_instructions.push(instruction);
+                            }
                         }
                         OpCode::FreshWitness {
                             result: r,
                             result_type: tp,
                         } => {
-                            assert!(matches!(tp.expr, TypeExpr::Field));
                             let i = OpCode::FreshWitness {
                                 result: r,
-                                result_type: self.witness_to_ref_in_type(&tp),
+                                result_type: Type::witness_ref(tp.annotation.clone()),
                             };
                             new_instructions.push(i);
                         }
@@ -120,11 +91,26 @@ impl WitnessToRef {
                             seq_type: s,
                             elem_type: tp,
                         } => {
+                            let new_elem_type = self.witness_to_ref_in_type(&tp);
+                            let mut new_vs = vec![];
+                            for v in vs.iter() {
+                                let v_type = type_info.get_value_type(*v);
+                                let new_v_type = self.witness_to_ref_in_type(&v_type);
+                                if new_v_type == new_elem_type {
+                                    new_vs.push(*v);
+                                } else {
+                                    todo!(
+                                        "Value casting in witness_to_ref MkSeq {:?} -> {:?}",
+                                        new_v_type,
+                                        new_elem_type
+                                    );
+                                }
+                            }
                             let i = OpCode::MkSeq {
                                 result: r,
-                                elems: vs.clone(),
+                                elems: new_vs,
                                 seq_type: s,
-                                elem_type: self.witness_to_ref_in_type(&tp),
+                                elem_type: new_elem_type,
                             };
                             new_instructions.push(i);
                         }
@@ -164,69 +150,43 @@ impl WitnessToRef {
                             keys,
                             results,
                         } => {
+                            let mut new_keys = vec![];
                             for key in keys.iter() {
-                                assert!(
-                                    type_info.get_value_type(*key).is_field(),
-                                    "Keys of lookup must be fields"
-                                );
+                                let key_type = type_info.get_value_type(*key);
+                                assert!(key_type.is_field(), "Keys of lookup must be fields");
+                                if !key_type.get_annotation().is_witness() {
+                                    let refed = function.fresh_value();
+                                    new_instructions.push(OpCode::PureToWitnessRef {
+                                        result: refed,
+                                        value: *key,
+                                        result_annotation: key_type.annotation.clone(),
+                                    });
+                                    new_keys.push(refed);
+                                } else {
+                                    new_keys.push(*key);
+                                }
                             }
+                            let mut new_results = vec![];
                             for result in results.iter() {
-                                assert!(
-                                    type_info.get_value_type(*result).is_field(),
-                                    "Results of lookup must be fields"
-                                );
+                                let result_type = type_info.get_value_type(*result);
+                                assert!(result_type.is_field(), "Results of lookup must be fields");
+                                if !result_type.get_annotation().is_witness() {
+                                    let refed = function.fresh_value();
+                                    new_instructions.push(OpCode::PureToWitnessRef {
+                                        result: refed,
+                                        value: *result,
+                                        result_annotation: result_type.annotation.clone(),
+                                    });
+                                    new_results.push(refed);
+                                } else {
+                                    new_results.push(*result);
+                                }
                             }
                             new_instructions.push(OpCode::DLookup {
                                 target,
-                                keys,
-                                results,
+                                keys: new_keys,
+                                results: new_results,
                             });
-                        }
-                        OpCode::Cmp {
-                            kind,
-                            result: r,
-                            lhs: a,
-                            rhs: b,
-                        } => {
-                            let a_type = type_info.get_value_type(a);
-                            let b_type = type_info.get_value_type(b);
-                            assert!(
-                                *a_type.get_annotation() == ConstantTaint::Pure,
-                                "Cannot handle impure comparisons, should be removed already"
-                            );
-                            assert!(
-                                *b_type.get_annotation() == ConstantTaint::Pure,
-                                "Cannot handle impure comparisons, should be removed already"
-                            );
-                            match (&a_type.expr, &b_type.expr) {
-                                (TypeExpr::Field, TypeExpr::Field) => {
-                                    // These will get boxed, so we need to explicitly unbox them
-                                    let new_a = function.fresh_value();
-                                    let new_b = function.fresh_value();
-                                    new_instructions.push(OpCode::UnboxField {
-                                        result: new_a,
-                                        value: a,
-                                    });
-                                    new_instructions.push(OpCode::UnboxField {
-                                        result: new_b,
-                                        value: b,
-                                    });
-                                    new_instructions.push(OpCode::Cmp {
-                                        kind: kind,
-                                        result: r,
-                                        lhs: new_a,
-                                        rhs: new_b,
-                                    });
-                                }
-                                _ => {
-                                    new_instructions.push(OpCode::Cmp {
-                                        kind: kind,
-                                        result: r,
-                                        lhs: a,
-                                        rhs: b,
-                                    });
-                                }
-                            }
                         }
                         OpCode::BinaryArithOp {
                             kind,
@@ -236,201 +196,97 @@ impl WitnessToRef {
                         } => {
                             let a_type = type_info.get_value_type(a);
                             let b_type = type_info.get_value_type(b);
-                            if *a_type.get_annotation() == ConstantTaint::Pure
-                                && *b_type.get_annotation() == ConstantTaint::Pure
-                            {
-                                match (&a_type.expr, &b_type.expr) {
-                                    (TypeExpr::Field, TypeExpr::Field) => {
-                                        let new_a = function.fresh_value();
-                                        let new_b = function.fresh_value();
-                                        let new_r = function.fresh_value();
-                                        new_instructions.push(OpCode::UnboxField {
-                                            result: new_a,
-                                            value: a,
-                                        });
-                                        new_instructions.push(OpCode::UnboxField {
-                                            result: new_b,
-                                            value: b,
-                                        });
-                                        new_instructions.push(OpCode::BinaryArithOp {
-                                            kind: kind,
-                                            result: new_r,
-                                            lhs: new_a,
-                                            rhs: new_b,
-                                        });
+                            match (
+                                a,
+                                a_type.get_annotation().is_witness(),
+                                b,
+                                b_type.get_annotation().is_witness(),
+                            ) {
+                                (_, true, _, true) | (_, false, _, false) => {
+                                    new_instructions.push(instruction);
+                                }
+                                (wit, true, pure, false) | (pure, false, wit, true) => match kind {
+                                    BinaryArithOpKind::Add => {
+                                        let pure_refed = function.fresh_value();
                                         new_instructions.push(OpCode::PureToWitnessRef {
-                                            result: r,
-                                            value: new_r,
+                                            result: pure_refed,
+                                            value: wit,
                                             result_annotation: ConstantTaint::Witness,
                                         });
-                                    }
-                                    _ => {
                                         new_instructions.push(OpCode::BinaryArithOp {
                                             kind: kind,
                                             result: r,
-                                            lhs: a,
-                                            rhs: b,
-                                        });
-                                    }
-                                }
-                            } else {
-                                match kind {
-                                    BinaryArithOpKind::Add | BinaryArithOpKind::Sub => {
-                                        assert!(
-                                            matches!(a_type.expr, TypeExpr::Field)
-                                                && matches!(b_type.expr, TypeExpr::Field),
-                                            "Cannot handle impure binary arithmetic operations on non-field types, should be removed already"
-                                        );
-                                        new_instructions.push(OpCode::BinaryArithOp {
-                                            kind: kind,
-                                            result: r,
-                                            lhs: a,
-                                            rhs: b,
+                                            lhs: pure_refed,
+                                            rhs: wit,
                                         });
                                     }
                                     BinaryArithOpKind::Mul => {
-                                        match (
-                                            (a_type.get_annotation(), a),
-                                            (b_type.get_annotation(), b),
-                                        ) {
-                                            (
-                                                (ConstantTaint::Pure, pure_v),
-                                                (ConstantTaint::Witness, witness_v),
-                                            )
-                                            | (
-                                                (ConstantTaint::Witness, witness_v),
-                                                (ConstantTaint::Pure, pure_v),
-                                            ) => {
-                                                let new_pure_v = function.fresh_value();
-                                                new_instructions.push(OpCode::UnboxField {
-                                                    result: new_pure_v,
-                                                    value: pure_v,
-                                                });
-                                                new_instructions.push(OpCode::MulConst {
-                                                    result: r,
-                                                    const_val: new_pure_v,
-                                                    var: witness_v,
-                                                });
-                                            }
-                                            _ => {
-                                                panic!(
-                                                    "Cannot multiply two witness values, should be removed already"
-                                                );
-                                            }
-                                        }
+                                        new_instructions.push(OpCode::MulConst {
+                                            result: r,
+                                            const_val: pure,
+                                            var: wit,
+                                        });
                                     }
-                                    BinaryArithOpKind::Div | BinaryArithOpKind::And => {
-                                        panic!(
-                                            "Cannot handle this operation with witness values, should be removed already {:?}",
-                                            kind
-                                        );
+                                    BinaryArithOpKind::Div => {
+                                        panic!("Div is not supported for witness-pure arithmetic")
                                     }
-                                }
+                                    BinaryArithOpKind::Sub => {
+                                        let pure_refed = function.fresh_value();
+                                        new_instructions.push(OpCode::PureToWitnessRef {
+                                            result: pure_refed,
+                                            value: wit,
+                                            result_annotation: ConstantTaint::Witness,
+                                        });
+                                        let a = if a == wit { wit } else { pure_refed };
+                                        let b = if b == wit { wit } else { pure_refed };
+                                        new_instructions.push(OpCode::BinaryArithOp {
+                                            kind: kind,
+                                            result: r,
+                                            lhs: a,
+                                            rhs: b,
+                                        });
+                                    }
+                                    BinaryArithOpKind::And => {
+                                        panic!("And is not supported for witness-pure arithmetic")
+                                    }
+                                },
                             }
                         }
-                        OpCode::Truncate {
-                            result: r,
-                            value: v,
-                            to_bits: f,
-                            from_bits: t,
-                        } => {
-                            let v_type = type_info.get_value_type(v);
-                            if matches!(v_type.expr, TypeExpr::Field) {
-                                assert!(
-                                    *v_type.get_annotation() == ConstantTaint::Pure,
-                                    "Cannot truncate witness values, should be removed already"
-                                );
-                                let new_r = function.fresh_value();
-                                let new_v = function.fresh_value();
-                                new_instructions.push(OpCode::UnboxField {
-                                    result: new_v,
-                                    value: v,
-                                });
-                                new_instructions.push(OpCode::Truncate {
-                                    result: new_r,
-                                    value: new_v,
-                                    to_bits: f,
-                                    from_bits: t,
-                                });
-                                new_instructions.push(OpCode::PureToWitnessRef {
-                                    result: r,
-                                    value: new_r,
-                                    result_annotation: v_type.annotation.clone(),
-                                });
+                        OpCode::Store { ptr, value } => {
+                            let ptr_type = type_info.get_value_type(ptr);
+                            let value_type = type_info.get_value_type(value);
+                            let new_ptr_type = self.witness_to_ref_in_type(&ptr_type);
+                            let new_value_type = self.witness_to_ref_in_type(&value_type);
+                            if new_ptr_type == new_value_type {
+                                new_instructions.push(instruction);
                             } else {
-                                new_instructions.push(OpCode::Truncate {
-                                    result: r,
-                                    value: v,
-                                    to_bits: f,
-                                    from_bits: t,
-                                });
+                                todo!(
+                                    "Value casting in witness_to_ref Store {:?} -> {:?}",
+                                    new_value_type,
+                                    new_ptr_type
+                                );
                             }
                         }
-                        OpCode::AssertEq { lhs: a, rhs: b } => {
-                            let a_type = type_info.get_value_type(a);
-                            let b_type = type_info.get_value_type(b);
-                            if matches!(a_type.expr, TypeExpr::Field)
-                                && matches!(b_type.expr, TypeExpr::Field)
-                            {
-                                assert!(
-                                    *a_type.get_annotation() == ConstantTaint::Pure,
-                                    "Cannot handle impure assertions, should be removed already"
-                                );
-                                assert!(
-                                    *b_type.get_annotation() == ConstantTaint::Pure,
-                                    "Cannot handle impure assertions, should be removed already"
-                                );
-                                let new_a = function.fresh_value();
-                                let new_b = function.fresh_value();
-                                new_instructions.push(OpCode::UnboxField {
-                                    result: new_a,
-                                    value: a,
-                                });
-                                new_instructions.push(OpCode::UnboxField {
-                                    result: new_b,
-                                    value: b,
-                                });
-                                new_instructions.push(OpCode::AssertEq {
-                                    lhs: new_a,
-                                    rhs: new_b,
-                                });
-                            } else {
-                                new_instructions.push(OpCode::AssertEq { lhs: a, rhs: b });
-                            }
-                        }
-                        OpCode::Rangecheck {
-                            value: val,
-                            max_bits,
-                        } => {
-                            let unboxed_val = function.fresh_value();
-                            new_instructions.push(OpCode::UnboxField {
-                                result: unboxed_val,
-                                value: val,
-                            });
-                            new_instructions.push(OpCode::Rangecheck {
-                                value: unboxed_val,
-                                max_bits: max_bits,
-                            });
-                        }
-                        OpCode::ReadGlobal {
-                            result: r,
-                            offset: index,
-                            result_type: tp,
-                        } => {
-                            new_instructions.push(OpCode::ReadGlobal {
-                                result: r,
-                                offset: index,
-                                result_type: self.witness_to_ref_in_type(&tp),
-                            });
-                        }
+                        OpCode::ArraySet {
+                            result,
+                            array,
+                            index,
+                            value,
+                        } => todo!(),
+                        OpCode::SlicePush {
+                            dir,
+                            result,
+                            slice,
+                            values,
+                        } => todo!(),
                         OpCode::Not { .. }
-                        | OpCode::Store { .. }
+                        | OpCode::Cmp { .. }
+                        | OpCode::Truncate { .. }
                         | OpCode::Load { .. }
+                        | OpCode::AssertEq { .. }
                         | OpCode::AssertR1C { .. }
                         | OpCode::Call { .. }
                         | OpCode::ArrayGet { .. }
-                        | OpCode::ArraySet { .. }
-                        | OpCode::SlicePush { .. }
                         | OpCode::SliceLen { .. }
                         | OpCode::Select { .. }
                         | OpCode::ToBits { .. }
@@ -438,28 +294,17 @@ impl WitnessToRef {
                         | OpCode::MemOp { .. }
                         | OpCode::WriteWitness { .. }
                         | OpCode::NextDCoeff { .. }
+                        | OpCode::BumpD { .. }
+                        | OpCode::DLookup { .. }
                         | OpCode::PureToWitnessRef { .. }
                         | OpCode::UnboxField { .. }
                         | OpCode::MulConst { .. }
-                        | OpCode::BumpD { .. }
-                        | OpCode::DLookup { .. }
+                        | OpCode::Rangecheck { .. }
+                        | OpCode::ReadGlobal { .. }
                         | OpCode::TupleProj { .. }
-                        | OpCode::Todo { .. } => new_instructions.push(instruction),
-                        OpCode::MkTuple { 
-                            result,
-                            elems,
-                            element_types,
-                        } => {
-                            let boxed_element_types: Vec<Type<ConstantTaint>> = element_types
-                                .iter()
-                                .map(|tp| self.witness_to_ref_in_type(tp))
-                                .collect();
-                            let i = OpCode::MkTuple {
-                                result,
-                                elems: elems.clone(),
-                                element_types: boxed_element_types,
-                            };
-                            new_instructions.push(i);    
+                        | OpCode::MkTuple { .. }
+                        | OpCode::Todo { .. } => {
+                            new_instructions.push(instruction);
                         }
                     };
                 }
@@ -472,11 +317,18 @@ impl WitnessToRef {
 
     fn witness_to_ref_in_type(&self, tp: &Type<ConstantTaint>) -> Type<ConstantTaint> {
         match &tp.expr {
-            TypeExpr::Field => Type::boxed_field(tp.annotation.clone()),
-            TypeExpr::U(_) => tp.clone(),
-            TypeExpr::Array(inner, size) => {
-                Type::array_of(self.witness_to_ref_in_type(inner), *size, tp.annotation.clone())
+            TypeExpr::Field | TypeExpr::U(_) => {
+                if tp.annotation == ConstantTaint::Witness {
+                    Type::witness_ref(tp.annotation.clone())
+                } else {
+                    tp.clone()
+                }
             }
+            TypeExpr::Array(inner, size) => Type::array_of(
+                self.witness_to_ref_in_type(inner),
+                *size,
+                tp.annotation.clone(),
+            ),
             TypeExpr::Slice(inner) => {
                 Type::slice_of(self.witness_to_ref_in_type(inner), tp.annotation.clone())
             }

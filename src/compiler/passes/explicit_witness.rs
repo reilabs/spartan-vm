@@ -223,13 +223,37 @@ impl ExplicitWitness {
                             new_instructions.push(instruction);
                         }
                         OpCode::AssertEq { lhs: l, rhs: r } => {
-                            let l_taint = function_type_info.get_value_type(l).get_annotation();
-                            let r_taint = function_type_info.get_value_type(r).get_annotation();
+                            let l_type = function_type_info.get_value_type(l);
+                            let r_type = function_type_info.get_value_type(r);
+                            let l_taint = l_type.get_annotation();
+                            let r_taint = r_type.get_annotation();
                             if l_taint.is_pure() && r_taint.is_pure() {
                                 new_instructions.push(instruction);
                                 continue;
                             }
                             let one = function.push_field_const(ark_ff::Fp::from(1));
+                            let l = if l_type.is_field() {
+                                l
+                            } else {
+                                let casted = function.fresh_value();
+                                new_instructions.push(OpCode::Cast {
+                                    result: casted,
+                                    value: l,
+                                    target: CastTarget::Field,
+                                });
+                                casted
+                            };
+                            let r = if r_type.is_field() {
+                                r
+                            } else {
+                                let casted = function.fresh_value();
+                                new_instructions.push(OpCode::Cast {
+                                    result: casted,
+                                    value: r,
+                                    target: CastTarget::Field,
+                                });
+                                casted
+                            };
                             new_instructions.push(OpCode::Constrain { a: l, b: one, c: r });
                         }
                         OpCode::AssertR1C { a, b, c } => {

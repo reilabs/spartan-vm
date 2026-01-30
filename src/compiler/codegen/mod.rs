@@ -849,7 +849,7 @@ impl CodeGen {
                 } => {
                     assert!(keys.len() == 1);
                     assert!(results.len() == 0);
-                    assert!(type_info.get_value_type(keys[0]).is_boxed_field());
+                    assert!(type_info.get_value_type(keys[0]).is_witness_ref());
                     emitter.push_op(bytecode::OpCode::Drngchk8Field {
                         val: layouter.get_value(keys[0]),
                     });

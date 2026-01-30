@@ -324,6 +324,13 @@ impl<V: Clone> Function<V> {
         new_id
     }
 
+    pub fn next_virtual_block(&mut self) -> (BlockId, Block<V>) {
+        let new_id = BlockId(self.next_block);
+        self.next_block += 1;
+        let block = Block::empty();
+        (new_id, block)
+    }
+
     pub fn add_return_type(&mut self, typ: Type<V>) {
         self.returns.push(typ);
     }
@@ -1119,6 +1126,7 @@ pub enum SeqType {
 pub enum CastTarget {
     Field,
     U(usize),
+    Nop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1138,6 +1146,7 @@ impl Display for CastTarget {
         match self {
             CastTarget::Field => write!(f, "Field"),
             CastTarget::U(size) => write!(f, "u{}", size),
+            CastTarget::Nop => write!(f, "Nop"),
         }
     }
 }

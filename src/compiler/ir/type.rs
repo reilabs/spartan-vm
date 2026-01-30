@@ -116,7 +116,7 @@ impl<V: CommutativeMonoid + Display> Type<V> {
                 Type::u(*size1.max(size2), self.annotation.op(&other.annotation))
             }
             (TypeExpr::WitnessRef, _) | (_, TypeExpr::WitnessRef) => {
-                Type::boxed_field(self.annotation.op(&other.annotation))
+                Type::witness_ref(self.annotation.op(&other.annotation))
             }
             _ => panic!("Cannot perform arithmetic on types {} and {}", self, other),
         }
@@ -206,7 +206,7 @@ impl<V> Type<V> {
         }
     }
 
-    pub fn boxed_field(annotation: V) -> Self {
+    pub fn witness_ref(annotation: V) -> Self {
         Type {
             expr: TypeExpr::WitnessRef,
             annotation,
@@ -265,7 +265,7 @@ impl<V> Type<V> {
         matches!(self.expr, TypeExpr::Array(_, _) | TypeExpr::Slice(_))
     }
 
-    pub fn is_boxed_field(&self) -> bool {
+    pub fn is_witness_ref(&self) -> bool {
         matches!(self.expr, TypeExpr::WitnessRef)
     }
 

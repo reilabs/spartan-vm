@@ -1,5 +1,5 @@
 use core::panic;
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::{Debug, Display}};
 
 use tracing::{Level, instrument};
 
@@ -36,7 +36,7 @@ impl Types {
         Types {}
     }
 
-    pub fn run<V: CommutativeMonoid + Display + Eq + Clone>(
+    pub fn run<V: CommutativeMonoid + Display + Eq + Clone + Debug>(
         &self,
         ssa: &SSA<V>,
         cfg: &FlowAnalysis,
@@ -59,7 +59,7 @@ impl Types {
     }
 
     #[instrument(skip_all, level = Level::DEBUG, name = "Types::run_function", fields(function = function.get_name()))]
-    fn run_function<V: CommutativeMonoid + Display + Eq + Clone>(
+    fn run_function<V: CommutativeMonoid + Display + Eq + Clone + Debug>(
         &self,
         function: &Function<V>,
         function_types: &HashMap<FunctionId, (Vec<Type<V>>, &[Type<V>])>,
@@ -79,7 +79,7 @@ impl Types {
                     .insert(*value_id, Type::field(V::empty())),
                 Const::WitnessRef(_) => function_info
                     .values
-                    .insert(*value_id, Type::boxed_field(V::empty())),
+                    .insert(*value_id, Type::witness_ref(V::empty())),
             };
         }
 
@@ -92,7 +92,7 @@ impl Types {
 
             for instruction in block.get_instructions() {
                 self.run_opcode(instruction, &mut function_info, function_types)
-                    .unwrap();
+                    .expect(&format!("Error running opcode {:?}", instruction));
             }
         }
 
@@ -288,6 +288,7 @@ impl Types {
                 let result_type = match target {
                     CastTarget::Field => Type::field(value_type.get_annotation().clone()),
                     CastTarget::U(size) => Type::u(*size, value_type.get_annotation().clone()),
+                    CastTarget::Nop => value_type.clone(),
                 };
 
                 function_info.values.insert(*result, result_type);
@@ -336,7 +337,7 @@ impl Types {
             OpCode::PureToWitnessRef { result, value: _, result_annotation: annotation } => {
                 function_info
                     .values
-                    .insert(*result, Type::boxed_field(annotation.clone()));
+                    .insert(*result, Type::witness_ref(annotation.clone()));
                 Ok(())
             }
             OpCode::UnboxField { result, value: _ } => {
