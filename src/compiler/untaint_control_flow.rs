@@ -427,6 +427,7 @@ impl UntaintControlFlow {
                         seq_type: _,
                         elem_type: _,
                     }
+                    | OpCode::MkTuple {..}
                     | OpCode::Cast {
                         result: _,
                         value: _,

@@ -1,5 +1,5 @@
 use crate::compiler::{
-    ir::r#type::{CommutativeMonoid, Empty, Type},
+    ir::r#type::{CommutativeMonoid, Empty, Type, TypeExpr},
     ssa_gen::SsaConverter,
 };
 use itertools::Itertools;
@@ -160,6 +160,7 @@ where
     pub fn get_globals(&self) -> &[GlobalDef] {
         &self.globals
     }
+
 }
 
 impl SSA<Empty> {
